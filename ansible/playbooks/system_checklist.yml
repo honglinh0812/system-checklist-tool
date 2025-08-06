@@ -1,0 +1,112 @@
+---
+- name: System Checklist Evaluation
+  hosts: all
+  gather_facts: yes
+  become: yes
+  
+  vars:
+    checklist_results: {}
+    
+  tasks:
+    - name: Initialize results dictionary
+      set_fact:
+        checklist_results: {}
+        
+    - name: Gather OS information
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'os_info': ansible_distribution + ' ' + ansible_distribution_version}) }}"
+        
+    - name: Get system information
+      shell: |
+        echo "Hostname: $(hostname)"
+        echo "Uptime: $(uptime)"
+        echo "CPU: $(nproc) cores"
+        echo "Memory: $(free -h | grep Mem | awk '{print $2}')"
+        echo "Disk: $(df -h / | tail -1 | awk '{print $2}')"
+      register: system_info
+      
+    - name: Store system information
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'system_info': system_info.stdout_lines}) }}"
+        
+    - name: Check SSH configuration
+      stat:
+        path: /etc/ssh/sshd_config
+      register: ssh_config
+      
+    - name: Get SSH configuration details
+      shell: grep -E "^(PermitRootLogin|PasswordAuthentication|Protocol)" /etc/ssh/sshd_config || echo "SSH config not found"
+      when: ssh_config.stat.exists
+      register: ssh_details
+      ignore_errors: yes
+      
+    - name: Store SSH security info
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'ssh_security': ssh_details.stdout_lines if ssh_details.stdout_lines else ['SSH config not accessible']}) }}"
+        
+    - name: Get running services
+      shell: systemctl list-units --type=service --state=running | head -20
+      register: running_services
+      
+    - name: Store running services
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'running_services': running_services.stdout_lines}) }}"
+        
+    - name: Get network interfaces
+      shell: ip addr show | grep -E "inet " | awk '{print $2, $NF}'
+      register: network_interfaces
+      
+    - name: Store network info
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'network_interfaces': network_interfaces.stdout_lines}) }}"
+        
+    - name: Get disk usage
+      shell: df -h | grep -E "^(/dev/|Filesystem)"
+      register: disk_usage
+      
+    - name: Store disk usage
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'disk_usage': disk_usage.stdout_lines}) }}"
+        
+    - name: Get user accounts
+      shell: cat /etc/passwd | grep -E ":/bin/bash$" | cut -d: -f1
+      register: user_accounts
+      
+    - name: Store user accounts
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'user_accounts': user_accounts.stdout_lines}) }}"
+        
+    - name: Check for available updates (CentOS/RHEL)
+      shell: yum check-update --quiet || echo "No updates available"
+      when: ansible_os_family == "RedHat"
+      register: package_updates
+      ignore_errors: yes
+      
+    - name: Check for available updates (Ubuntu/Debian)
+      shell: apt list --upgradable 2>/dev/null | grep -v "WARNING" || echo "No updates available"
+      when: ansible_os_family == "Debian"
+      register: package_updates
+      ignore_errors: yes
+      
+    - name: Store package updates
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'package_updates': package_updates.stdout_lines if package_updates.stdout_lines else ['No updates available']}) }}"
+        
+    - name: Check firewall status (firewalld)
+      shell: systemctl is-active firewalld || echo "firewalld not active"
+      register: firewall_status
+      ignore_errors: yes
+      
+    - name: Store firewall status
+      set_fact:
+        checklist_results: "{{ checklist_results | combine({'firewall_status': firewall_status.stdout}) }}"
+        
+    - name: Display final results
+      debug:
+        msg: "{{ checklist_results }}"
+        
+    - name: Save results to file
+      copy:
+        content: "{{ checklist_results | to_nice_yaml }}"
+        dest: "/tmp/checklist_results_{{ ansible_hostname }}.yml"
+      delegate_to: localhost 
