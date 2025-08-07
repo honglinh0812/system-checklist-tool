@@ -14,9 +14,12 @@ class AnsibleRunner:
     def __init__(self, playbook_dir: str = "./ansible/playbooks"):
         self.playbook_dir = playbook_dir
         self.running_jobs = {}
+        self.job_results = {}
+        self.job_logs = {}
         
-    def create_dynamic_playbook(self, checklist_items: List[Dict], target_ips: List[str]) -> str:
-        logger.info(f"Creating dynamic playbook for {len(checklist_items)} items")
+    def create_dynamic_playbook(self, commands: List[Dict], servers: List[Dict]) -> str:
+        """Create a dynamic playbook from commands and servers"""
+        logger.info(f"Creating dynamic playbook for {len(commands)} commands on {len(servers)} servers")
         
         temp_dir = tempfile.mkdtemp()
         
@@ -25,14 +28,17 @@ class AnsibleRunner:
                 "hosts": {},
                 "vars": {
                     "ansible_ssh_common_args": "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-                    "ansible_user": "root",
                     "ansible_connection": "ssh",
-                    "ansible_ssh_private_key_file": "~/.ssh/id_rsa"
+                    "ansible_ssh_private_key_file": "~/.ssh/id_rsa",
+                    "ansible_become": True,
+                    "ansible_become_method": "sudo",
+                    "ansible_become_user": "root"
                 }
             }
         }
         
-        for ip in target_ips:
+        for server in servers:
+            ip = server['ip']
             if ip in ['localhost', '127.0.0.1']:
                 inventory_content["all"]["hosts"][ip] = {
                     "ansible_connection": "local",
@@ -40,250 +46,247 @@ class AnsibleRunner:
                 }
             else:
                 inventory_content["all"]["hosts"][ip] = {
-                    "ansible_ssh_private_key_file": "~/.ssh/id_rsa",
+                    "ansible_user": server['admin_username'],
+                    "ansible_password": server['admin_password'],
                     "ansible_become": True,
-                    "ansible_become_method": "sudo"
+                    "ansible_become_method": "sudo",
+                    "ansible_become_user": "root",
+                    "ansible_become_password": server['root_password']
                 }
-            
-        if not target_ips:
-            logger.warning("No target IPs provided, using localhost for testing")
-            inventory_content["all"]["hosts"]["localhost"] = {
-                "ansible_connection": "local"
-            }
-        
-        logger.info(f"Created inventory with hosts: {list(inventory_content['all']['hosts'].keys())}")
-        
-        existing_playbook = os.path.join(self.playbook_dir, "system_checklist.yml")
-        if os.path.exists(existing_playbook):
-            logger.info(f"Using existing playbook: {existing_playbook}")
-            playbook_path = os.path.join(temp_dir, "system_checklist.yml")
-            import shutil
-            shutil.copy2(existing_playbook, playbook_path)
-        else:   
-            tasks = []
-            for item in checklist_items:
-                if not item.get('enabled', True):
-                    continue
-                    
-                task_name = item['name']
-                task_type = item.get('type', 'task')
-                
-                if task_type == 'task':
-                    task = {
-                        "name": task_name,
-                        "shell": self._get_task_command(item),
-                        "register": f"result_{item['id']}",
-                        "ignore_errors": True
-                    }
-                elif task_type == 'check':
-                    task = {
-                        "name": task_name,
-                        "shell": self._get_check_command(item),
-                        "register": f"check_{item['id']}",
-                        "ignore_errors": True
-                    }
-                else:
-                    task = {
-                        "name": task_name,
-                        "debug": {
-                            "msg": f"Info: {item.get('description', '')}"
-                        }
-                    }
-                
-                tasks.append(task)
-            
-            playbook_content = [{
-                "name": "Dynamic System Checklist",
-                "hosts": "all",
-                "gather_facts": True,
-                "tasks": tasks
-            }]
-            
-            playbook_path = os.path.join(temp_dir, "dynamic_checklist.yml")
-            
-            with open(playbook_path, 'w') as f:
-                yaml.dump(playbook_content, f, default_flow_style=False)
         
         inventory_path = os.path.join(temp_dir, "inventory.yml")
-        
         with open(inventory_path, 'w') as f:
             yaml.dump(inventory_content, f, default_flow_style=False)
-            
-        logger.info(f"Using playbook: {playbook_path}")
-        logger.info(f"Using inventory: {inventory_path}")
-        return temp_dir, playbook_path, inventory_path
-    
-    def _get_task_command(self, item: Dict) -> str:
-        item_name = item['name'].lower()
         
-        if 'os information' in item_name:
-            return "uname -a && cat /etc/os-release"
-        elif 'system services' in item_name:
-            return "systemctl list-units --type=service --state=running | head -20"
-        elif 'disk usage' in item_name:
-            return "df -h"
-        elif 'network' in item_name:
-            return "ip addr show"
-        else:
-            return "echo 'Task completed'"
-    
-    def _get_check_command(self, item: Dict) -> str:
-        item_name = item['name'].lower()
+        # Log inventory details
+        logger.info(f"Inventory created with {len(servers)} servers")
+        for server in servers:
+            ip = server['ip']
+            if ip in ['localhost', '127.0.0.1']:
+                logger.info(f"  {ip}: local connection (no sudo)")
+            else:
+                logger.info(f"  {ip}: ssh_user={server['admin_username']}, sudo_user=root")
         
-        if 'ssh' in item_name:
-            return "grep -E '^(PermitRootLogin|PasswordAuthentication)' /etc/ssh/sshd_config"
-        elif 'firewall' in item_name:
-            return "systemctl is-active firewalld"
-        else:
-            return "echo 'Check completed'"
-    
-    def run_playbook(self, job_id: int, checklist_items: List[Dict], target_ips: List[str]) -> Dict:
-        logger.info(f"Starting Ansible playbook for job {job_id}")
+        tasks = []
+        for i, cmd in enumerate(commands):
+            task = {
+                "name": cmd.get('title', f"Command {i+1}"),
+                "shell": cmd['command'],
+                "register": f"result_{i}",
+                "ignore_errors": True
+            }
+            tasks.append(task)
         
+        playbook_content = [{
+            "name": "Dynamic Commands Execution",
+            "hosts": "all",
+            "gather_facts": False,
+            "tasks": tasks
+        }]
+        
+        playbook_path = os.path.join(temp_dir, "dynamic_commands.yml")
+        with open(playbook_path, 'w') as f:
+            yaml.dump(playbook_content, f, default_flow_style=False)
+        
+        logger.info(f"Created playbook: {playbook_path}")
+        return temp_dir
+    
+    def run_playbook(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str):
+        """Run playbook and store results"""
         try:
-            temp_dir, playbook_path, inventory_path = self.create_dynamic_playbook(checklist_items, target_ips)
+            logger.info(f"Starting job {job_id} with {len(commands)} commands on {len(servers)} servers")
             
             self.running_jobs[job_id] = {
                 'status': 'running',
-                'current_task': 0,
-                'total_tasks': len([item for item in checklist_items if item.get('enabled', True)]),
-                'start_time': datetime.now(),
-                'progress': 0,
-                'logs': []
+                'start_time': datetime.now().isoformat(),
+                'commands_count': len(commands),
+                'servers_count': len(servers),
+                'progress': 0
             }
             
-            logger.info(f"Running ansible-runner with playbook: {playbook_path}")
+            temp_dir = self.create_dynamic_playbook(commands, servers)
+            
             result = run(
-                playbook=playbook_path,
-                inventory=inventory_path,
+                playbook=os.path.join(temp_dir, "dynamic_commands.yml"),
+                inventory=os.path.join(temp_dir, "inventory.yml"),
                 private_data_dir=temp_dir,
                 quiet=False
             )
             
-            logger.info(f"Ansible-runner completed with status: {result.status}")
-            logger.info(f"Ansible-runner return code: {result.rc}")
+            results = self._process_results(result, commands, servers, job_id, timestamp)
             
-            results = self._process_ansible_results(result, checklist_items)
+            self.running_jobs[job_id].update({
+                'status': 'completed',
+                'end_time': datetime.now().isoformat(),
+                'success': result.rc == 0
+            })
             
-            self.running_jobs[job_id]['status'] = 'completed'
-            self.running_jobs[job_id]['progress'] = 100
-            self.running_jobs[job_id]['end_time'] = datetime.now()
+            self.job_results[job_id] = results
             
-            logger.info(f"Ansible playbook completed for job {job_id}")
-            return results
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            logger.info(f"Job {job_id} completed successfully")
             
         except Exception as e:
-            logger.error(f"Error running Ansible playbook for job {job_id}: {str(e)}")
-            self.running_jobs[job_id]['status'] = 'failed'
-            self.running_jobs[job_id]['error'] = str(e)
-            raise
+            logger.error(f"Error in job {job_id}: {str(e)}")
+            
+            if job_id in self.running_jobs:
+                self.running_jobs[job_id].update({
+                    'status': 'failed',
+                    'end_time': datetime.now().isoformat(),
+                    'error': str(e)
+                })
+            
+            if 'temp_dir' in locals():
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
     
-    def _process_ansible_results(self, result: Any, checklist_items: List[Dict]) -> Dict:
-        logger.info("Processing Ansible results")
+    def _process_results(self, result: Any, commands: List[Dict], servers: List[Dict], job_id: str, timestamp: str) -> Dict:
+        """Process ansible results and create detailed report"""
+        logger.info(f"Processing results for job {job_id}")
         
-        processed_results = {
-            'summary': {
-                'total_items': len(checklist_items),
-                'completed_items': 0,
-                'failed_items': 0,
-                'score': 0
-            },
-            'items': [],
-            'raw_output': {}
-        }
+        log_filename = f"{timestamp}.txt"
+        log_path = os.path.join("logs", log_filename)
         
-        for item in checklist_items:
-            if not item.get('enabled', True):
-                continue
-                
-            item_result = {
-                'id': item['id'],
-                'name': item['name'],
-                'type': item.get('type', 'task'),
-                'status': 'completed',
-                'output': '',
-                'score': 100,
-                'passed': True
+        log_content = []
+        log_content.append(f"Job ID: {job_id}")
+        log_content.append(f"Timestamp: {timestamp}")
+        log_content.append(f"Commands: {len(commands)}")
+        log_content.append(f"Servers: {len(servers)}")
+        log_content.append(f"Return Code: {result.rc}")
+        
+        # Log execution details per server
+        localhost_servers = [s for s in servers if s['ip'] in ['localhost', '127.0.0.1']]
+        remote_servers = [s for s in servers if s['ip'] not in ['localhost', '127.0.0.1']]
+        
+        if localhost_servers:
+            log_content.append(f"Localhost servers: {len(localhost_servers)} (user privileges)")
+        if remote_servers:
+            log_content.append(f"Remote servers: {len(remote_servers)} (root via sudo)")
+        
+        log_content.append("=" * 50)
+        
+        server_results = {}
+        for server in servers:
+            ip = server['ip']
+            server_results[ip] = {
+                'ip': ip,
+                'admin_username': server['admin_username'],
+                'root_username': server['root_username'],
+                'commands': [],
+                'status': 'unknown',
+                'error': None
             }
             
-            register_name = f"result_{item['id']}" if item.get('type') == 'task' else f"check_{item['id']}"
+            log_content.append(f"\nServer: {ip}")
+            log_content.append("-" * 30)
             
-            item_result = self._evaluate_item_result(item, item_result, result)
-            
-            processed_results['items'].append(item_result)
-            
-            if item_result['passed']:
-                processed_results['summary']['completed_items'] += 1
+            if hasattr(result, 'stats') and ip in result.stats.get('ok', {}):
+                server_results[ip]['status'] = 'success'
+                
+                for i, cmd in enumerate(commands):
+                    cmd_result = {
+                        'title': cmd.get('title', f'Command {i+1}'),
+                        'command': cmd['command'],
+                        'output': '',
+                        'error': '',
+                        'return_code': None,
+                        'success': False
+                    }
+                    
+                    try:
+                        if hasattr(result, 'events'):
+                            for event in result.events:
+                                if event.get('event') == 'runner_on_ok' and event.get('event_data', {}).get('host') == ip:
+                                    task_name = event.get('event_data', {}).get('task', '')
+                                    if f"result_{i}" in task_name or cmd.get('title') in task_name:
+                                        res = event.get('event_data', {}).get('res', {})
+                                        cmd_result['output'] = res.get('stdout', '')
+                                        cmd_result['error'] = res.get('stderr', '')
+                                        cmd_result['return_code'] = res.get('rc', 0)
+                                        cmd_result['success'] = res.get('rc', 1) == 0
+                                        break
+                    except Exception as e:
+                        logger.warning(f"Error processing command {i} for {ip}: {str(e)}")
+                        cmd_result['error'] = f"Error processing result: {str(e)}"
+                    
+                    server_results[ip]['commands'].append(cmd_result)
+                    
+                    log_content.append(f"\nCommand {i+1}: {cmd_result['title']}")
+                    log_content.append(f"Command: {cmd_result['command']}")
+                    log_content.append(f"Return Code: {cmd_result['return_code']}")
+                    log_content.append(f"Success: {cmd_result['success']}")
+                    if cmd_result['output']:
+                        log_content.append(f"Output:\n{cmd_result['output']}")
+                    if cmd_result['error']:
+                        log_content.append(f"Error:\n{cmd_result['error']}")
+                    log_content.append("-" * 20)
+                    
             else:
-                processed_results['summary']['failed_items'] += 1
+                server_results[ip]['status'] = 'failed'
+                server_results[ip]['error'] = 'Server unreachable or connection failed'
+                log_content.append(f"Status: Failed - Server unreachable")
         
-        if processed_results['summary']['total_items'] > 0:
-            processed_results['summary']['score'] = (
-                processed_results['summary']['completed_items'] / 
-                processed_results['summary']['total_items'] * 100
-            )
+        try:
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(log_content))
+            logger.info(f"Log saved to: {log_path}")
+        except Exception as e:
+            logger.error(f"Error saving log file: {str(e)}")
         
-        logger.info(f"Processed results: {processed_results['summary']}")
-        return processed_results
+        self.job_logs[job_id] = {
+            'log_file': log_path,
+            'log_content': log_content
+        }
+        
+        summary = {
+            'total_servers': len(servers),
+            'successful_servers': sum(1 for s in server_results.values() if s['status'] == 'success'),
+            'failed_servers': sum(1 for s in server_results.values() if s['status'] == 'failed'),
+            'total_commands': len(commands),
+            'return_code': result.rc
+        }
+        
+        return {
+            'job_id': job_id,
+            'timestamp': timestamp,
+            'summary': summary,
+            'servers': server_results,
+            'log_file': log_path
+        }
     
-    def _evaluate_item_result(self, item: Dict, item_result: Dict, ansible_result: Any) -> Dict:
-        item_name = item['name'].lower()
-        
-        if 'ssh' in item_name:
-            if hasattr(ansible_result, 'events'):
-                for event in ansible_result.events:
-                    if event.get('event') == 'runner_on_ok':
-                        output = event.get('event_data', {}).get('res', {}).get('stdout', '')
-                        if 'PermitRootLogin no' in output and 'PasswordAuthentication no' in output:
-                            item_result['passed'] = True
-                            item_result['score'] = 100
-                        else:
-                            item_result['passed'] = False
-                            item_result['score'] = 0
-                        item_result['output'] = output
-                        item_result['status'] = 'completed'
-                        break
-        
-        elif 'firewall' in item_name:
-            if hasattr(ansible_result, 'events'):
-                for event in ansible_result.events:
-                    if event.get('event') == 'runner_on_ok':
-                        output = event.get('event_data', {}).get('res', {}).get('stdout', '').strip()
-                        if output == 'active':
-                            item_result['passed'] = True
-                            item_result['score'] = 100
-                        else:
-                            item_result['passed'] = False
-                            item_result['score'] = 0
-                        item_result['output'] = output
-                        item_result['status'] = 'completed'
-                        break
-        
-        else:
-            if hasattr(ansible_result, 'events'):
-                for event in ansible_result.events:
-                    if event.get('event') == 'runner_on_ok':
-                        output = event.get('event_data', {}).get('res', {}).get('stdout', '')
-                        if output:
-                            item_result['passed'] = True
-                            item_result['score'] = 100
-                        else:
-                            item_result['passed'] = False
-                            item_result['score'] = 0
-                        item_result['output'] = output
-                        item_result['status'] = 'completed'
-                        break
-        
-        return item_result
+    def get_job_status(self, job_id: str) -> Optional[Dict]:
+        """Get status of a job"""
+        if job_id in self.running_jobs:
+            return self.running_jobs[job_id]
+        return None
     
-    def get_job_status(self, job_id: int) -> Optional[Dict]:
-        return self.running_jobs.get(job_id)
+    def get_job_results(self, job_id: str) -> Optional[Dict]:
+        """Get results of a job"""
+        if job_id in self.job_results:
+            return self.job_results[job_id]
+        return None
     
-    def get_job_logs(self, job_id: int) -> List[str]:
-        """Lấy logs của job"""
-        job_status = self.running_jobs.get(job_id)
-        if job_status:
-            return job_status.get('logs', [])
-        return []
-
-ansible_runner_instance = AnsibleRunner() 
+    def get_job_logs(self, job_id: str) -> Optional[Dict]:
+        """Get logs of a job"""
+        if job_id in self.job_logs:
+            return self.job_logs[job_id]
+        return None
+    
+    def list_jobs(self) -> List[Dict]:
+        """List all jobs"""
+        jobs = []
+        for job_id, status in self.running_jobs.items():
+            job_info = {
+                'job_id': job_id,
+                'status': status['status'],
+                'start_time': status['start_time'],
+                'end_time': status.get('end_time'),
+                'commands_count': status['commands_count'],
+                'servers_count': status['servers_count']
+            }
+            if 'error' in status:
+                job_info['error'] = status['error']
+            jobs.append(job_info)
+        return jobs 

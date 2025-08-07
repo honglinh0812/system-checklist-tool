@@ -1,17 +1,11 @@
 Flask==2.3.3
 Flask-CORS==4.0.0
-Flask-SQLAlchemy==3.0.5
-psycopg2-binary==2.9.7
-redis==5.0.1
-celery==5.3.4
 ansible-runner==2.4.0
 PyYAML==6.0.1
 openpyxl==3.1.2
 pandas==2.1.1
-requests==2.31.0
 python-dotenv==1.0.0
 gunicorn==21.2.0
-flask-migrate==4.0.5
 # Additional libraries for enhanced functionality
 numpy==1.24.3
 xlrd==2.0.1

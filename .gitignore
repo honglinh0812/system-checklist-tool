@@ -234,3 +234,7 @@ yarn-debug.log*
 yarn-error.log*
 
 .vscode
+*.sh
+backend/logs
+backend/reports
+backend/uploads
