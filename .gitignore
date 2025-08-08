@@ -238,3 +238,6 @@ yarn-error.log*
 backend/logs
 backend/reports
 backend/uploads
+GEMINI.md
+QUICK_START.md
+RISK_REPORT_FEATURE_IMPLEMENTATION.md

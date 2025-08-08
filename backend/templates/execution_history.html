@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+
+{% block title %}Execution History - System Checklist Tool{% endblock %}
+
+{% block page_title %}Execution History{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item active">Execution History</li>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="fas fa-history mr-2"></i>
+                    Execution History (Last 7 Days)
+                </h3>
+                <div class="card-tools">
+                    <button type="button" class="btn btn-success" onclick="exportAllResults()">
+                        <i class="fas fa-download mr-2"></i>Export All
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if executions %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Thời gian chạy</th>
+                                <th>Loại đánh giá</th>
+                                <th>MOP được sử dụng</th>
+                                <th>Kết quả đánh giá</th>
+                                <th>Người thực thi</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for execution in executions %}
+                            <tr>
+                                <td>
+                                    <strong>{{ execution.execution_time.strftime('%Y-%m-%d %H:%M:%S') }}</strong>
+                                </td>
+                                <td>
+                                    {% if execution.risk_assessment %}
+                                        <span class="badge badge-warning">Đánh giá rủi ro</span>
+                                    {% endif %}
+                                    {% if execution.handover_assessment %}
+                                        <span class="badge badge-info">Đánh giá bàn giao</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ execution.mop.name }}</strong>
+                                    <br><small class="text-muted">{{ execution.mop.commands|length }} commands</small>
+                                </td>
+                                <td>
+                                    {% set success_count = execution.results|selectattr('is_valid', 'equalto', true)|list|length %}
+                                    {% set total_count = execution.results|length %}
+                                    {% set success_rate = (success_count / total_count * 100) if total_count > 0 else 0 %}
+                                    
+                                    <div class="progress-group">
+                                        <span class="float-right"><b>{{ success_count }}</b>/{{ total_count }}</span>
+                                        <div class="progress">
+                                            <div class="progress-bar 
+                                                {% if success_rate >= 80 %}
+                                                    bg-success
+                                                {% elif success_rate >= 50 %}
+                                                    bg-warning
+                                                {% else %}
+                                                    bg-danger
+                                                {% endif %}
+                                                "
+                                                role="progressbar"
+                                                data-width="{{ success_rate|round(1) }}"
+                                                aria-valuenow="{{ success_rate|round(1) }}"
+                                                aria-valuemin="0"
+                                                aria-valuemax="100">
+                                            </div>
+                                        </div>
+                                        <small class="text-muted">{{ "%.1f"|format(success_rate) }}% tỉ lệ thành công</small>
+                                    </div>
+                                </td>
+                                <td>{{ execution.user.username }}</td>
+                                <td>
+                                    <div class="btn-group">
+                                        <button class="btn btn-sm btn-info" onclick="viewExecutionDetail('{{ execution.id }}')">
+                                            <i class="fas fa-eye"></i> Chi tiết
+                                        </button>
+                                        <button class="btn btn-sm btn-success" onclick="exportExecutionResults('{{ execution.id }}')">
+                                            <i class="fas fa-download"></i> Export
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-info-circle fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No Execution History</h5>
+                    <p class="text-muted">No MOP executions found in the last 7 days.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Execution Detail Modal -->
+<div class="modal fade" id="executionDetailModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-xl" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Execution Detail</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="executionDetailContent">
+                    <!-- Detail content will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-success" onclick="exportCurrentExecution()">
+                    <i class="fas fa-download mr-2"></i>Export Results
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentExecutionId = null;
+
+function viewExecutionDetail(executionId) {
+    currentExecutionId = executionId;
+    
+    fetch(`/api/executions/${executionId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayExecutionDetail(data.execution);
+                $('#executionDetailModal').modal('show');
+            } else {
+                showAlert('error', 'Error loading execution details');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading execution details:', error);
+            showAlert('error', 'Error loading execution details');
+        });
+}
+
+function displayExecutionDetail(execution) {
+    const container = document.getElementById('executionDetailContent');
+    
+    // Calculate statistics
+    const totalResults = execution.results.length;
+    const successfulResults = execution.results.filter(r => r.is_valid).length;
+    const failedResults = totalResults - successfulResults;
+    const successRate = totalResults > 0 ? (successfulResults / totalResults * 100) : 0;
+    
+    let html = `
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="info-box">
+                    <span class="info-box-icon bg-info"><i class="fas fa-tasks"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">MOP Name</span>
+                        <span class="info-box-number">${execution.mop.name}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="info-box">
+                    <span class="info-box-icon bg-primary"><i class="fas fa-user"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Executed By</span>
+                        <span class="info-box-number">${execution.user.username}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="info-box">
+                    <span class="info-box-icon bg-success"><i class="fas fa-check"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Successful</span>
+                        <span class="info-box-number">${successfulResults}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="info-box">
+                    <span class="info-box-icon bg-danger"><i class="fas fa-times"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Failed</span>
+                        <span class="info-box-number">${failedResults}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="info-box">
+                    <span class="info-box-icon bg-warning"><i class="fas fa-server"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Servers</span>
+                        <span class="info-box-number">${execution.results.length}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="info-box">
+                    <span class="info-box-icon bg-info"><i class="fas fa-percentage"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Success Rate</span>
+                        <span class="info-box-number">${successRate.toFixed(1)}%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <h6>Execution Details</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr>
+                                <td><strong>Execution Time:</strong></td>
+                                <td>${new Date(execution.execution_time).toLocaleString()}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Assessment Type:</strong></td>
+                                <td>
+                                    ${execution.risk_assessment ? '<span class="badge badge-warning">Risk Assessment</span>' : ''}
+                                    ${execution.handover_assessment ? '<span class="badge badge-info">Handover Assessment</span>' : ''}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Total Commands:</strong></td>
+                                <td>${execution.mop.commands.length}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Group results by server
+    const serverResults = {};
+    execution.results.forEach(result => {
+        if (!serverResults[result.server_ip]) {
+            serverResults[result.server_ip] = [];
+        }
+        serverResults[result.server_ip].push(result);
+    });
+    
+    // Display server results
+    Object.keys(serverResults).forEach(serverIp => {
+        const results = serverResults[serverIp];
+        const serverSuccessCount = results.filter(r => r.is_valid).length;
+        const serverTotalCount = results.length;
+        const serverSuccessRate = serverTotalCount > 0 ? (serverSuccessCount / serverTotalCount * 100) : 0;
+        
+        html += `
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="fas fa-server mr-2"></i>${serverIp}
+                        <span class="badge badge-${serverSuccessRate >= 80 ? 'success' : serverSuccessRate >= 50 ? 'warning' : 'danger'} ml-2">
+                            ${serverSuccessCount}/${serverTotalCount} (${serverSuccessRate.toFixed(1)}%)
+                        </span>
+                    </h6>
+                </div>
+                <div class="card-body">
+        `;
+        
+        results.forEach(result => {
+            const command = execution.mop.commands.find(c => c.id === result.command_id);
+            if (command) {
+                html += `
+                    <div class="command-result mb-3 p-3 border rounded">
+                        <div class="row">
+                            <div class="col-md-12">
+                                <h6 class="text-primary">${command.title}</h6>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-12">
+                                <strong>Command:</strong>
+                                <pre class="bg-light p-2 rounded mt-1">${command.command}</pre>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Output:</strong>
+                                <pre class="bg-light p-2 rounded mt-1">${result.output || 'No output'}</pre>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Status:</strong>
+                                <span class="badge badge-${result.is_valid ? 'success' : 'danger'}">
+                                    ${result.is_valid ? 'Success' : 'Failed'}
+                                </span>
+                                ${result.stderr ? `<br><small class="text-danger">Error: ${result.stderr}</small>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+        
+        html += `
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+function exportExecutionResults(executionId) {
+    window.open(`/api/export/execution/${executionId}`, '_blank');
+}
+
+function exportCurrentExecution() {
+    if (currentExecutionId) {
+        exportExecutionResults(currentExecutionId);
+    }
+}
+
+function exportAllResults() {
+    // Implementation for exporting all results
+    showAlert('info', 'Export all functionality will be implemented');
+}
+
+// showAlert function is now global in base.html
+</script>
+{% endblock %}

@@ -91,7 +91,7 @@ class AnsibleRunner:
         logger.info(f"Created playbook: {playbook_path}")
         return temp_dir
     
-    def run_playbook(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str):
+    def run_playbook(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str, execution_id: int = None):
         """Run playbook and store results"""
         try:
             logger.info(f"Starting job {job_id} with {len(commands)} commands on {len(servers)} servers")
@@ -113,7 +113,7 @@ class AnsibleRunner:
                 quiet=False
             )
             
-            results = self._process_results(result, commands, servers, job_id, timestamp)
+            results = self._process_results(result, commands, servers, job_id, timestamp, execution_id)
             
             self.running_jobs[job_id].update({
                 'status': 'completed',
@@ -142,7 +142,7 @@ class AnsibleRunner:
                 import shutil
                 shutil.rmtree(temp_dir, ignore_errors=True)
     
-    def _process_results(self, result: Any, commands: List[Dict], servers: List[Dict], job_id: str, timestamp: str) -> Dict:
+    def _process_results(self, result: Any, commands: List[Dict], servers: List[Dict], job_id: str, timestamp: str, execution_id: int = None) -> Dict:
         """Process ansible results and create detailed report"""
         logger.info(f"Processing results for job {job_id}")
         
@@ -192,7 +192,10 @@ class AnsibleRunner:
                         'output': '',
                         'error': '',
                         'return_code': None,
-                        'success': False
+                        'success': False,
+                        'is_valid': False,
+                        'expected': cmd.get('reference_value', ''),
+                        'validation_type': cmd.get('validation_type', 'exact_match')
                     }
                     
                     try:
@@ -210,6 +213,21 @@ class AnsibleRunner:
                     except Exception as e:
                         logger.warning(f"Error processing command {i} for {ip}: {str(e)}")
                         cmd_result['error'] = f"Error processing result: {str(e)}"
+                    
+                    # Perform validation against reference value (exact match or specified)
+                    try:
+                        from command_validator import CommandValidator
+                        validator = CommandValidator()
+                        validation = validator.validate_output(
+                            cmd_result.get('output', ''),
+                            cmd_result.get('expected', ''),
+                            cmd_result.get('validation_type', 'exact_match')
+                        )
+                        cmd_result['is_valid'] = validation.get('is_valid', False)
+                        cmd_result['validation_details'] = validation
+                    except Exception as e:
+                        logger.warning(f"Validation error for {ip} cmd {i}: {str(e)}")
+                        cmd_result['is_valid'] = False
                     
                     server_results[ip]['commands'].append(cmd_result)
                     
@@ -235,6 +253,66 @@ class AnsibleRunner:
         except Exception as e:
             logger.error(f"Error saving log file: {str(e)}")
         
+        # Save results to database if execution_id is provided
+        if execution_id:
+            try:
+                from models.execution import ServerResult
+                from models.mop import Command as MOPCommand
+                
+                # Get all commands from database for this execution
+                mop_commands = MOPCommand.query.filter_by(mop_id=execution_id).all()
+                
+                for server_ip, server_result in server_results.items():
+                    for i, cmd_result in enumerate(server_result['commands']):
+                        # Find corresponding command in database
+                        command_id = None
+                        if i < len(mop_commands):
+                            command_id = mop_commands[i].id
+                        
+                        # Create server result record
+                        db_result = ServerResult(
+                            execution_id=execution_id,
+                            server_ip=server_ip,
+                            command_id=command_id,
+                            output=cmd_result.get('output', ''),
+                            stderr=cmd_result.get('error', ''),
+                            return_code=cmd_result.get('return_code'),
+                            is_valid=cmd_result.get('is_valid', False)
+                        )
+                        
+                        # Import db here to avoid circular imports
+                        from models import db
+                        db.session.add(db_result)
+                
+                db.session.commit()
+                logger.info(f"Results saved to database for execution {execution_id}")
+                
+            except Exception as e:
+                logger.error(f"Error saving results to database: {str(e)}")
+                # Don't fail the entire process if database save fails
+        
+        # Write per-server logs as [HHMMSS_DDMMYYYY_IP].txt
+        try:
+            base_dir = os.path.dirname(log_path)
+            for server_ip, result in server_results.items():
+                server_log_name = f"{timestamp}_{server_ip.replace(':', '_')}.txt"
+                server_log_path = os.path.join(base_dir, server_log_name)
+                lines = [f"Server: {server_ip}", "-" * 30]
+                for idx, cmd_res in enumerate(result['commands']):
+                    lines.append(f"Command {idx+1}: {cmd_res.get('title','')}")
+                    lines.append(f"Command: {cmd_res.get('command','')}")
+                    lines.append(f"Return Code: {cmd_res.get('return_code')}")
+                    lines.append(f"Validated: {cmd_res.get('is_valid')}")
+                    if cmd_res.get('output'):
+                        lines.append("Output:\n" + cmd_res.get('output'))
+                    if cmd_res.get('error'):
+                        lines.append("Error:\n" + cmd_res.get('error'))
+                    lines.append("-" * 20)
+                with open(server_log_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(lines))
+        except Exception as e:
+            logger.warning(f"Failed to write per-server logs: {str(e)}")
+
         self.job_logs[job_id] = {
             'log_file': log_path,
             'log_content': log_content
@@ -256,6 +334,12 @@ class AnsibleRunner:
             'log_file': log_path
         }
     
+    def run_playbook_sync(self, commands: List[Dict], servers: List[Dict], timestamp: str) -> Optional[Dict]:
+        """Synchronous helper used by scheduler; returns results dict or None."""
+        job_id = f"sync_{timestamp}"
+        self.run_playbook(job_id, commands, servers, timestamp)
+        return self.job_results.get(job_id)
+
     def get_job_status(self, job_id: str) -> Optional[Dict]:
         """Get status of a job"""
         if job_id in self.running_jobs:

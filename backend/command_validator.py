@@ -1,7 +1,10 @@
 import re
 import subprocess
 import shlex
-from typing import Dict, List, Any
+import logging
+from typing import Dict, List, Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 class CommandValidator:
     def __init__(self):
@@ -269,3 +272,268 @@ class CommandValidator:
     def get_forbidden_commands(self) -> List[str]:
         """Get list of forbidden commands"""
         return sorted(list(self.forbidden_commands)) 
+
+    def validate_output(self, actual_output: str, expected_output: str, validation_type: str = 'exact_match') -> Dict[str, Any]:
+        """
+        Validate command output against expected reference value
+        
+        Args:
+            actual_output: The actual command output
+            expected_output: The expected reference value
+            validation_type: Type of validation to perform
+            
+        Returns:
+            Dict containing validation result and details
+        """
+        try:
+            if validation_type not in self.validation_methods:
+                logger.warning(f"Unknown validation type: {validation_type}, using exact_match")
+                validation_type = 'exact_match'
+            
+            validation_method = self.validation_methods[validation_type]
+            is_valid, details = validation_method(actual_output, expected_output)
+            
+            return {
+                'is_valid': is_valid,
+                'validation_type': validation_type,
+                'actual_output': actual_output,
+                'expected_output': expected_output,
+                'details': details,
+                'score': self._calculate_score(actual_output, expected_output, validation_type)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during output validation: {str(e)}")
+            return {
+                'is_valid': False,
+                'validation_type': validation_type,
+                'actual_output': actual_output,
+                'expected_output': expected_output,
+                'details': f"Validation error: {str(e)}",
+                'score': 0
+            }
+    
+    def _exact_match(self, actual: str, expected: str) -> Tuple[bool, Dict[str, Any]]:
+        """Exact string match validation"""
+        actual_clean = actual.strip()
+        expected_clean = expected.strip()
+        
+        is_match = actual_clean == expected_clean
+        
+        details = {
+            'method': 'exact_match',
+            'actual_length': len(actual_clean),
+            'expected_length': len(expected_clean),
+            'match': is_match,
+            'differences': self._find_differences(actual_clean, expected_clean) if not is_match else []
+        }
+        
+        return is_match, details
+    
+    def _contains(self, actual: str, expected: str) -> Tuple[bool, Dict[str, Any]]:
+        """Contains validation - check if expected string is contained in actual output"""
+        actual_lower = actual.lower().strip()
+        expected_lower = expected.lower().strip()
+        
+        is_contained = expected_lower in actual_lower
+        
+        details = {
+            'method': 'contains',
+            'case_sensitive': False,
+            'contained': is_contained,
+            'found_at': actual_lower.find(expected_lower) if is_contained else -1
+        }
+        
+        return is_contained, details
+    
+    def _regex_match(self, actual: str, expected: str) -> Tuple[bool, Dict[str, Any]]:
+        """Regex pattern validation"""
+        try:
+            pattern = re.compile(expected, re.MULTILINE | re.DOTALL)
+            match = pattern.search(actual)
+            
+            is_match = match is not None
+            
+            details = {
+                'method': 'regex',
+                'pattern': expected,
+                'match_found': is_match,
+                'match_groups': list(match.groups()) if match else [],
+                'match_span': match.span() if match else None
+            }
+            
+            return is_match, details
+            
+        except re.error as e:
+            logger.error(f"Invalid regex pattern: {expected}, error: {str(e)}")
+            return False, {
+                'method': 'regex',
+                'error': f"Invalid regex pattern: {str(e)}",
+                'pattern': expected
+            }
+    
+    def _custom_validation(self, actual: str, expected: str) -> Tuple[bool, Dict[str, Any]]:
+        """Custom validation logic - can be extended for specific use cases"""
+        # For now, implement a flexible validation that checks multiple criteria
+        criteria = expected.split('|') if '|' in expected else [expected]
+        
+        results = []
+        for criterion in criteria:
+            criterion = criterion.strip()
+            if criterion.startswith('contains:'):
+                # Format: contains:text
+                text = criterion[9:]
+                result = text.lower() in actual.lower()
+                results.append(('contains', text, result))
+            elif criterion.startswith('regex:'):
+                # Format: regex:pattern
+                pattern = criterion[6:]
+                try:
+                    match = re.search(pattern, actual, re.MULTILINE | re.DOTALL)
+                    result = match is not None
+                    results.append(('regex', pattern, result))
+                except re.error:
+                    results.append(('regex', pattern, False))
+            elif criterion.startswith('not_contains:'):
+                # Format: not_contains:text
+                text = criterion[13:]
+                result = text.lower() not in actual.lower()
+                results.append(('not_contains', text, result))
+            else:
+                # Default to exact match
+                result = criterion.strip() == actual.strip()
+                results.append(('exact', criterion, result))
+        
+        # All criteria must pass for custom validation to succeed
+        is_valid = all(result[2] for result in results)
+        
+        details = {
+            'method': 'custom',
+            'criteria': results,
+            'all_passed': is_valid,
+            'passed_count': sum(1 for r in results if r[2]),
+            'total_count': len(results)
+        }
+        
+        return is_valid, details
+    
+    def _find_differences(self, actual: str, expected: str) -> List[Dict[str, Any]]:
+        """Find specific differences between actual and expected output"""
+        differences = []
+        
+        # Split into lines for line-by-line comparison
+        actual_lines = actual.split('\n')
+        expected_lines = expected.split('\n')
+        
+        max_lines = max(len(actual_lines), len(expected_lines))
+        
+        for i in range(max_lines):
+            actual_line = actual_lines[i] if i < len(actual_lines) else ''
+            expected_line = expected_lines[i] if i < len(expected_lines) else ''
+            
+            if actual_line != expected_line:
+                differences.append({
+                    'line_number': i + 1,
+                    'actual': actual_line,
+                    'expected': expected_line,
+                    'type': 'line_mismatch'
+                })
+        
+        return differences
+    
+    def _calculate_score(self, actual: str, expected: str, validation_type: str) -> float:
+        """Calculate a similarity score between actual and expected output"""
+        if not actual or not expected:
+            return 0.0
+        
+        if validation_type == 'exact_match':
+            return 100.0 if actual.strip() == expected.strip() else 0.0
+        
+        elif validation_type == 'contains':
+            actual_lower = actual.lower()
+            expected_lower = expected.lower()
+            if expected_lower in actual_lower:
+                # Calculate how much of the expected text is found
+                return min(100.0, (len(expected) / len(actual)) * 100)
+            return 0.0
+        
+        elif validation_type == 'regex':
+            try:
+                pattern = re.compile(expected, re.MULTILINE | re.DOTALL)
+                match = pattern.search(actual)
+                if match:
+                    # Calculate score based on match length vs expected length
+                    return min(100.0, (len(match.group()) / len(expected)) * 100)
+                return 0.0
+            except re.error:
+                return 0.0
+        
+        elif validation_type == 'custom':
+            # For custom validation, calculate score based on passed criteria
+            criteria = expected.split('|') if '|' in expected else [expected]
+            passed = 0
+            total = len(criteria)
+            
+            for criterion in criteria:
+                criterion = criterion.strip()
+                if self._evaluate_criterion(actual, criterion):
+                    passed += 1
+            
+            return (passed / total) * 100 if total > 0 else 0.0
+        
+        return 0.0
+    
+    def _evaluate_criterion(self, actual: str, criterion: str) -> bool:
+        """Evaluate a single criterion in custom validation"""
+        if criterion.startswith('contains:'):
+            text = criterion[9:]
+            return text.lower() in actual.lower()
+        elif criterion.startswith('regex:'):
+            pattern = criterion[6:]
+            try:
+                return re.search(pattern, actual, re.MULTILINE | re.DOTALL) is not None
+            except re.error:
+                return False
+        elif criterion.startswith('not_contains:'):
+            text = criterion[13:]
+            return text.lower() not in actual.lower()
+        else:
+            return criterion.strip() == actual.strip()
+    
+    def validate_multiple_commands(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Validate multiple command results and provide summary
+        
+        Args:
+            results: List of command execution results
+            
+        Returns:
+            Summary of validation results
+        """
+        total_commands = len(results)
+        passed_commands = sum(1 for r in results if r.get('is_valid', False))
+        failed_commands = total_commands - passed_commands
+        
+        # Calculate overall score
+        total_score = sum(r.get('score', 0) for r in results)
+        average_score = total_score / total_commands if total_commands > 0 else 0
+        
+        # Group by validation type
+        validation_summary = {}
+        for result in results:
+            vtype = result.get('validation_type', 'unknown')
+            if vtype not in validation_summary:
+                validation_summary[vtype] = {'total': 0, 'passed': 0}
+            validation_summary[vtype]['total'] += 1
+            if result.get('is_valid', False):
+                validation_summary[vtype]['passed'] += 1
+        
+        return {
+            'total_commands': total_commands,
+            'passed_commands': passed_commands,
+            'failed_commands': failed_commands,
+            'success_rate': (passed_commands / total_commands * 100) if total_commands > 0 else 0,
+            'average_score': average_score,
+            'validation_summary': validation_summary,
+            'results': results
+        } 
