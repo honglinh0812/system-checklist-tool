@@ -30,11 +30,11 @@ def create_template():
     """Create Excel templates"""
     print("🔄 Creating Excel templates...")
     try:
-        from create_template import create_excel_template
+        from scripts.create_template import create_excel_template
         create_excel_template()
         print("✅ Excel template v1 created successfully")
         
-        from create_template_v2 import create_excel_template_v2
+        from scripts.create_template_v2 import create_excel_template_v2
         create_excel_template_v2()
         print("✅ Excel template v2 created successfully")
     except Exception as e:
@@ -69,4 +69,4 @@ def main():
     print("3. Or use: ./start.sh to run both frontend and backend")
 
 if __name__ == "__main__":
-    main() 
+    main()

@@ -117,13 +117,13 @@ def reset_admin_password():
             print("❌ Admin user not found!")
             return False
         
-        # Reset password to required default
-        admin_user.set_password('admin')
+        # Reset password to required default (minimum 6 characters)
+        admin_user.set_password('admin123')
         db.session.commit()
         
         print("✅ Admin password reset successfully!")
         print(f"Username: {admin_user.username}")
-        print(f"New Password: admin")
+        print(f"New Password: admin123")
         print("\n⚠️  IMPORTANT: Change the password after login!")
         
         return True

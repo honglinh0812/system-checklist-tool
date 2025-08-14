@@ -13,3 +13,5 @@ def init_db(app):
     from .mop import MOP, Command, MOPFile, MOPReview
     from .execution import ExecutionHistory, ServerResult
     from .report import RiskReport
+    from .assessment import AssessmentResult
+    from .audit_log import UserActivityLog, ActionType, ResourceType

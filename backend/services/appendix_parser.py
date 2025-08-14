@@ -1,0 +1,232 @@
+import pandas as pd
+import os
+import logging
+from typing import List, Dict, Any, Tuple
+from werkzeug.datastructures import FileStorage
+
+logger = logging.getLogger(__name__)
+
+class AppendixParser:
+    """Service to parse MOP appendix files and extract commands"""
+    
+    def __init__(self):
+        self.required_columns = ['Command Name', 'Command', 'Reference Value']
+        self.allowed_extensions = ['xlsx', 'xls', 'csv', 'txt']
+    
+    def parse_appendix_file(self, file_path: str) -> Tuple[bool, List[Dict[str, Any]], str]:
+        """
+        Parse appendix file and extract commands
+        
+        Args:
+            file_path: Path to the appendix file
+            
+        Returns:
+            Tuple of (success, commands_list, error_message)
+        """
+        try:
+            if not os.path.exists(file_path):
+                return False, [], "File not found"
+            
+            # Get file extension
+            file_extension = file_path.rsplit('.', 1)[1].lower() if '.' in file_path else ''
+            
+            if file_extension not in self.allowed_extensions:
+                return False, [], f"Unsupported file format: {file_extension}"
+            
+            # Read file based on extension
+            try:
+                if file_extension in ['xlsx', 'xls']:
+                    df = pd.read_excel(file_path)
+                elif file_extension in ['csv', 'txt']:
+                    df = pd.read_csv(file_path)
+                else:
+                    return False, [], f"Unsupported file format: {file_extension}"
+            except Exception as e:
+                logger.error(f"Error reading file {file_path}: {str(e)}")
+                return False, [], f"Error reading file: {str(e)}"
+            
+            # Validate columns
+            success, error_msg = self._validate_columns(df)
+            if not success:
+                return False, [], error_msg
+            
+            # Extract commands
+            commands = self._extract_commands(df)
+            
+            if not commands:
+                return False, [], "No valid commands found in the file"
+            
+            logger.info(f"Successfully parsed {len(commands)} commands from {file_path}")
+            return True, commands, ""
+            
+        except Exception as e:
+            logger.error(f"Error parsing appendix file {file_path}: {str(e)}")
+            return False, [], f"Error parsing file: {str(e)}"
+    
+    def _validate_columns(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Validate that the DataFrame has required columns
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if df.empty:
+            return False, "File is empty"
+        
+        # Check if required columns exist (case-insensitive)
+        df_columns = [col.strip() for col in df.columns]
+        missing_columns = []
+        
+        for required_col in self.required_columns:
+            found = False
+            for df_col in df_columns:
+                if df_col.lower() == required_col.lower():
+                    found = True
+                    break
+            if not found:
+                missing_columns.append(required_col)
+        
+        if missing_columns:
+            return False, f"Missing required columns: {', '.join(missing_columns)}. Required columns are: {', '.join(self.required_columns)}"
+        
+        return True, ""
+    
+    def _extract_commands(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        Extract commands from DataFrame
+        
+        Args:
+            df: DataFrame containing command data
+            
+        Returns:
+            List of command dictionaries
+        """
+        commands = []
+        
+        # Normalize column names (case-insensitive mapping)
+        column_mapping = {}
+        for col in df.columns:
+            col_lower = col.strip().lower()
+            if col_lower == 'command name':
+                column_mapping['title'] = col
+            elif col_lower == 'command':
+                column_mapping['command'] = col
+            elif col_lower == 'reference value':
+                column_mapping['reference_value'] = col
+        
+        for index, row in df.iterrows():
+            try:
+                # Skip empty rows
+                if pd.isna(row[column_mapping['title']]) and pd.isna(row[column_mapping['command']]):
+                    continue
+                
+                title = str(row[column_mapping['title']]).strip() if pd.notna(row[column_mapping['title']]) else f"Command_{index + 1}"
+                command = str(row[column_mapping['command']]).strip() if pd.notna(row[column_mapping['command']]) else ""
+                reference_value = str(row[column_mapping['reference_value']]).strip() if pd.notna(row[column_mapping['reference_value']]) else ""
+                
+                # Skip rows with empty command
+                if not command:
+                    logger.warning(f"Skipping row {index + 1}: empty command")
+                    continue
+                
+                command_dict = {
+                    'title': title,
+                    'command': command,
+                    'reference_value': reference_value,
+                    'validation_type': self._determine_validation_type(reference_value),
+                    'order_index': len(commands) + 1,
+                    'is_critical': False,  # Default to non-critical
+                    'timeout_seconds': 30  # Default timeout
+                }
+                
+                commands.append(command_dict)
+                
+            except Exception as e:
+                logger.warning(f"Error processing row {index + 1}: {str(e)}")
+                continue
+        
+        return commands
+    
+    def _determine_validation_type(self, reference_value: str) -> str:
+        """
+        Determine validation type based on reference value
+        
+        Args:
+            reference_value: The reference value to analyze
+            
+        Returns:
+            Validation type string
+        """
+        if not reference_value:
+            return 'exact_match'
+        
+        ref_lower = reference_value.lower().strip()
+        
+        # Check for comparison operators
+        if any(op in ref_lower for op in ['>=', '<=', '>', '<', '!=']):
+            return 'comparison'
+        
+        # Check for regex patterns
+        if any(char in reference_value for char in ['^', '$', '*', '+', '?', '[', ']', '(', ')', '|']):
+            return 'regex'
+        
+        # Check for contains patterns
+        if 'contains:' in ref_lower or 'include:' in ref_lower:
+            return 'contains'
+        
+        # Default to exact match
+        return 'exact_match'
+    
+    def validate_file_before_upload(self, file: FileStorage) -> Tuple[bool, str]:
+        """
+        Validate file before processing (without saving)
+        
+        Args:
+            file: FileStorage object from request
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            if not file or not file.filename:
+                return False, "No file provided"
+            
+            # Check file extension
+            file_extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+            if file_extension not in self.allowed_extensions:
+                return False, f"Unsupported file format. Allowed formats: {', '.join(self.allowed_extensions)}"
+            
+            # Try to read the file content to validate structure
+            try:
+                if file_extension in ['xlsx', 'xls']:
+                    df = pd.read_excel(file)
+                elif file_extension in ['csv', 'txt']:
+                    df = pd.read_csv(file)
+                else:
+                    return False, f"Unsupported file format: {file_extension}"
+                
+                # Reset file pointer
+                file.seek(0)
+                
+                # Validate columns
+                success, error_msg = self._validate_columns(df)
+                if not success:
+                    return False, error_msg
+                
+                # Check if there are any valid commands
+                commands = self._extract_commands(df)
+                if not commands:
+                    return False, "No valid commands found in the file"
+                
+                return True, ""
+                
+            except Exception as e:
+                logger.error(f"Error validating file content: {str(e)}")
+                return False, f"Error reading file content: {str(e)}"
+            
+        except Exception as e:
+            logger.error(f"Error validating file: {str(e)}")
+            return False, f"Error validating file: {str(e)}"

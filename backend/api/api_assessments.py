@@ -1,0 +1,979 @@
+from flask import Blueprint, request, send_file, current_app
+from flask_jwt_extended import jwt_required
+from sqlalchemy import desc, func
+from datetime import datetime, timedelta
+from models.mop import MOP
+from models.execution import ExecutionHistory
+from models.report import RiskReport
+from models.user import User
+from models.assessment import AssessmentResult
+from models import db
+from .api_utils import (
+    api_response, api_error, paginate_query, validate_json,
+    get_request_filters, apply_filters, require_role
+)
+from core.auth import get_current_user
+from services.ansible_manager import AnsibleRunner
+import logging
+import os
+import tempfile
+import threading
+import time
+
+logger = logging.getLogger(__name__)
+
+assessments_bp = Blueprint('assessments', __name__, url_prefix='/api/assessments')
+ansible_runner = AnsibleRunner()
+
+@assessments_bp.route('/risk', methods=['GET'])
+@jwt_required()
+def get_risk_assessments():
+    """Get risk assessment data"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get filter parameters
+        filters = get_request_filters()
+        
+        # Build base query for MOPs
+        query = MOP.query
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            query = query.filter(MOP.created_by == current_user.id)
+        
+        # Apply risk level filter
+        risk_level = request.args.get('risk_level')
+        if risk_level:
+            query = query.filter(MOP.risk_level == risk_level)
+        
+        # Apply status filter
+        if filters.get('status'):
+            query = query.filter(MOP.status == filters['status'])
+        
+        # Apply date range filter
+        if filters.get('date_from'):
+            query = query.filter(MOP.created_at >= filters['date_from'])
+        if filters.get('date_to'):
+            query = query.filter(MOP.created_at <= filters['date_to'])
+        
+        # Get risk statistics
+        risk_stats = db.session.query(
+            MOP.risk_level,
+            func.count(MOP.id).label('count')
+        ).group_by(MOP.risk_level).all()
+        
+        # Get high-risk MOPs
+        high_risk_mops = query.filter(MOP.risk_level.in_(['high', 'critical'])).order_by(desc(MOP.created_at)).limit(10).all()
+        
+        # Get recent risk reports
+        recent_reports = RiskReport.query.order_by(desc(RiskReport.created_at)).limit(5).all()
+        
+        # Serialize data
+        risk_data = {
+            'statistics': {
+                'total_mops': query.count(),
+                'risk_distribution': [{'risk_level': stat.risk_level, 'count': stat.count} for stat in risk_stats]
+            },
+            'high_risk_mops': [
+                {
+                    'id': mop.id,
+                    'name': mop.name,
+                    'risk_level': mop.risk_level,
+                    'status': mop.status,
+                    'created_at': mop.created_at.isoformat(),
+                    'category': mop.category
+                } for mop in high_risk_mops
+            ],
+            'recent_reports': [
+                {
+                    'id': report.id,
+                    'report_type': report.report_type,
+                    'created_at': report.created_at.isoformat(),
+                    'status': getattr(report, 'status', 'completed')
+                } for report in recent_reports
+            ]
+        }
+        
+        return api_response(risk_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching risk assessments: {str(e)}")
+        return api_error('Failed to fetch risk assessments', 500)
+
+@assessments_bp.route('/handover', methods=['GET'])
+@jwt_required()
+def get_handover_assessments():
+    """Get handover assessment data"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get filter parameters
+        filters = get_request_filters()
+        
+        # Build base query for executions
+        query = ExecutionHistory.query.join(MOP)
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            query = query.filter(ExecutionHistory.executed_by == current_user.id)
+        
+        # Apply status filter
+        if filters.get('status'):
+            query = query.filter(ExecutionHistory.status == filters['status'])
+        
+        # Apply date range filter
+        if filters.get('date_from'):
+            query = query.filter(ExecutionHistory.started_at >= filters['date_from'])
+        if filters.get('date_to'):
+            query = query.filter(ExecutionHistory.started_at <= filters['date_to'])
+        
+        # Get execution statistics
+        execution_stats = db.session.query(
+            ExecutionHistory.status,
+            func.count(ExecutionHistory.id).label('count')
+        ).group_by(ExecutionHistory.status).all()
+        
+        # Get recent executions
+        recent_executions = query.order_by(desc(ExecutionHistory.started_at)).limit(10).all()
+        
+        # Get pending handovers (completed executions without handover)
+        pending_handovers = query.filter(
+            ExecutionHistory.status == 'completed',
+            ExecutionHistory.handover_assessment.is_(None)
+        ).order_by(desc(ExecutionHistory.completed_at)).limit(10).all()
+        
+        # Serialize data
+        handover_data = {
+            'statistics': {
+                'total_executions': query.count(),
+                'status_distribution': [{'status': stat.status, 'count': stat.count} for stat in execution_stats],
+                'pending_handovers': len(pending_handovers)
+            },
+            'recent_executions': [
+                {
+                    'id': execution.id,
+                    'mop_name': execution.mop.name if execution.mop else 'Unknown MOP',
+                    'status': execution.status,
+                    'started_at': execution.started_at.isoformat() if execution.started_at else None,
+                    'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+                    'duration': execution.duration,
+                    'executed_by': execution.executed_by,
+                    'handover_completed': execution.handover_assessment is not None,
+                    'dry_run': execution.dry_run
+                } for execution in recent_executions
+            ],
+            'pending_handovers': [
+                {
+                    'id': execution.id,
+                    'mop_name': execution.mop.name if execution.mop else 'Unknown MOP',
+                    'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+                    'executed_by': execution.executed_by,
+                    'duration': execution.duration
+                } for execution in pending_handovers
+            ]
+        }
+        
+        return api_response(handover_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching handover assessments: {str(e)}")
+        return api_error('Failed to fetch handover assessments', 500)
+
+@assessments_bp.route('/risk/generate', methods=['POST'])
+@require_role('admin')
+def generate_risk_report():
+    """Generate a new risk assessment report"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        data = request.get_json() or {}
+        report_type = data.get('report_type', 'comprehensive')
+        date_from = data.get('date_from')
+        date_to = data.get('date_to')
+        
+        # Create risk report record
+        risk_report = RiskReport(
+            report_type=report_type,
+            generated_by=current_user.id,
+            created_at=datetime.utcnow(),
+            parameters={
+                'date_from': date_from,
+                'date_to': date_to,
+                'report_type': report_type
+            }
+        )
+        
+        db.session.add(risk_report)
+        db.session.commit()
+        
+        # TODO: Implement actual report generation logic
+        # This would involve analyzing MOPs, executions, and generating PDF/Excel reports
+        
+        logger.info(f"Risk report {risk_report.id} generated by user {current_user.id}")
+        
+        return api_response({
+            'message': 'Risk report generation started',
+            'report_id': risk_report.id,
+            'report_type': report_type,
+            'status': 'generating'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating risk report: {str(e)}")
+        db.session.rollback()
+        return api_error('Failed to generate risk report', 500)
+
+@assessments_bp.route('/reports', methods=['GET'])
+@jwt_required()
+def get_assessment_reports():
+    """Get list of assessment reports"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Build query
+        query = RiskReport.query
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            query = query.filter(RiskReport.generated_by == current_user.id)
+        
+        # Apply filters
+        report_type = request.args.get('report_type')
+        if report_type:
+            query = query.filter(RiskReport.report_type == report_type)
+        
+        # Paginate
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        
+        result = paginate_query(query.order_by(desc(RiskReport.created_at)), page, per_page)
+        
+        # Serialize reports
+        reports_data = []
+        for report in result['items']:
+            generator = db.session.get(User, report.generated_by)
+            reports_data.append({
+                'id': report.id,
+                'report_type': report.report_type,
+                'created_at': report.created_at.isoformat(),
+                'generated_by': {
+                    'id': generator.id,
+                    'username': generator.username,
+                    'full_name': generator.full_name
+                } if generator else None,
+                'parameters': report.parameters,
+                'status': getattr(report, 'status', 'completed')
+            })
+        
+        return api_response({
+            'reports': reports_data,
+            'pagination': result['pagination']
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching assessment reports: {str(e)}")
+        return api_error('Failed to fetch reports', 500)
+
+@assessments_bp.route('/reports/<int:report_id>/download', methods=['GET'])
+@jwt_required()
+def download_assessment_report(report_id):
+    """Download an assessment report"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        report = RiskReport.query.get_or_404(report_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and report.generated_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        # TODO: Implement actual file download logic
+        # For now, create a temporary file with report data
+        
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        temp_file.write(f"Risk Assessment Report\n")
+        temp_file.write(f"Report ID: {report.id}\n")
+        temp_file.write(f"Type: {report.report_type}\n")
+        temp_file.write(f"Generated: {report.created_at}\n")
+        temp_file.write(f"Parameters: {report.parameters}\n")
+        temp_file.close()
+        
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name=f'risk_report_{report_id}.txt'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading report {report_id}: {str(e)}")
+        return api_error('Failed to download report', 500)
+
+# New Assessment Endpoints
+
+@assessments_bp.route('/risk/test-connection', methods=['POST'])
+@jwt_required()
+def test_risk_connection():
+    """Test connection to servers for risk assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        data = request.get_json()
+        if not data or 'servers' not in data:
+            return api_error('Server information required', 400)
+        
+        servers = data['servers']
+        connection_results = []
+        
+        for index, server in enumerate(servers):
+            server_ip = server.get('ip') or server.get('serverIP')
+            
+            # Skip test for localhost/127.0.0.1 if no credentials provided
+            if server_ip in ['localhost', '127.0.0.1']:
+                result = {
+                    'ip': server_ip,
+                    'success': True,
+                    'message': 'Local connection (no SSH required)',
+                    'serverIndex': index
+                }
+                connection_results.append(result)
+                continue
+            
+            # For remote servers, we need credentials to test
+            admin_username = server.get('admin_username')
+            admin_password = server.get('admin_password')
+            root_username = server.get('root_username', 'root')
+            root_password = server.get('root_password')
+            ssh_port = server.get('sshPort', 22)
+            
+            if not all([admin_username, admin_password, root_password]):
+                result = {
+                    'ip': server_ip,
+                    'success': False,
+                    'message': 'Missing credentials for SSH connection test',
+                    'serverIndex': index
+                }
+                connection_results.append(result)
+                continue
+            
+            # Create test server object for ansible
+            test_server = {
+                'ip': server_ip,
+                'admin_username': admin_username,
+                'admin_password': admin_password,
+                'root_username': root_username,
+                'root_password': root_password
+            }
+            
+            # Test with simple command
+            test_commands = [{
+                'title': 'Connection Test',
+                'command': 'echo "Connection test successful"'
+            }]
+            
+            timestamp = datetime.now().strftime("%H%M%S_%d%m%Y")
+            job_id = f"risk_test_{timestamp}_{index}"
+            
+            try:
+                # Run test in background
+                thread = threading.Thread(
+                    target=ansible_runner.run_playbook,
+                    args=(job_id, test_commands, [test_server], timestamp)
+                )
+                thread.daemon = True
+                thread.start()
+                
+                # Wait for the test to complete
+                time.sleep(8)  # Increased wait time for more reliable results
+                
+                # Check results
+                results = ansible_runner.get_job_results(job_id)
+                if results and results.get('summary', {}).get('successful_servers', 0) > 0:
+                    result = {
+                        'ip': server_ip,
+                        'success': True,
+                        'message': 'SSH connection successful',
+                        'serverIndex': index
+                    }
+                else:
+                    result = {
+                        'ip': server_ip,
+                        'success': False,
+                        'message': 'SSH connection failed. Please check credentials and network connectivity.',
+                        'serverIndex': index
+                    }
+                    
+            except Exception as conn_error:
+                logger.error(f"Connection test error for {server_ip}: {str(conn_error)}")
+                result = {
+                    'ip': server_ip,
+                    'success': False,
+                    'message': f'Connection test failed: {str(conn_error)}',
+                    'serverIndex': index
+                }
+            
+            connection_results.append(result)
+        
+        return api_response({
+            'results': connection_results
+        })
+        
+    except Exception as e:
+        logger.error(f"Error testing connections: {str(e)}")
+        return api_error('Failed to test connections', 500)
+
+@assessments_bp.route('/risk/start', methods=['POST'])
+@jwt_required()
+def start_risk_assessment():
+    """Start risk assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        data = request.get_json()
+        logger.info(f"Starting risk assessment - Request data: {data}")
+        
+        if not data or 'mop_id' not in data or 'servers' not in data:
+            logger.error(f"Missing required data - Data: {data}")
+            return api_error('MOP ID and server information required', 400)
+        
+        mop_id = data['mop_id']
+        servers = data['servers']
+        
+        # Validate MOP exists and has risk_assessment type
+        mop = MOP.query.get_or_404(mop_id)
+        if mop.assessment_type != 'risk_assessment':
+            return api_error('MOP is not configured for risk assessment', 400)
+        
+        # Create assessment record
+        logger.info(f"Creating assessment record for MOP {mop_id} by user {current_user.id}")
+        assessment = AssessmentResult(
+            mop_id=mop_id,
+            assessment_type='risk',
+            server_info=servers,
+            status='pending',
+            executed_by=current_user.id
+        )
+        db.session.add(assessment)
+        db.session.commit()
+        logger.info(f"Assessment record created with ID: {assessment.id}")
+        
+        # Run real assessment using Ansible
+        import threading
+        from services.ansible_manager import AnsibleRunner
+        from datetime import datetime as dt
+        
+        # Get the current app instance for the thread
+        app = current_app._get_current_object()
+        
+        def run_real_assessment():
+            # Create application context for the thread
+            with app.app_context():
+                try:
+                    # Re-fetch the assessment and MOP objects within the new context
+                    assessment_obj = AssessmentResult.query.get(assessment.id)
+                    mop_obj = MOP.query.get(mop_id)
+                    
+                    # Prepare commands for ansible
+                    commands = []
+                    for command in mop_obj.commands:
+                        commands.append({
+                            'title': command.title or command.description or f'Command {command.order_index}',
+                            'command': command.command_text,
+                            'reference_value': command.expected_output or command.reference_value or '',
+                            'validation_type': 'exact_match'
+                        })
+                    
+                    # Prepare servers for ansible
+                    ansible_servers = []
+                    for server in servers:
+                        ansible_servers.append({
+                            'ip': server.get('serverIP', server.get('ip')),
+                            'admin_username': server.get('adminUsername', server.get('admin_username', 'admin')),
+                            'admin_password': server.get('adminPassword', server.get('admin_password', '')),
+                            'root_username': server.get('rootUsername', server.get('root_username', 'root')),
+                            'root_password': server.get('rootPassword', server.get('root_password', ''))
+                        })
+                    
+                    # Run ansible playbook
+                    ansible_runner = AnsibleRunner()
+                    timestamp = dt.now().strftime('%H%M%S_%d%m%Y')
+                    job_id = f'risk_assessment_{assessment.id}_{timestamp}'
+                    
+                    logger.info(f"Starting real assessment with job_id: {job_id}")
+                    logger.info(f"Starting ansible playbook with job_id: {job_id}, commands: {len(commands)}, servers: {len(ansible_servers)}")
+                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp)
+                    logger.info(f"Ansible playbook started for assessment {assessment.id}")
+                    
+                    # Wait for completion and get results
+                    import time
+                    max_wait = 300  # 5 minutes timeout
+                    wait_time = 0
+                    
+                    while wait_time < max_wait:
+                        status = ansible_runner.get_job_status(job_id)
+                        if status and status.get('status') in ['completed', 'failed']:
+                            break
+                        time.sleep(5)
+                        wait_time += 5
+                    
+                    # Get results
+                    logger.info(f"Getting results for job_id: {job_id}")
+                    results = ansible_runner.get_job_results(job_id)
+                    logger.info(f"Results retrieved: {results is not None}")
+                    execution_logs = ""
+                    
+                    # Always try to get logs, even if results failed
+                    logger.info(f"Getting logs for job_id: {job_id}")
+                    logs_data = ansible_runner.get_job_logs(job_id)
+                    if logs_data and logs_data.get('log_content'):
+                        execution_logs = logs_data['log_content']
+                        logger.info(f"Logs retrieved, length: {len(execution_logs)}")
+                    else:
+                        logger.warning(f"No logs retrieved for job_id: {job_id}")
+                    
+                    if results:
+                        # Convert ansible results to assessment format
+                        test_results = []
+                        for server_ip, server_result in results['servers'].items():
+                            for cmd_idx, cmd_result in enumerate(server_result['commands']):
+                                test_results.append({
+                                    'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
+                                    'command_index': cmd_idx,
+                                    'server_ip': server_ip,
+                                    'command_text': cmd_result['command'],
+                                    'result': 'success' if cmd_result['success'] else 'failed',
+                                    'output': cmd_result['output'],
+                                    'reference_value': cmd_result['expected']
+                                })
+                        
+                        # Update assessment with results
+                        assessment_obj.test_results = test_results
+                        assessment_obj.execution_logs = execution_logs
+                        assessment_obj.status = 'completed'
+                        assessment_obj.completed_at = datetime.utcnow()
+                        db.session.commit()
+                        logger.info(f"Assessment {assessment.id} completed successfully")
+                    else:
+                        # Even if no results, save the logs for debugging
+                        assessment_obj.execution_logs = execution_logs
+                        assessment_obj.status = 'failed'
+                        assessment_obj.error_message = "No results returned from ansible"
+                        assessment_obj.completed_at = datetime.utcnow()
+                        db.session.commit()
+                        logger.error(f"Assessment {assessment.id} failed: No results returned from ansible")
+                        
+                except Exception as e:
+                    logger.error(f"Error in real assessment: {str(e)}")
+                    try:
+                        assessment_obj = AssessmentResult.query.get(assessment.id)
+                        
+                        # Try to get logs even when there's an error
+                        execution_logs = ""
+                        try:
+                            logs_data = ansible_runner.get_job_logs(job_id)
+                            if logs_data and logs_data.get('log_content'):
+                                execution_logs = logs_data['log_content']
+                        except:
+                            pass
+                        
+                        assessment_obj.status = 'failed'
+                        assessment_obj.error_message = str(e)
+                        assessment_obj.execution_logs = execution_logs
+                        assessment_obj.completed_at = datetime.utcnow()
+                        db.session.commit()
+                    except Exception as commit_error:
+                        logger.error(f"Error updating failed status: {str(commit_error)}")
+        
+        # Start real assessment in background
+        thread = threading.Thread(target=run_real_assessment)
+        thread.daemon = True
+        thread.start()
+        
+        return api_response({
+            'assessment_id': assessment.id,
+            'status': 'started',
+            'message': 'Risk assessment started successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting risk assessment: {str(e)}")
+        return api_error('Failed to start risk assessment', 500)
+
+@assessments_bp.route('/risk/results/<int:assessment_id>', methods=['GET'])
+@jwt_required()
+def get_risk_assessment_results(assessment_id):
+    """Get risk assessment results"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        assessment = AssessmentResult.query.get_or_404(assessment_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and assessment.executed_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        return api_response(assessment.to_dict())
+        
+    except Exception as e:
+        logger.error(f"Error fetching assessment results: {str(e)}")
+        return api_error('Failed to fetch assessment results', 500)
+
+@assessments_bp.route('/handover/test-connection', methods=['POST'])
+@jwt_required()
+def test_handover_connection():
+    """Test connection to servers for handover assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        data = request.get_json()
+        if not data or 'servers' not in data:
+            return api_error('Server information required', 400)
+        
+        servers = data['servers']
+        connection_results = []
+        
+        for index, server in enumerate(servers):
+            server_ip = server.get('ip') or server.get('serverIP')
+            
+            # Skip test for localhost/127.0.0.1 if no credentials provided
+            if server_ip in ['localhost', '127.0.0.1']:
+                result = {
+                    'ip': server_ip,
+                    'success': True,
+                    'message': 'Local connection (no SSH required)',
+                    'serverIndex': index
+                }
+                connection_results.append(result)
+                continue
+            
+            # For remote servers, we need credentials to test
+            admin_username = server.get('admin_username')
+            admin_password = server.get('admin_password')
+            root_username = server.get('root_username', 'root')
+            root_password = server.get('root_password')
+            ssh_port = server.get('sshPort', 22)
+            
+            if not all([admin_username, admin_password, root_password]):
+                result = {
+                    'ip': server_ip,
+                    'success': False,
+                    'message': 'Missing credentials for SSH connection test',
+                    'serverIndex': index
+                }
+                connection_results.append(result)
+                continue
+            
+            # Create test server object for ansible
+            test_server = {
+                'ip': server_ip,
+                'admin_username': admin_username,
+                'admin_password': admin_password,
+                'root_username': root_username,
+                'root_password': root_password
+            }
+            
+            # Test with simple command
+            test_commands = [{
+                'title': 'Connection Test',
+                'command': 'echo "Connection test successful"'
+            }]
+            
+            timestamp = datetime.now().strftime("%H%M%S_%d%m%Y")
+            job_id = f"handover_test_{timestamp}_{index}"
+            
+            try:
+                # Run test in background
+                thread = threading.Thread(
+                    target=ansible_runner.run_playbook,
+                    args=(job_id, test_commands, [test_server], timestamp)
+                )
+                thread.daemon = True
+                thread.start()
+                
+                # Wait for the test to complete
+                time.sleep(8)  # Increased wait time for more reliable results
+                
+                # Check results
+                results = ansible_runner.get_job_results(job_id)
+                if results and results.get('summary', {}).get('successful_servers', 0) > 0:
+                    result = {
+                        'ip': server_ip,
+                        'success': True,
+                        'message': 'SSH connection successful',
+                        'serverIndex': index
+                    }
+                else:
+                    result = {
+                        'ip': server_ip,
+                        'success': False,
+                        'message': 'SSH connection failed. Please check credentials and network connectivity.',
+                        'serverIndex': index
+                    }
+                    
+            except Exception as conn_error:
+                logger.error(f"Connection test error for {server_ip}: {str(conn_error)}")
+                result = {
+                    'ip': server_ip,
+                    'success': False,
+                    'message': f'Connection test failed: {str(conn_error)}',
+                    'serverIndex': index
+                }
+            
+            connection_results.append(result)
+        
+        return api_response({
+            'results': connection_results
+        })
+        
+    except Exception as e:
+        logger.error(f"Error testing connections: {str(e)}")
+        return api_error('Failed to test connections', 500)
+
+@assessments_bp.route('/handover/start', methods=['POST'])
+@jwt_required()
+def start_handover_assessment():
+    """Start handover assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        data = request.get_json()
+        if not data or 'mop_id' not in data or 'servers' not in data:
+            return api_error('MOP ID and server information required', 400)
+        
+        mop_id = data['mop_id']
+        servers = data['servers']
+        
+        # Validate MOP exists and has handover_assessment type
+        mop = MOP.query.get_or_404(mop_id)
+        if mop.assessment_type != 'handover_assessment':
+            return api_error('MOP is not configured for handover assessment', 400)
+        
+        # Create assessment result record
+        assessment = AssessmentResult(
+            mop_id=mop_id,
+            assessment_type='handover',
+            server_info=servers,
+            status='pending',
+            executed_by=current_user.id
+        )
+        
+        db.session.add(assessment)
+        db.session.commit()
+        
+        # Run real assessment using Ansible
+        import threading
+        from services.ansible_manager import AnsibleRunner
+        from datetime import datetime as dt
+        
+        # Get the current app instance for the thread
+        app = current_app._get_current_object()
+        
+        def run_real_assessment():
+            # Create application context for the thread
+            with app.app_context():
+                try:
+                    # Re-fetch the assessment and MOP objects within the new context
+                    assessment_obj = AssessmentResult.query.get(assessment.id)
+                    mop_obj = MOP.query.get(mop_id)
+                    
+                    commands = []
+                    for command in mop_obj.commands:
+                        commands.append({
+                            'title': command.title or command.description or f'Command {command.order_index}',
+                            'command': command.command_text,
+                            'reference_value': command.expected_output or command.reference_value or '',
+                            'validation_type': 'exact_match'
+                        })
+                    
+                    # Prepare servers for ansible
+                    ansible_servers = []
+                    for server in servers:
+                        ansible_servers.append({
+                            'ip': server.get('serverIP', server.get('ip')),
+                            'admin_username': server.get('adminUsername', server.get('admin_username', 'admin')),
+                            'admin_password': server.get('adminPassword', server.get('admin_password', '')),
+                            'root_username': server.get('rootUsername', server.get('root_username', 'root')),
+                            'root_password': server.get('rootPassword', server.get('root_password', ''))
+                        })
+                    
+                    # Run ansible playbook
+                    ansible_runner = AnsibleRunner()
+                    timestamp = dt.now().strftime('%H%M%S_%d%m%Y')
+                    job_id = f'handover_assessment_{assessment.id}_{timestamp}'
+                    
+                    logger.info(f"Starting real handover assessment with job_id: {job_id}")
+                    logger.info(f"Starting ansible playbook with job_id: {job_id}, commands: {len(commands)}, servers: {len(ansible_servers)}")
+                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp)
+                    logger.info(f"Ansible playbook started for handover assessment {assessment.id}")
+                    
+                    # Wait for completion and get results
+                    import time
+                    max_wait = 300  # 5 minutes timeout
+                    wait_time = 0
+                    
+                    while wait_time < max_wait:
+                        status = ansible_runner.get_job_status(job_id)
+                        if status and status.get('status') in ['completed', 'failed']:
+                            break
+                        time.sleep(5)
+                        wait_time += 5
+                    
+                    # Get results
+                    logger.info(f"Getting results for handover job_id: {job_id}")
+                    results = ansible_runner.get_job_results(job_id)
+                    logger.info(f"Handover results retrieved: {results is not None}")
+                    execution_logs = ""
+                    
+                    # Always try to get logs, even if results failed
+                    logger.info(f"Getting logs for handover job_id: {job_id}")
+                    logs_data = ansible_runner.get_job_logs(job_id)
+                    if logs_data and logs_data.get('log_content'):
+                        execution_logs = logs_data['log_content']
+                        logger.info(f"Handover logs retrieved, length: {len(execution_logs)}")
+                    else:
+                        logger.warning(f"No logs retrieved for handover job_id: {job_id}")
+                    
+                    if results:
+                        # Convert ansible results to assessment format
+                        test_results = []
+                        for server_ip, server_result in results['servers'].items():
+                            for cmd_idx, cmd_result in enumerate(server_result['commands']):
+                                test_results.append({
+                                    'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
+                                    'command_index': cmd_idx,
+                                    'server_ip': server_ip,
+                                    'command_text': cmd_result['command'],
+                                    'result': 'success' if cmd_result['success'] else 'failed',
+                                    'output': cmd_result['output'],
+                                    'reference_value': cmd_result['expected']
+                                })
+                        
+                        # Update assessment with results
+                        assessment_obj.test_results = test_results
+                        assessment_obj.execution_logs = execution_logs
+                        assessment_obj.status = 'completed'
+                        assessment_obj.completed_at = datetime.utcnow()
+                        db.session.commit()
+                        logger.info(f"Handover assessment {assessment.id} completed successfully")
+                    else:
+                        # Even if no results, save the logs for debugging
+                        assessment_obj.execution_logs = execution_logs
+                        assessment_obj.status = 'failed'
+                        assessment_obj.error_message = "No results returned from ansible"
+                        assessment_obj.completed_at = datetime.utcnow()
+                        db.session.commit()
+                        logger.error(f"Handover assessment {assessment.id} failed: No results returned from ansible")
+                        
+                except Exception as e:
+                    logger.error(f"Error in real handover assessment: {str(e)}")
+                    try:
+                        assessment_obj = AssessmentResult.query.get(assessment.id)
+                        
+                        # Try to get logs even when there's an error
+                        execution_logs = ""
+                        try:
+                            logs_data = ansible_runner.get_job_logs(job_id)
+                            if logs_data and logs_data.get('log_content'):
+                                execution_logs = logs_data['log_content']
+                        except:
+                            pass
+                        
+                        assessment_obj.status = 'failed'
+                        assessment_obj.error_message = str(e)
+                        assessment_obj.execution_logs = execution_logs
+                        assessment_obj.completed_at = datetime.utcnow()
+                        db.session.commit()
+                    except Exception as commit_error:
+                        logger.error(f"Error updating failed status: {str(commit_error)}")
+        
+        # Start real assessment in background
+        thread = threading.Thread(target=run_real_assessment)
+        thread.daemon = True
+        thread.start()
+        
+        return api_response({
+            'assessment_id': assessment.id,
+            'status': 'started',
+            'message': 'Handover assessment started successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting handover assessment: {str(e)}")
+        return api_error('Failed to start handover assessment', 500)
+
+@assessments_bp.route('/handover/results/<int:assessment_id>', methods=['GET'])
+@jwt_required()
+def get_handover_assessment_results(assessment_id):
+    """Get handover assessment results"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        assessment = AssessmentResult.query.get_or_404(assessment_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and assessment.executed_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        return api_response(assessment.to_dict())
+        
+    except Exception as e:
+        logger.error(f"Error fetching assessment results: {str(e)}")
+        return api_error('Failed to fetch assessment results', 500)
+
+@assessments_bp.route('/template/download', methods=['GET'])
+@jwt_required()
+def download_server_template():
+    """Download server information template"""
+    try:
+        # Create a temporary Excel file with template
+        import pandas as pd
+        
+        template_data = {
+            'IP': ['192.168.1.100', '192.168.1.101'],
+            'SSH_Port': [22, 22],
+            'SSH_User': ['admin', 'admin'],
+            'SSH_Password': ['password123', 'password456'],
+            'Sudo_User': ['root', 'root'],
+            'Sudo_Password': ['rootpass123', 'rootpass456']
+        }
+        
+        df = pd.DataFrame(template_data)
+        
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(mode='wb', suffix='.xlsx', delete=False)
+        df.to_excel(temp_file.name, index=False)
+        temp_file.close()
+        
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name='server_template.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating template: {str(e)}")
+        return api_error('Failed to create template', 500)
