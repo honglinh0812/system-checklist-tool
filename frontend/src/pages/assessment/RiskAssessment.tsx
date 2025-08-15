@@ -37,6 +37,7 @@ const RiskAssessment: React.FC = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
   const [assessmentLoading, setAssessmentLoading] = useState(false);
+  const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
   const [manualServerData, setManualServerData] = useState<{
     serverIP: string;
     sshPort: string;
@@ -93,7 +94,6 @@ const RiskAssessment: React.FC = () => {
   };
 
   const handleTestConnection = async () => {
-    
     const selectedServerList = servers.filter((_, index) => selectedServers[index]);
     console.log('selectedServerList:', selectedServerList);
     
@@ -102,12 +102,22 @@ const RiskAssessment: React.FC = () => {
       return;
     }
 
+    // Map frontend field names to backend expected field names
+    const mappedServerList = selectedServerList.map(server => ({
+      ip: server.serverIP || server.ip,
+      admin_username: server.sshUser,
+      admin_password: server.sshPassword,
+      root_username: server.sudoUser,
+      root_password: server.sudoPassword,
+      sshPort: server.sshPort || '22'
+    }));
+
     try {
       console.log('Sending request to:', API_ENDPOINTS.ASSESSMENTS.RISK_TEST_CONNECTION);
-      console.log('Request data:', { servers: selectedServerList });
+      console.log('Request data:', { servers: mappedServerList });
       
       const response = await apiService.post<any>(API_ENDPOINTS.ASSESSMENTS.RISK_TEST_CONNECTION, {
-        servers: selectedServerList
+        servers: mappedServerList
       });
 
       const results = response.data?.results || response.results || [];
@@ -119,7 +129,7 @@ const RiskAssessment: React.FC = () => {
       let selectedServerIndex = 0;
       servers.forEach((server, originalIndex) => {
         if (selectedServers[originalIndex]) {
-          const result = results[selectedServerIndex]; // Direct index mapping
+          const result = results[selectedServerIndex];
           if (result) {
             newConnectionResults[originalIndex] = {
               success: result.success,
@@ -149,61 +159,88 @@ const RiskAssessment: React.FC = () => {
     console.log('Starting assessment...');
     // Validate MOP selection
     if (!selectedMOP) {
-      alert('Vui lòng chọn MOP trước khi bắt đầu assessment.');
+      setNotification({type: 'error', message: 'Vui lòng chọn MOP trước khi bắt đầu assessment.'});
       return;
     }
 
     // Validate MOP type for risk assessment
     const selectedMOPData = filteredMops.find(mop => mop.id.toString() === selectedMOP);
     if (!selectedMOPData || (selectedMOPData as any).assessment_type !== 'risk_assessment') {
-      alert('MOP đã chọn không phù hợp với đánh giá rủi ro. Vui lòng chọn MOP có kiểu "risk_assessment".');
+      setNotification({type: 'error', message: 'MOP đã chọn không phù hợp với đánh giá rủi ro. Vui lòng chọn MOP có kiểu "risk_assessment".'});
       return;
     }
 
     // Validate server selection
     const selectedServerList = servers.filter((_, index) => selectedServers[index]);
     if (selectedServerList.length === 0) {
-      alert('Vui lòng chọn ít nhất một server để thực hiện assessment.');
+      setNotification({type: 'error', message: 'Vui lòng chọn ít nhất một server để thực hiện assessment.'});
       return;
     }
+
+    // Map frontend field names to backend expected field names
+    const mappedServerList = selectedServerList.map(server => ({
+      ip: server.serverIP || server.ip,
+      admin_username: server.sshUser,
+      admin_password: server.sshPassword,
+      root_username: server.sudoUser,
+      root_password: server.sudoPassword,
+      sshPort: server.sshPort || '22'
+    }));
 
     try {
       console.log('Setting assessment loading to true');
       setAssessmentLoading(true);
       console.log('Sending request to start assessment with data:', {
         mop_id: parseInt(selectedMOP),
-        servers: selectedServerList
+        servers: mappedServerList
       });
       const response = await apiService.post<{data: {assessment_id: number, status: string, message: string}, success: boolean}>(API_ENDPOINTS.ASSESSMENTS.RISK_START, {
         mop_id: parseInt(selectedMOP),
-        servers: selectedServerList
+        servers: mappedServerList
       });
       console.log('Start assessment response:', response);
       
       if (response.data && response.data.assessment_id) {
         alert('Assessment đã được bắt đầu thành công!');
         
-        // Poll for results (simulate assessment completion)
-         setTimeout(async () => {
-           try {
-             console.log('Fetching results for assessment ID:', response.data.assessment_id);
-             const resultsUrl = API_ENDPOINTS.ASSESSMENTS.RISK_RESULTS(response.data.assessment_id);
-             console.log('Results URL:', resultsUrl);
-             const resultsResponse = await apiService.get<any>(resultsUrl);
-             console.log('Results response:', resultsResponse);
-             setAssessmentResults({
-               ...resultsResponse.data,
-               mop_name: selectedMOPData.name,
-               commands: selectedMOPData.commands || []
-             });
-             console.log('Assessment results set successfully');
+        // Polling for results instead of setTimeout
+        const pollResults = async () => {
+          try {
+            console.log('Fetching results for assessment ID:', response.data.assessment_id);
+            const resultsUrl = API_ENDPOINTS.ASSESSMENTS.RISK_RESULTS(response.data.assessment_id);
+            console.log('Results URL:', resultsUrl);
+            const resultsResponse = await apiService.get<any>(resultsUrl);
+            console.log('Results response:', resultsResponse);
+            
+            if (resultsResponse.data && resultsResponse.data.status === 'completed') {
+              setAssessmentResults({
+                ...resultsResponse.data,
+                mop_name: selectedMOPData.name,
+                commands: selectedMOPData.commands || []
+              });
+              console.log('Assessment results set successfully');
+              setAssessmentLoading(false);
+            } else if (resultsResponse.data && resultsResponse.data.status === 'failed') {
+              alert('Assessment thất bại. Vui lòng kiểm tra logs.');
+              setAssessmentResults({
+                ...resultsResponse.data,
+                mop_name: selectedMOPData.name,
+                commands: selectedMOPData.commands || []
+              });
+              setAssessmentLoading(false);
+            } else {
+              // Still processing, continue polling
+              setTimeout(pollResults, 2000); // Poll every 2 seconds
+            }
           } catch (error) {
             console.error('Error fetching assessment results:', error);
-          } finally {
-            console.log('Setting assessment loading to false');
+            alert('Có lỗi xảy ra khi lấy kết quả assessment.');
             setAssessmentLoading(false);
           }
-        }, 3000); // Simulate 3 second processing time
+        };
+        
+        // Start polling after 2 seconds
+        setTimeout(pollResults, 2000);
       }
     } catch (error) {
       console.error('Error starting assessment:', error);
@@ -282,17 +319,37 @@ const RiskAssessment: React.FC = () => {
         }
       );
 
+      // Debug: Log toàn bộ response từ backend
+      console.log('Backend response:', response);
+      console.log('Backend servers data:', response.servers);
+
       if (response.success && response.servers) {
-        const newServers = response.servers.map((server: any) => ({
-          name: server.name || server.server_name,
-          ip: server.ip || server.server_ip,
-          serverIP: server.ip || server.server_ip,
-          sshPort: server.ssh_port || '22',
-          sshUser: server.ssh_user || server.username,
-          sshPassword: server.ssh_password || server.password,
-          sudoUser: server.sudo_user || server.ssh_user || server.username,
-          sudoPassword: server.sudo_password || server.ssh_password || server.password
-        }));
+        // Debug: Log từng server object
+        response.servers.forEach((server, index) => {
+          console.log(`Server ${index}:`, server);
+          console.log(`  admin_username: ${server.admin_username}`);
+          console.log(`  admin_password: ${server.admin_password}`);
+          console.log(`  root_username: ${server.root_username}`);
+          console.log(`  root_password: ${server.root_password}`);
+        });
+
+        const newServers = response.servers.map((server: any) => {
+          const mappedServer = {
+            name: server.name || server.server_name || server.ip,
+            ip: server.ip || server.server_ip,
+            serverIP: server.ip || server.server_ip,
+            sshPort: server.ssh_port || '22',
+            // Map từ backend fields sang frontend fields
+            sshUser: server.admin_username,
+            sshPassword: server.admin_password,
+            sudoUser: server.root_username,
+            sudoPassword: server.root_password
+          };
+          
+          // Debug: Log mapped server
+          console.log('Mapped server:', mappedServer);
+          return mappedServer;
+        });
 
         setServers([...servers, ...newServers]);
         setSelectedServers([...selectedServers, ...new Array(newServers.length).fill(false)]);
@@ -332,6 +389,62 @@ const RiskAssessment: React.FC = () => {
   const getSelectedMOPCommands = () => {
     const selectedMOPData = filteredMops.find(mop => mop.id.toString() === selectedMOP);
     return selectedMOPData?.commands || [];
+  };
+
+  const handleDownloadReport = async () => {
+    if (!assessmentResults?.id) {
+      setNotification({
+        type: 'error',
+        message: 'Không có kết quả assessment để tải về'
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(API_ENDPOINTS.ASSESSMENTS.RISK_DOWNLOAD(assessmentResults.id), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}` // Add auth if needed
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to download report');
+      }
+
+      // Get filename from response headers or create default
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = `risk_assessment_${assessmentResults.id}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/); 
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setNotification({
+        type: 'success',
+        message: 'Báo cáo đã được tải về thành công'
+      });
+    } catch (error) {
+      console.error('Error downloading report:', error);
+      setNotification({
+        type: 'error',
+        message: 'Lỗi khi tải báo cáo'
+      });
+    }
   };
 
   return (
@@ -665,11 +778,6 @@ const RiskAssessment: React.FC = () => {
                                                          <td>{result.server_ip}</td>
                                                          <td>{result.command_text}</td>
                                                          <td>
-                                                           <span className={`badge ${
-                                                             result.result === 'success' ? 'badge-success' : 'badge-danger'
-                                                           }`}>
-                                                             {result.result === 'success' ? 'Thành công' : 'Thất bại'}
-                                                           </span>
                                                            <div className="mt-1">
                                                              <small className="text-muted">{result.output}</small>
                                                            </div>
@@ -683,6 +791,18 @@ const RiskAssessment: React.FC = () => {
                                                  </table>
                                                </div>
                                              )}
+                                           </div>
+                                           
+                                           {/* Download Report Button */}
+                                           <div className="mt-3">
+                                             <button 
+                                               className="btn btn-primary"
+                                               onClick={handleDownloadReport}
+                                               disabled={!assessmentResults?.id}
+                                             >
+                                               <i className="fas fa-download mr-2"></i>
+                                               Tải báo cáo Excel
+                                             </button>
                                            </div>
                                          </div>
                                        </div>
@@ -1013,6 +1133,16 @@ const RiskAssessment: React.FC = () => {
         cancelText="Hủy"
         confirmVariant="danger"
       />
+      
+      {/* Notification */}
+      {notification && (
+        <div className={`alert alert-${notification.type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`} style={{position: 'fixed', top: '20px', right: '20px', zIndex: 9999}}>
+          {notification.message}
+          <button type="button" className="close" onClick={() => setNotification(null)}>
+            <span>&times;</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };

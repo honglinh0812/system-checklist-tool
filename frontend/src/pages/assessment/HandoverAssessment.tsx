@@ -115,10 +115,21 @@ const HandoverAssessment: React.FC = () => {
 
     try {
       console.log('Sending request to:', API_ENDPOINTS.ASSESSMENTS.HANDOVER_TEST_CONNECTION);
-      console.log('Request data:', { servers: selectedServerList });
+      
+      // Map frontend fields to backend expected fields
+      const mappedServers = selectedServerList.map(server => ({
+        ip: server.serverIP,
+        admin_username: server.sshUser,
+        admin_password: server.sshPassword,
+        root_username: server.sudoUser || 'root',
+        root_password: server.sudoPassword,
+        sshPort: parseInt(server.sshPort) || 22
+      }));
+      
+      console.log('Request data:', { servers: mappedServers });
       
       const response = await apiService.post<any>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_TEST_CONNECTION, {
-        servers: selectedServerList
+        servers: mappedServers
       });
       
       console.log('Response received:', response);
@@ -183,29 +194,58 @@ const HandoverAssessment: React.FC = () => {
 
     try {
       setAssessmentLoading(true);
+      
+      // Map frontend fields to backend expected fields
+      const mappedServers = selectedServerList.map(server => ({
+        ip: server.serverIP,
+        admin_username: server.sshUser,
+        admin_password: server.sshPassword,
+        root_username: server.sudoUser || 'root',
+        root_password: server.sudoPassword,
+        sshPort: parseInt(server.sshPort) || 22
+      }));
+      
       const response = await apiService.post<{data: {assessment_id: number, status: string, message: string}, success: boolean}>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_START, {
         mop_id: parseInt(selectedMOP),
-        servers: selectedServerList
+        servers: mappedServers
       });
       
       if (response.data && response.data.assessment_id) {
         setNotification({type: 'success', message: 'Assessment đã được bắt đầu thành công!'});
         
-        // Poll for results (simulate assessment completion)
-         setTimeout(async () => {
-           try {
-             const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_RESULTS(response.data.assessment_id));
-             setAssessmentResults({
-               ...resultsResponse.data,
-               mop_name: selectedMOPData.name,
-               commands: selectedMOPData.commands || []
-             });
+        // Polling for results instead of setTimeout
+        const pollResults = async () => {
+          try {
+            const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_RESULTS(response.data.assessment_id));
+            
+            if (resultsResponse.data && resultsResponse.data.status === 'completed') {
+              setAssessmentResults({
+                ...resultsResponse.data,
+                mop_name: selectedMOPData.name,
+                commands: selectedMOPData.commands || []
+              });
+              setAssessmentLoading(false);
+            } else if (resultsResponse.data && resultsResponse.data.status === 'failed') {
+              setNotification({type: 'error', message: 'Assessment thất bại. Vui lòng kiểm tra logs.'});
+              setAssessmentResults({
+                ...resultsResponse.data,
+                mop_name: selectedMOPData.name,
+                commands: selectedMOPData.commands || []
+              });
+              setAssessmentLoading(false);
+            } else {
+              // Still processing, continue polling
+              setTimeout(pollResults, 2000); // Poll every 2 seconds
+            }
           } catch (error) {
             console.error('Error fetching assessment results:', error);
-          } finally {
+            setNotification({type: 'error', message: 'Có lỗi xảy ra khi lấy kết quả assessment.'});
             setAssessmentLoading(false);
           }
-        }, 3000); // Simulate 3 second processing time
+        };
+        
+        // Start polling after 2 seconds
+        setTimeout(pollResults, 2000);
       }
     } catch (error) {
       console.error('Error starting assessment:', error);
@@ -281,17 +321,37 @@ const HandoverAssessment: React.FC = () => {
         }
       );
 
+      // Debug: Log toàn bộ response từ backend
+      console.log('Backend response:', response);
+      console.log('Backend servers data:', response.servers);
+
       if (response.success && response.servers) {
-        const newServers = response.servers.map((server: any) => ({
-          name: server.name || server.server_name,
-          ip: server.ip || server.server_ip,
-          serverIP: server.ip || server.server_ip,
-          sshPort: server.ssh_port || '22',
-          sshUser: server.ssh_user || server.username,
-          sshPassword: server.ssh_password || server.password,
-          sudoUser: server.sudo_user || server.ssh_user || server.username,
-          sudoPassword: server.sudo_password || server.ssh_password || server.password
-        }));
+        // Debug: Log từng server object
+        response.servers.forEach((server, index) => {
+          console.log(`Server ${index}:`, server);
+          console.log(`  admin_username: ${server.admin_username}`);
+          console.log(`  admin_password: ${server.admin_password}`);
+          console.log(`  root_username: ${server.root_username}`);
+          console.log(`  root_password: ${server.root_password}`);
+        });
+
+        const newServers = response.servers.map((server: any) => {
+          const mappedServer = {
+            name: server.name || server.server_name || server.ip,
+            ip: server.ip || server.server_ip,
+            serverIP: server.ip || server.server_ip,
+            sshPort: server.ssh_port || '22',
+            // Map từ backend fields sang frontend fields
+            sshUser: server.admin_username,
+            sshPassword: server.admin_password,
+            sudoUser: server.root_username,
+            sudoPassword: server.root_password
+          };
+          
+          // Debug: Log mapped server
+          console.log('Mapped server:', mappedServer);
+          return mappedServer;
+        });
 
         setServers([...servers, ...newServers]);
         setSelectedServers([...selectedServers, ...new Array(newServers.length).fill(false)]);
@@ -306,6 +366,62 @@ const HandoverAssessment: React.FC = () => {
     } catch (error) {
       console.error('Error uploading file:', error);
       setNotification({type: 'error', message: 'Có lỗi xảy ra khi upload file.'});
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (!assessmentResults?.id) {
+      setNotification({
+        type: 'error',
+        message: 'Không có kết quả assessment để tải về'
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(API_ENDPOINTS.ASSESSMENTS.RISK_DOWNLOAD(assessmentResults.id), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to download report');
+      }
+
+      // Get filename from response headers or create default
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = `handover_assessment_${assessmentResults.id}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setNotification({
+        type: 'success',
+        message: 'Báo cáo đã được tải về thành công'
+      });
+    } catch (error) {
+      console.error('Error downloading report:', error);
+      setNotification({
+        type: 'error',
+        message: 'Lỗi khi tải báo cáo'
+      });
     }
   };
 
@@ -634,11 +750,18 @@ const HandoverAssessment: React.FC = () => {
                                 {assessmentResults && (
                                   <div className="mt-4">
                                     <div className="card">
-                                      <div className="card-header">
+                                      <div className="card-header d-flex justify-content-between align-items-center">
                                         <h5 className="card-title mb-0">
                                           <i className="fas fa-chart-line mr-2"></i>
-                                          Assessment Results
+                                          Kết quả Assessment
                                         </h5>
+                                        <button 
+                                          className="btn btn-success btn-sm"
+                                          onClick={handleDownloadReport}
+                                        >
+                                          <i className="fas fa-download mr-2"></i>
+                                          Tải báo cáo Excel
+                                        </button>
                                       </div>
                                       <div className="card-body">
                                         <div className="mb-3">
@@ -695,11 +818,6 @@ const HandoverAssessment: React.FC = () => {
                                                     <td>{result.server_ip}</td>
                                                     <td>{result.command_text}</td>
                                                     <td>
-                                                      <span className={`badge ${
-                                                        result.result === 'success' ? 'badge-success' : 'badge-danger'
-                                                      }`}>
-                                                        {result.result === 'success' ? 'Thành công' : 'Thất bại'}
-                                                      </span>
                                                       <div className="mt-1">
                                                         <small className="text-muted">{result.output}</small>
                                                       </div>

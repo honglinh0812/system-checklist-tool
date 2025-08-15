@@ -85,7 +85,7 @@ class MOPSchema(Schema):
     risk_level = fields.Str()
     prerequisites = fields.Str(allow_none=True)
     rollback_plan = fields.Str(allow_none=True)
-    created_by = fields.Int(dump_only=True)
+    created_by = fields.Nested('UserSchema', dump_only=True, attribute='creator')
     approved_by = fields.Int(dump_only=True)
     created_at = fields.DateTime(dump_only=True)
     updated_at = fields.DateTime(dump_only=True)

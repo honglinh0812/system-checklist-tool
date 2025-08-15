@@ -3,12 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 interface Command {
   id?: number;
   title: string;
   command: string;
+  command_text?: string;
+  description?: string;
   reference_value?: string;
+  expected_output?: string;
+  is_critical?: boolean;
+  order_index?: number;
+  rollback_command?: string | null;
+  timeout_seconds?: number;
 }
 
 interface MOP {
@@ -16,12 +24,23 @@ interface MOP {
   name: string;
   description?: string;
   status: 'pending' | 'approved';
-  risk_assessment: boolean;
-  handover_assessment: boolean;
+  type: string[]; // Backend trả về array như ["handover_assessment"] hoặc ["risk_assessment"]
   assessment_type?: string;
+  risk_assessment?: boolean;
+  handover_assessment?: boolean;
   commands: Command[];
-  created_by?: { username: string };
+  created_by?: { 
+    username: string;
+    full_name: string;
+    email: string;
+    id: number;
+  };
   created_at: string;
+  updated_at?: string;
+  category?: string;
+  priority?: string;
+  risk_level?: string;
+  estimated_duration?: number;
 }
 
 interface MOPFormData {
@@ -36,17 +55,26 @@ const MOPManagement: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  
+  // Basic states
   const [mops, setMops] = useState<MOP[]>([]);
   const [loading, setLoading] = useState(true);
   const [showMopModal, setShowMopModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
   const [currentMop, setCurrentMop] = useState<MOP | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [commandCounter, setCommandCounter] = useState(0);
   const [deleteMopId, setDeleteMopId] = useState<string | null>(null);
   const [deleteMopName, setDeleteMopName] = useState('');
-
+  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
+  
+  // Enhanced UI states
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [commandErrors, setCommandErrors] = useState<{[key: number]: {title?: string, command?: string} | undefined}>({});
+  const [showCommandTemplates, setShowCommandTemplates] = useState(false);
   
   const [formData, setFormData] = useState<MOPFormData>({
     name: '',
@@ -56,9 +84,53 @@ const MOPManagement: React.FC = () => {
     commands: []
   });
 
+  // Command templates
+  const commandTemplates = [
+    {
+      title: "Check Service Status",
+      command: "systemctl status <service_name>",
+      reference_value: "active (running)"
+    },
+    {
+      title: "Check Disk Usage",
+      command: "df -h",
+      reference_value: "< 80% usage"
+    },
+    {
+      title: "Check Memory Usage",
+      command: "free -h",
+      reference_value: "Available memory > 1GB"
+    },
+    {
+      title: "Check Network Connectivity",
+      command: "ping -c 4 <target_ip>",
+      reference_value: "0% packet loss"
+    },
+    {
+      title: "Check Process Status",
+      command: "ps aux | grep <process_name>",
+      reference_value: "Process is running"
+    },
+    {
+      title: "Check Port Listening",
+      command: "netstat -tlnp | grep <port>",
+      reference_value: "Port is listening"
+    }
+  ];
+
   useEffect(() => {
     fetchMOPs();
   }, []);
+
+  // Auto-hide notification after 5 seconds
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => {
+        setNotification(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   const fetchMOPs = async () => {
     try {
@@ -68,6 +140,7 @@ const MOPManagement: React.FC = () => {
       }
     } catch (error) {
       console.error('Error fetching MOPs:', error);
+      setNotification({type: 'error', message: 'Error loading MOPs'});
     } finally {
       setLoading(false);
     }
@@ -84,6 +157,7 @@ const MOPManagement: React.FC = () => {
       commands: []
     });
     setCommandCounter(0);
+    setCommandErrors({});
     setShowMopModal(true);
   };
 
@@ -94,11 +168,11 @@ const MOPManagement: React.FC = () => {
         setCurrentMop(data.data);
         setShowDetailModal(true);
       } else {
-        alert('Error loading MOP details');
+        setNotification({type: 'error', message: 'Error loading MOP details'});
       }
     } catch (error) {
       console.error('Error loading MOP details:', error);
-      alert('Error loading MOP details');
+      setNotification({type: 'error', message: 'Error loading MOP details'});
     }
   };
 
@@ -109,21 +183,30 @@ const MOPManagement: React.FC = () => {
         const mop = data.data;
         setIsEditing(true);
         setCurrentMop(mop);
+        
+        const mopTypes = Array.isArray(mop.type) ? mop.type : [];
+        
         setFormData({
-          name: mop.name,
+          name: mop.name || '',
           description: mop.description || '',
-          risk_assessment: mop.risk_assessment,
-          handover_assessment: mop.handover_assessment,
-          commands: mop.commands || []
+          risk_assessment: mopTypes.includes('risk_assessment'),
+          handover_assessment: mopTypes.includes('handover_assessment'),
+          commands: (mop.commands || []).map((cmd: Command) => ({
+            id: cmd.id,
+            title: cmd.title || '',
+            command: cmd.command || cmd.command_text || '',
+            reference_value: cmd.reference_value || cmd.expected_output || ''
+          }))
         });
         setCommandCounter(mop.commands?.length || 0);
+        setCommandErrors({});
         setShowMopModal(true);
       } else {
-        alert('Error loading MOP for editing');
+        setNotification({type: 'error', message: 'Error loading MOP for editing'});
       }
     } catch (error) {
       console.error('Error loading MOP for editing:', error);
-      alert('Error loading MOP for editing');
+      setNotification({type: 'error', message: 'Error loading MOP for editing'});
     }
   };
 
@@ -135,11 +218,11 @@ const MOPManagement: React.FC = () => {
         setDeleteMopName(data.data.name);
         setShowDeleteModal(true);
       } else {
-        alert('Error loading MOP details');
+        setNotification({type: 'error', message: 'Error loading MOP details'});
       }
     } catch (error) {
       console.error('Error loading MOP details:', error);
-      alert('Error loading MOP details');
+      setNotification({type: 'error', message: 'Error loading MOP details'});
     }
   };
 
@@ -149,27 +232,32 @@ const MOPManagement: React.FC = () => {
     try {
       const data = await apiService.delete<any>(`${API_ENDPOINTS.MOPS.LIST}/${deleteMopId}`);
       if (data.success) {
-        alert('MOP deleted successfully');
+        setNotification({type: 'success', message: 'MOP deleted successfully'});
         setShowDeleteModal(false);
         setDeleteMopId(null);
         setDeleteMopName('');
         fetchMOPs();
       } else {
-        alert(data.error || 'Error deleting MOP');
+        setNotification({type: 'error', message: data.error || 'Error deleting MOP'});
       }
     } catch (error) {
       console.error('Error deleting MOP:', error);
-      alert('Error deleting MOP');
+      setNotification({type: 'error', message: 'Error deleting MOP'});
     }
   };
 
+  // Command management functions
   const addCommand = () => {
-    const newCounter = commandCounter + 1;
-    setCommandCounter(newCounter);
+    const newCommand: Command = {
+      title: '',
+      command: '',
+      reference_value: ''
+    };
     setFormData(prev => ({
       ...prev,
-      commands: [...prev.commands, { title: '', command: '', reference_value: '' }]
+      commands: [...prev.commands, newCommand]
     }));
+    setCommandCounter(prev => prev + 1);
   };
 
   const removeCommand = (index: number) => {
@@ -177,340 +265,563 @@ const MOPManagement: React.FC = () => {
       ...prev,
       commands: prev.commands.filter((_, i) => i !== index)
     }));
+    // Remove validation errors for this command
+    setCommandErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[index];
+      // Reindex remaining errors
+      const reindexedErrors: {[key: number]: {title?: string, command?: string}} = {};
+      Object.keys(newErrors).forEach(key => {
+        const oldIndex = parseInt(key);
+        const errorValue = newErrors[oldIndex];
+        if (errorValue) { // Chỉ thêm vào nếu không undefined
+          if (oldIndex > index) {
+            reindexedErrors[oldIndex - 1] = errorValue;
+          } else {
+            reindexedErrors[oldIndex] = errorValue;
+          }
+        }
+      });
+      return reindexedErrors;
+    });
   };
 
   const updateCommand = (index: number, field: keyof Command, value: string) => {
+    setFormData(prev => {
+      const newCommands = prev.commands.map((cmd, i) => 
+        i === index ? { ...cmd, [field]: value } : cmd
+      );
+      
+      // Validate after update
+      setTimeout(() => validateCommand(index, newCommands[index]), 100);
+      
+      return {
+        ...prev,
+        commands: newCommands
+      };
+    });
+  };
+
+  // Validation function
+  const validateCommand = (index: number, command: Command) => {
+    const errors: {title?: string, command?: string} = {};
+    
+    if (!command.title?.trim()) {
+      errors.title = "Command title is required";
+    }
+    
+    if (!command.command?.trim()) {
+      errors.command = "Command is required";
+    } else if (command.command.length > 1000) {
+      errors.command = "Command is too long (max 1000 characters)";
+    }
+    
+    setCommandErrors(prev => {
+      const newErrors = { ...prev };
+      if (Object.keys(errors).length > 0) {
+        newErrors[index] = errors;
+      } else {
+        delete newErrors[index];
+      }
+      return newErrors;
+    });
+    
+    return Object.keys(errors).length === 0;
+  };
+
+  // Drag & Drop functions
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    
+    if (draggedIndex === null || draggedIndex === dropIndex) {
+      setDraggedIndex(null);
+      return;
+    }
+    
+    const newCommands = [...formData.commands];
+    const draggedCommand = newCommands[draggedIndex];
+    
+    // Remove dragged item
+    newCommands.splice(draggedIndex, 1);
+    
+    // Insert at new position
+    newCommands.splice(dropIndex, 0, draggedCommand);
+    
     setFormData(prev => ({
       ...prev,
-      commands: prev.commands.map((cmd, i) => 
-        i === index ? { ...cmd, [field]: value } : cmd
-      )
+      commands: newCommands
     }));
+    
+    setDraggedIndex(null);
+  };
+
+  // Duplicate command function
+  const duplicateCommand = (index: number) => {
+    const commandToDuplicate = formData.commands[index];
+    const duplicatedCommand = {
+      ...commandToDuplicate,
+      title: `${commandToDuplicate.title} (Copy)`
+    };
+    
+    setFormData(prev => ({
+      ...prev,
+      commands: [
+        ...prev.commands.slice(0, index + 1),
+        duplicatedCommand,
+        ...prev.commands.slice(index + 1)
+      ]
+    }));
+  };
+
+  // Add command from template
+  const addCommandFromTemplate = (template: typeof commandTemplates[0]) => {
+    const newCommand: Command = {
+      title: template.title,
+      command: template.command,
+      reference_value: template.reference_value
+    };
+    
+    setFormData(prev => ({
+      ...prev,
+      commands: [...prev.commands, newCommand]
+    }));
+    
+    setShowCommandTemplates(false);
+  };
+
+  // Preview functions
+  const updatePreview = () => {
+    setShowPreviewModal(true);
+  };
+
+  const handleApproveMOP = () => {
+    if (currentMop && currentMop.status === 'pending') {
+      setShowApproveConfirm(true);
+    }
+  };
+
+  const approveCurrentMOP = async () => {
+    if (!currentMop) return;
+    
+    try {
+      const data = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}/approve`);
+      if (data.success) {
+        setNotification({type: 'success', message: 'MOP approved successfully'});
+        setShowApproveConfirm(false);
+        setShowDetailModal(false);
+        fetchMOPs();
+      } else {
+        setNotification({type: 'error', message: data.error || 'Error approving MOP'});
+      }
+    } catch (error) {
+      console.error('Error approving MOP:', error);
+      setNotification({type: 'error', message: 'Error approving MOP'});
+    }
   };
 
   const saveMOP = async () => {
     if (!formData.name) {
-      alert('Please enter MOP name');
+      setNotification({type: 'warning', message: 'Please enter MOP name'});
       return;
     }
     
     if (!formData.risk_assessment && !formData.handover_assessment) {
-      alert('Please select at least one MOP type');
+      setNotification({type: 'warning', message: 'Please select at least one MOP type'});
       return;
     }
     
     if (formData.commands.length === 0) {
-      alert('Please add at least one command');
+      setNotification({type: 'warning', message: 'Please add at least one command'});
       return;
     }
 
-    const mopData = {
-      name: formData.name,
-      description: formData.description,
-      type: [
-        ...(formData.risk_assessment ? ['risk'] : []),
-        ...(formData.handover_assessment ? ['handover'] : [])
-      ],
-      commands: formData.commands.filter(cmd => cmd.title && cmd.command)
-    };
+    // Validate all commands
+    let hasErrors = false;
+    formData.commands.forEach((cmd, index) => {
+      if (!validateCommand(index, cmd)) {
+        hasErrors = true;
+      }
+    });
+
+    if (hasErrors) {
+      setNotification({type: 'error', message: 'Please fix command validation errors'});
+      return;
+    }
 
     try {
-      let data;
       if (isEditing && currentMop) {
-        data = await apiService.put<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}`, mopData);
+        const mopUpdateData = {
+          name: formData.name,
+          description: formData.description,
+          type: [
+            ...(formData.risk_assessment ? ['risk_assessment'] : []),
+            ...(formData.handover_assessment ? ['handover_assessment'] : [])
+          ]
+        };
+        
+        const updateResponse = await apiService.put<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}`, mopUpdateData);
+        
+        if (!updateResponse.success) {
+          setNotification({type: 'error', message: updateResponse.error || 'Error updating MOP'});
+          return;
+        }
+        
+        const validCommands = formData.commands.filter(cmd => cmd.title && cmd.command);
+        if (validCommands.length > 0) {
+          try {
+            const commandsResponse = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}/commands`, {
+              commands: validCommands
+            });
+            
+            if (!commandsResponse.success) {
+              setNotification({type: 'warning', message: 'MOP updated but failed to update commands'});
+            }
+          } catch (cmdError) {
+            console.log('Commands update not available, skipping...');
+          }
+        }
+        
+        setNotification({type: 'success', message: 'MOP updated successfully'});
       } else {
-        data = await apiService.post<any>(API_ENDPOINTS.MOPS.LIST, mopData);
+        const mopData = {
+          name: formData.name,
+          description: formData.description,
+          type: [
+            ...(formData.risk_assessment ? ['risk_assessment'] : []),
+            ...(formData.handover_assessment ? ['handover_assessment'] : [])
+          ],
+          commands: formData.commands.filter(cmd => cmd.title && cmd.command)
+        };
+        
+        const data = await apiService.post<any>(API_ENDPOINTS.MOPS.LIST, mopData);
+        
+        if (!data.success) {
+          setNotification({type: 'error', message: data.error || 'Error creating MOP'});
+          return;
+        }
+        
+        setNotification({type: 'success', message: 'MOP created successfully'});
       }
-      if (data.success) {
-        alert(isEditing ? 'MOP updated successfully' : 'MOP created successfully');
-        setShowMopModal(false);
-        fetchMOPs();
-      } else {
-        alert(data.error || 'Error saving MOP');
-      }
+      
+      setShowMopModal(false);
+      fetchMOPs();
     } catch (error) {
       console.error('Error saving MOP:', error);
-      alert('Error saving MOP');
+      setNotification({type: 'error', message: 'Error saving MOP'});
     }
   };
 
   const approveMOP = async (mopId: string) => {
-    if (!confirm('Are you sure you want to approve this MOP?')) return;
-    
     try {
       const data = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${mopId}/approve`);
       if (data.success) {
-        alert('MOP approved successfully');
-        setShowDetailModal(false);
+        setNotification({type: 'success', message: 'MOP approved successfully'});
         fetchMOPs();
       } else {
-        alert(data.error || 'Error approving MOP');
+        setNotification({type: 'error', message: data.error || 'Error approving MOP'});
       }
     } catch (error) {
       console.error('Error approving MOP:', error);
-      alert('Error approving MOP');
+      setNotification({type: 'error', message: 'Error approving MOP'});
     }
   };
 
   const rejectMOP = async (mopId: string) => {
-    const reason = prompt('Please provide a reason for rejection:');
-    if (reason === null) return;
-    
     try {
-      const data = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${mopId}/reject`, { 
-        comments: reason
-      });
+      const data = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${mopId}/reject`);
       if (data.success) {
-        alert('MOP rejected successfully');
-        setShowDetailModal(false);
+        setNotification({type: 'success', message: 'MOP rejected successfully'});
         fetchMOPs();
       } else {
-        alert(data.error || 'Error rejecting MOP');
+        setNotification({type: 'error', message: data.error || 'Error rejecting MOP'});
       }
     } catch (error) {
       console.error('Error rejecting MOP:', error);
-      alert('Error rejecting MOP');
+      setNotification({type: 'error', message: 'Error rejecting MOP'});
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'approved':
-        return <span className="badge badge-success">Approved</span>;
-      case 'pending':
-        return <span className="badge badge-warning">Pending</span>;
-      default:
-        return <span className="badge badge-secondary">Unknown</span>;
-    }
-  };
-
-  const getTypeBadges = (mop: MOP) => {
-    if (mop.assessment_type) {
-      return (
-        <span className={`badge ${
-          mop.assessment_type === 'risk_assessment' ? 'badge-warning' : 'badge-info'
-        }`}>
-          {mop.assessment_type === 'risk_assessment' ? 'Risk Assessment' : 'Handover Assessment'}
-        </span>
-      );
-    }
-    // Fallback to old boolean fields if assessment_type is not available
+  if (loading) {
     return (
-      <>
-        {mop.risk_assessment && <span className="badge badge-warning mr-1">Risk Assessment</span>}
-        {mop.handover_assessment && <span className="badge badge-info">Handover Assessment</span>}
-      </>
+      <div className="d-flex justify-content-center align-items-center" style={{ height: '400px' }}>
+        <div className="spinner-border" role="status">
+          <span className="sr-only">Loading...</span>
+        </div>
+      </div>
     );
-  };
+  }
 
   return (
-    <>
-      {/* Content Header */}
-      <div className="content-header">
-        <div className="container-fluid">
-          <div className="row mb-2">
-            <div className="col-sm-6">
-              <h1 className="m-0">MOP Management</h1>
-            </div>
-            <div className="col-sm-6">
-              <ol className="breadcrumb float-sm-right">
-                <li className="breadcrumb-item">
-                  <a href="#" onClick={(e) => { e.preventDefault(); navigate('/dashboard'); }}>Home</a>
-                </li>
-                <li className="breadcrumb-item active">MOP Management</li>
-              </ol>
-            </div>
+    <div className="container-fluid">
+      {/* Notification */}
+      {notification && (
+        <div className={`alert alert-${notification.type === 'error' ? 'danger' : notification.type} alert-dismissible fade show`} role="alert">
+          <i className={`fas fa-${notification.type === 'success' ? 'check-circle' : notification.type === 'warning' ? 'exclamation-triangle' : 'exclamation-circle'} mr-2`}></i>
+          {notification.message}
+          <button type="button" className="close" onClick={() => setNotification(null)}>
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="d-sm-flex align-items-center justify-content-between mb-4">
+        <h1 className="h3 mb-0 text-gray-800">MOP Management</h1>
+        <button 
+          className="btn btn-primary btn-sm shadow-sm"
+          onClick={showCreateMOPModal}
+        >
+          <i className="fas fa-plus fa-sm text-white-50 mr-1"></i>
+          Create New MOP
+        </button>
+      </div>
+
+      {/* MOPs Table */}
+      <div className="card shadow mb-4">
+        <div className="card-header py-3">
+          <h6 className="m-0 font-weight-bold text-primary">MOPs List</h6>
+        </div>
+        <div className="card-body">
+          <div className="table-responsive">
+            <table className="table table-bordered" width="100%" cellSpacing="0">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Created By</th>
+                  <th>Created At</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mops.map((mop) => (
+                  <tr key={mop.id}>
+                    <td>{mop.name}</td>
+                    <td>
+                      {Array.isArray(mop.type) ? mop.type.map(t => (
+                        <span key={t} className="badge badge-info mr-1">
+                          {t.replace('_', ' ').toUpperCase()}
+                        </span>
+                      )) : (
+                        <span className="badge badge-secondary">Unknown</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`badge badge-${mop.status === 'approved' ? 'success' : 'warning'}`}>
+                        {mop.status.toUpperCase()}
+                      </span>
+                    </td>
+                    <td>{mop.created_by?.full_name || mop.created_by?.username || 'Unknown'}</td>
+                    <td>{new Date(mop.created_at).toLocaleDateString()}</td>
+                    <td>
+                      <div className="btn-group" role="group">
+                        <button 
+                          className="btn btn-info btn-sm" 
+                          onClick={() => viewMOP(mop.id)}
+                          title="View Details"
+                        >
+                          <i className="fas fa-eye"></i>
+                        </button>
+                        <button 
+                          className="btn btn-warning btn-sm" 
+                          onClick={() => editMOP(mop.id)}
+                          title="Edit MOP"
+                        >
+                          <i className="fas fa-edit"></i>
+                        </button>
+                        {isAdmin && (
+                          <button 
+                            className="btn btn-danger btn-sm" 
+                            onClick={() => deleteMOP(mop.id)}
+                            title="Delete MOP"
+                          >
+                            <i className="fas fa-trash"></i>
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
 
-      {/* Main content */}
-      <section className="content">
-        <div className="container-fluid">
-          <div className="row">
-            <div className="col-12">
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">
-                    <i className="fas fa-tasks mr-2"></i>
-                    Method of Procedure (MOP) Management
-                  </h3>
-                  <div className="card-tools">
-                    <button 
-                      type="button" 
-                      className="btn btn-primary" 
-                      onClick={showCreateMOPModal}
-                    >
-                      <i className="fas fa-plus mr-2"></i>Create New MOP
-                    </button>
-                  </div>
-                </div>
-                <div className="card-body">
-                  {loading ? (
-                    <div className="text-center py-4">
-                      <i className="fas fa-spinner fa-spin fa-3x text-muted mb-3"></i>
-                      <h5 className="text-muted">Loading MOPs...</h5>
-                    </div>
-                  ) : mops.length > 0 ? (
-                    <div className="table-responsive">
-                      <table className="table table-striped">
-                        <thead>
-                          <tr>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>Commands</th>
-                            <th>Status</th>
-                            <th>Created By</th>
-                            <th>Created Date</th>
-                            <th>Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mops.map((mop) => (
-                            <tr key={mop.id}>
-                              <td>
-                                <strong>{mop.name}</strong>
-                                {mop.description && (
-                                  <><br /><small className="text-muted">{mop.description}</small></>
-                                )}
-                              </td>
-                              <td>{getTypeBadges(mop)}</td>
-                              <td>{mop.commands?.length || 0} commands</td>
-                              <td>{getStatusBadge(mop.status)}</td>
-                              <td>{mop.created_by?.username || 'Unknown'}</td>
-                              <td>{new Date(mop.created_at).toLocaleDateString()}</td>
-                              <td>
-                                <div className="btn-group">
-                                  <button 
-                                    className="btn btn-sm btn-info" 
-                                    onClick={() => viewMOP(mop.id)}
-                                  >
-                                    <i className="fas fa-eye"></i>
-                                  </button>
-                                  <button 
-                                    className="btn btn-sm btn-primary" 
-                                    onClick={() => editMOP(mop.id)}
-                                  >
-                                    <i className="fas fa-edit"></i>
-                                  </button>
-                                  <button 
-                                    className="btn btn-sm btn-danger" 
-                                    onClick={() => deleteMOP(mop.id)}
-                                  >
-                                    <i className="fas fa-trash"></i>
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-center py-4">
-                      <i className="fas fa-info-circle fa-3x text-muted mb-3"></i>
-                      <h5 className="text-muted">No MOPs Available</h5>
-                      <p className="text-muted">No MOPs have been created yet.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* MOP Modal */}
+      {/* Create/Edit MOP Modal */}
       {showMopModal && (
         <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog" style={{ maxWidth: '95vw', width: '95vw', margin: '1rem auto' }}>
-            <div className="modal-content" style={{ height: '90vh', maxHeight: '90vh' }}>
+          <div className="modal-dialog modal-xl">
+            <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">{isEditing ? 'Edit MOP' : 'Create New MOP'}</h5>
+                <h5 className="modal-title">
+                  <i className="fas fa-file-alt mr-2"></i>
+                  {isEditing ? 'Edit MOP' : 'Create New MOP'}
+                </h5>
                 <button type="button" className="close" onClick={() => setShowMopModal(false)}>
                   <span aria-hidden="true">&times;</span>
                 </button>
               </div>
-              <div className="modal-body" style={{ overflowY: 'auto', maxHeight: 'calc(90vh - 120px)' }}>
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                 <form>
-                  <div className="row">
-                    <div className="col-md-6">
-                      <div className="form-group">
-                        <label htmlFor="mopName">MOP Name *</label>
+                  {/* MOP Name */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      <i className="fas fa-tag mr-2"></i>
+                      MOP Name *
+                    </label>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      value={formData.name || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="Enter MOP name"
+                      required 
+                    />
+                  </div>
+
+                  {/* MOP Description */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      <i className="fas fa-align-left mr-2"></i>
+                      Description
+                    </label>
+                    <textarea 
+                      className="form-control" 
+                      rows={3}
+                      value={formData.description || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                      placeholder="Enter MOP description"
+                    />
+                  </div>
+
+                  {/* MOP Type */}
+                  <div className="form-group">
+                    <label className="form-label">
+                      <i className="fas fa-list mr-2"></i>
+                      Assessment Type *
+                    </label>
+                    <div className="form-check-container">
+                      <div className="form-check form-check-inline">
                         <input 
-                          type="text" 
-                          className="form-control" 
-                          id="mopName" 
-                          value={formData.name}
-                          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                          required 
+                          className="form-check-input" 
+                          type="checkbox" 
+                          id="risk_assessment"
+                          checked={formData.risk_assessment || false}
+                          onChange={(e) => setFormData(prev => ({ ...prev, risk_assessment: e.target.checked }))}
                         />
+                        <label className="form-check-label" htmlFor="risk_assessment">
+                          Risk Assessment
+                        </label>
                       </div>
-                    </div>
-                    <div className="col-md-6">
-                      <div className="form-group">
-                        <label htmlFor="mopDescription">Description</label>
+                      <div className="form-check form-check-inline">
                         <input 
-                          type="text" 
-                          className="form-control" 
-                          id="mopDescription" 
-                          value={formData.description}
-                          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                          className="form-check-input" 
+                          type="checkbox" 
+                          id="handover_assessment"
+                          checked={formData.handover_assessment || false}
+                          onChange={(e) => setFormData(prev => ({ ...prev, handover_assessment: e.target.checked }))}
                         />
+                        <label className="form-check-label" htmlFor="handover_assessment">
+                          Handover Assessment
+                        </label>
                       </div>
                     </div>
                   </div>
-                  
-                  <div className="row">
-                    <div className="col-md-12">
-                      <div className="form-group">
-                        <label>MOP Type *</label>
-                        <div className="custom-control custom-checkbox">
-                          <input 
-                            type="checkbox" 
-                            className="custom-control-input" 
-                            id="riskAssessment" 
-                            checked={formData.risk_assessment}
-                            onChange={(e) => setFormData(prev => ({ ...prev, risk_assessment: e.target.checked }))}
-                          />
-                          <label className="custom-control-label" htmlFor="riskAssessment">Risk Assessment</label>
-                        </div>
-                        <div className="custom-control custom-checkbox">
-                          <input 
-                            type="checkbox" 
-                            className="custom-control-input" 
-                            id="handoverAssessment" 
-                            checked={formData.handover_assessment}
-                            onChange={(e) => setFormData(prev => ({ ...prev, handover_assessment: e.target.checked }))}
-                          />
-                          <label className="custom-control-label" htmlFor="handoverAssessment">Handover Assessment</label>
-                        </div>
+
+                  {/* Commands Section */}
+                  <div className="form-group">
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                      <label className="form-label">
+                        <i className="fas fa-terminal mr-2"></i>
+                        Commands ({formData.commands.length})
+                      </label>
+                      <div className="btn-group">
+                        <button 
+                          type="button" 
+                          className="btn btn-success btn-sm" 
+                          onClick={addCommand}
+                        >
+                          <i className="fas fa-plus mr-1"></i>Add Command
+                        </button>
+                        <button 
+                          type="button" 
+                          className={`btn btn-info btn-sm ${showCommandTemplates ? 'active' : ''}`}
+                          onClick={() => setShowCommandTemplates(!showCommandTemplates)}
+                        >
+                          <i className="fas fa-clipboard-list mr-1"></i>
+                          {showCommandTemplates ? 'Hide Templates' : 'Show Templates'}
+                        </button>
                       </div>
                     </div>
-                  </div>
-                  
-                  <hr />
-                  
-                  <div className="row">
-                    <div className="col-md-12">
-                      <h6>Commands</h6>
-                      <button type="button" className="btn btn-sm btn-success" onClick={addCommand}>
-                        <i className="fas fa-plus mr-2"></i>Add Command
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-3">
-                    {formData.commands.length > 0 && (
+
+                    {/* Command Templates */}
+                    {showCommandTemplates && (
+                      <div className="card mb-3">
+                        <div className="card-header">
+                          <h6 className="mb-0">
+                            <i className="fas fa-clipboard-list mr-2"></i>
+                            Command Templates
+                            <button 
+                              type="button" 
+                              className="btn btn-sm btn-outline-secondary float-right"
+                              onClick={() => setShowCommandTemplates(false)}
+                            >
+                              <i className="fas fa-times"></i> Close
+                            </button>
+                          </h6>
+                        </div>
+                        <div className="card-body">
+                          <div className="row">
+                            {commandTemplates.map((template, index) => (
+                              <div key={index} className="col-md-6 mb-2">
+                                <div className="card border-left-primary">
+                                  <div className="card-body p-2">
+                                    <h6 className="card-title mb-1">{template.title}</h6>
+                                    <p className="card-text small mb-1">
+                                      <code>{template.command}</code>
+                                    </p>
+                                    <button 
+                                      type="button" 
+                                      className="btn btn-primary btn-xs"
+                                      onClick={() => {
+                                        addCommandFromTemplate(template);
+                                        setShowCommandTemplates(false); // Auto close after adding
+                                      }}
+                                    >
+                                      <i className="fas fa-plus mr-1"></i>Add
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Commands Table - Simplified without drag-drop */}
+                    {!showCommandTemplates && formData.commands.length > 0 && (
                       <div className="table-responsive">
                         <table className="table table-bordered">
-                          <thead className="thead-dark">
+                          <thead className="thead-light">
                             <tr>
                               <th style={{ width: '8%' }}>STT</th>
-                              <th style={{ width: '25%' }}>Tên Command</th>
-                              <th style={{ width: '35%' }}>Câu lệnh</th>
-                              <th style={{ width: '25%' }}>Giá trị đối chiếu</th>
-                              <th style={{ width: '7%' }}>Xóa</th>
+                              <th style={{ width: '30%' }}>Tên Command</th>
+                              <th style={{ width: '40%' }}>Câu lệnh</th>
+                              <th style={{ width: '15%' }}>Giá trị đối chiếu</th>
+                              <th style={{ width: '7%' }}>Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -520,8 +831,8 @@ const MOPManagement: React.FC = () => {
                                 <td>
                                   <input 
                                     type="text" 
-                                    className="form-control" 
-                                    value={command.title}
+                                    className="form-control form-control-sm"
+                                    value={command.title || ''}
                                     onChange={(e) => updateCommand(index, 'title', e.target.value)}
                                     placeholder="Command Title"
                                     required 
@@ -529,21 +840,23 @@ const MOPManagement: React.FC = () => {
                                 </td>
                                 <td>
                                   <textarea 
-                                    className="form-control" 
+                                    className="form-control form-control-sm"
                                     rows={2}
-                                    value={command.command}
+                                    value={command.command || ''}
                                     onChange={(e) => updateCommand(index, 'command', e.target.value)}
                                     placeholder="Enter command"
                                     required
+                                    style={{ resize: 'vertical', minHeight: '50px' }}
                                   />
                                 </td>
                                 <td>
                                   <textarea 
-                                    className="form-control" 
+                                    className="form-control form-control-sm" 
                                     rows={2}
                                     value={command.reference_value || ''}
                                     onChange={(e) => updateCommand(index, 'reference_value', e.target.value)}
-                                    placeholder="Expected output for validation"
+                                    placeholder="Expected output"
+                                    style={{ resize: 'vertical', minHeight: '50px' }}
                                   />
                                 </td>
                                 <td className="text-center align-middle">
@@ -551,6 +864,7 @@ const MOPManagement: React.FC = () => {
                                     type="button" 
                                     className="btn btn-danger btn-sm" 
                                     onClick={() => removeCommand(index)}
+                                    title="Delete Command"
                                   >
                                     <i className="fas fa-trash"></i>
                                   </button>
@@ -561,49 +875,48 @@ const MOPManagement: React.FC = () => {
                         </table>
                       </div>
                     )}
-                  </div>
-                  
-                  <hr />
-                  
-                  <div className="row">
-                    <div className="col-md-12">
-                      <h6>MOP Preview</h6>
-                      <div className="border p-3 bg-light">
-                        {formData.commands.length > 0 ? (
-                          <div className="table-responsive">
-                            <table className="table table-striped table-bordered">
-                              <thead className="thead-dark">
-                                <tr>
-                                  <th style={{ width: '8%' }}>STT</th>
-                                  <th style={{ width: '25%' }}>Tên Command</th>
-                                  <th style={{ width: '35%' }}>Câu lệnh</th>
-                                  <th style={{ width: '32%' }}>Giá trị đối chiếu</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {formData.commands.filter(cmd => cmd.title && cmd.command).map((cmd, index) => (
-                                  <tr key={index}>
-                                    <td className="text-center">{index + 1}</td>
-                                    <td><strong>{cmd.title}</strong></td>
-                                    <td><code className="text-wrap">{cmd.command}</code></td>
-                                    <td><small className="text-muted">{cmd.reference_value || 'N/A'}</small></td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <p className="text-muted">Commands will appear here as you add them...</p>
-                        )}
+
+                    {!showCommandTemplates && formData.commands.length === 0 && (
+                      <div className="text-center py-4 border border-dashed rounded">
+                        <i className="fas fa-terminal fa-3x text-muted mb-3"></i>
+                        <h5 className="text-muted">No Commands Added</h5>
+                        <p className="text-muted">Click "Add Command" or use templates to get started</p>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </form>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowMopModal(false)}>Cancel</button>
-                <button type="button" className="btn btn-primary" onClick={saveMOP}>
-                  <i className="fas fa-save mr-2"></i>Save MOP
+                <button 
+                  type="button" 
+                  className="btn btn-info" 
+                  onClick={updatePreview}
+                >
+                  <i className="fas fa-eye mr-1"></i>Preview
+                </button>
+                {isEditing && currentMop && currentMop.status === 'pending' && (
+                  <button 
+                    type="button" 
+                    className="btn btn-success" 
+                    onClick={handleApproveMOP}
+                  >
+                    <i className="fas fa-check mr-1"></i>Approve MOP
+                  </button>
+                )}
+                <button 
+                  type="button" 
+                  className="btn btn-primary" 
+                  onClick={saveMOP}
+                >
+                  <i className="fas fa-save mr-1"></i>
+                  {isEditing ? 'Update MOP' : 'Save MOP'}
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowMopModal(false)}
+                >
+                  Cancel
                 </button>
               </div>
             </div>
@@ -611,76 +924,88 @@ const MOPManagement: React.FC = () => {
         </div>
       )}
 
-      {/* MOP Detail Modal */}
+      {/* View MOP Details Modal */}
       {showDetailModal && currentMop && (
         <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-xl">
+          <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">MOP Details</h5>
+                <h5 className="modal-title">
+                  <i className="fas fa-file-alt mr-2"></i>
+                  MOP Details: {currentMop.name}
+                </h5>
                 <button type="button" className="close" onClick={() => setShowDetailModal(false)}>
                   <span aria-hidden="true">&times;</span>
                 </button>
               </div>
-              <div className="modal-body">
-                <div className="row mb-3">
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                <div className="row">
                   <div className="col-md-6">
-                    <h6>MOP Information</h6>
-                    <table className="table table-sm">
-                      <tbody>
-                        <tr><td><strong>Name:</strong></td><td>{currentMop.name}</td></tr>
-                        <tr><td><strong>Description:</strong></td><td>{currentMop.description || 'N/A'}</td></tr>
-                        <tr><td><strong>Status:</strong></td><td>{getStatusBadge(currentMop.status)}</td></tr>
-                        <tr><td><strong>Type:</strong></td><td>{getTypeBadges(currentMop)}</td></tr>
-                      </tbody>
-                    </table>
+                    <p><strong>Name:</strong> {currentMop.name}</p>
+                    <p><strong>Description:</strong> {currentMop.description || 'N/A'}</p>
+                    <p><strong>Status:</strong> 
+                      <span className={`badge badge-${currentMop.status === 'approved' ? 'success' : 'warning'} ml-2`}>
+                        {currentMop.status.toUpperCase()}
+                      </span>
+                    </p>
                   </div>
                   <div className="col-md-6">
-                    <h6>Commands ({currentMop.commands?.length || 0})</h6>
+                    <p><strong>Type:</strong> 
+                      {Array.isArray(currentMop.type) ? currentMop.type.map(t => (
+                        <span key={t} className="badge badge-info ml-1">
+                          {t.replace('_', ' ').toUpperCase()}
+                        </span>
+                      )) : 'Unknown'}
+                    </p>
+                    <p><strong>Created By:</strong> {currentMop.created_by?.full_name || 'Unknown'}</p>
+                    <p><strong>Created At:</strong> {new Date(currentMop.created_at).toLocaleString()}</p>
                   </div>
                 </div>
                 
                 {currentMop.commands && currentMop.commands.length > 0 && (
-                  <div className="table-responsive">
-                    <table className="table table-striped table-bordered">
-                      <thead className="thead-dark">
-                        <tr>
-                          <th style={{ width: '8%' }}>STT</th>
-                          <th style={{ width: '25%' }}>Tên Command</th>
-                          <th style={{ width: '35%' }}>Câu lệnh</th>
-                          <th style={{ width: '32%' }}>Giá trị đối chiếu</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {currentMop.commands.map((command, index) => (
-                          <tr key={index}>
-                            <td className="text-center">{index + 1}</td>
-                            <td><strong>{command.title}</strong></td>
-                            <td><code className="text-wrap">{command.command}</code></td>
-                            <td><small className="text-muted">{command.reference_value || 'N/A'}</small></td>
+                  <div className="mt-4">
+                    <h6><strong>Commands:</strong></h6>
+                    <div className="table-responsive">
+                      <table className="table table-sm table-bordered">
+                        <thead className="thead-light">
+                          <tr>
+                            <th>STT</th>
+                            <th>Command Title</th>
+                            <th>Command</th>
+                            <th>Expected Output</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {currentMop.commands.map((cmd, index) => (
+                            <tr key={index}>
+                              <td>{index + 1}</td>
+                              <td>{cmd.title}</td>
+                              <td><code>{cmd.command}</code></td>
+                              <td>{cmd.reference_value || 'N/A'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
               <div className="modal-footer">
-                {currentMop.status === 'pending' && isAdmin && (
+                {isAdmin && currentMop.status === 'pending' && (
                   <>
                     <button 
                       type="button" 
                       className="btn btn-success" 
                       onClick={() => approveMOP(currentMop.id)}
                     >
-                      Approve MOP
+                      <i className="fas fa-check mr-1"></i>Approve MOP
                     </button>
                     <button 
                       type="button" 
                       className="btn btn-danger" 
                       onClick={() => rejectMOP(currentMop.id)}
                     >
-                      Reject MOP
+                      <i className="fas fa-times mr-1"></i>Reject MOP
                     </button>
                   </>
                 )}
@@ -715,7 +1040,93 @@ const MOPManagement: React.FC = () => {
           </div>
         </div>
       )}
-    </>
+
+      {/* Preview Modal */}
+      {showPreviewModal && (
+        <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <i className="fas fa-eye mr-2"></i>
+                  MOP Preview
+                </h5>
+                <button type="button" className="close" onClick={() => setShowPreviewModal(false)}>
+                  <span aria-hidden="true">&times;</span>
+                </button>
+              </div>
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                <div className="row">
+                  <div className="col-md-6">
+                    <p><strong>Name:</strong> {formData.name}</p>
+                    <p><strong>Description:</strong> {formData.description || 'N/A'}</p>
+                  </div>
+                  <div className="col-md-6">
+                    <p><strong>Type:</strong> 
+                      {formData.risk_assessment && (
+                        <span className="badge badge-info ml-1">RISK ASSESSMENT</span>
+                      )}
+                      {formData.handover_assessment && (
+                        <span className="badge badge-info ml-1">HANDOVER ASSESSMENT</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                
+                {formData.commands.length > 0 && (
+                  <div className="mt-4">
+                    <h6><strong>Commands:</strong></h6>
+                    <div className="table-responsive">
+                      <table className="table table-sm table-bordered">
+                        <thead className="thead-light">
+                          <tr>
+                            <th>STT</th>
+                            <th>Command Title</th>
+                            <th>Command</th>
+                            <th>Expected Output</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {formData.commands.map((cmd, index) => (
+                            <tr key={index}>
+                              <td>{index + 1}</td>
+                              <td>{cmd.title}</td>
+                              <td><code>{cmd.command}</code></td>
+                              <td>{cmd.reference_value || 'N/A'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowPreviewModal(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approve Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showApproveConfirm}
+        title="Approve MOP"
+        message="Are you sure you want to approve this MOP? This action cannot be undone."
+        onConfirm={approveCurrentMOP}
+        onClose={() => setShowApproveConfirm(false)}
+        confirmText="Approve"
+        cancelText="Cancel"
+        confirmVariant="success"
+      />
+    </div>
   );
 };
 

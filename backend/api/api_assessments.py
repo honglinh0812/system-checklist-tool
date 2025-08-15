@@ -977,3 +977,129 @@ def download_server_template():
     except Exception as e:
         logger.error(f"Error creating template: {str(e)}")
         return api_error('Failed to create template', 500)
+
+@assessments_bp.route('/handover/download/<int:assessment_id>', methods=['GET'])
+@jwt_required()
+def download_handover_assessment_report(assessment_id):
+    """Download handover assessment report as Excel"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        assessment = AssessmentResult.query.get_or_404(assessment_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and assessment.executed_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        if assessment.status != 'completed':
+            return api_error('Assessment not completed yet', 400)
+        
+        # Import excel exporter
+        from services.excel_exporter import ExcelExporter
+        
+        # Prepare data for Excel export
+        export_data = {
+            'assessment_id': assessment.id,
+            'assessment_type': assessment.assessment_type,
+            'created_at': assessment.created_at.isoformat() if assessment.created_at else None,
+            'completed_at': assessment.completed_at.isoformat() if assessment.completed_at else None,
+            'results': []
+        }
+        
+        # Convert test_results to the format expected by excel exporter
+        if assessment.test_results:
+            for result in assessment.test_results:
+                export_data['results'].append({
+                    'server_ip': result.get('server_ip', ''),
+                    'command_title': result.get('command_title', ''),
+                    'command': result.get('command', ''),
+                    'is_valid': result.get('result') == 'success',
+                    'expected_output': result.get('reference_value', ''),
+                    'actual_output': result.get('output', '')
+                })
+        
+        # Create Excel file
+        exporter = ExcelExporter()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"handover_assessment_{assessment_id}_{timestamp}.xlsx"
+        
+        # Ensure exports directory exists
+        os.makedirs('exports', exist_ok=True)
+        
+        filepath = exporter.export_execution_results(export_data, filename)
+        
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading handover assessment report {assessment_id}: {str(e)}")
+        return api_error('Failed to download report', 500)
+
+@assessments_bp.route('/risk/download/<int:assessment_id>', methods=['GET'])
+@jwt_required()
+def download_risk_assessment_report(assessment_id):
+    """Download risk assessment report as Excel"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        assessment = AssessmentResult.query.get_or_404(assessment_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and assessment.executed_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        if assessment.status != 'completed':
+            return api_error('Assessment not completed yet', 400)
+        
+        # Import excel exporter
+        from services.excel_exporter import ExcelExporter
+        
+        # Prepare data for Excel export
+        export_data = {
+            'assessment_id': assessment.id,
+            'assessment_type': assessment.assessment_type,
+            'created_at': assessment.created_at.isoformat() if assessment.created_at else None,
+            'completed_at': assessment.completed_at.isoformat() if assessment.completed_at else None,
+            'results': []
+        }
+        
+        # Convert test_results to the format expected by excel exporter
+        if assessment.test_results:
+            for result in assessment.test_results:
+                export_data['results'].append({
+                    'server_ip': result.get('server_ip', ''),
+                    'command_title': result.get('command_title', ''),
+                    'command': result.get('command', ''),
+                    'is_valid': result.get('result') == 'success',
+                    'expected_output': result.get('reference_value', ''),
+                    'actual_output': result.get('output', '')
+                })
+        
+        # Create Excel file
+        exporter = ExcelExporter()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"risk_assessment_{assessment_id}_{timestamp}.xlsx"
+        
+        # Ensure exports directory exists
+        os.makedirs('exports', exist_ok=True)
+        
+        filepath = exporter.export_execution_results(export_data, filename)
+        
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading risk assessment report {assessment_id}: {str(e)}")
+        return api_error('Failed to download report', 500)

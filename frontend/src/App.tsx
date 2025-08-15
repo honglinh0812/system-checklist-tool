@@ -6,7 +6,7 @@ import Dashboard from './pages/Dashboard';
 import UserManagement from './pages/user/UserManagement';
 import MOPSubmission from './pages/mop/MOPSubmission';
 import MOPManagement from './pages/mop/MOPManagement';
-import MOPEdit from './pages/mop/MOPEdit';
+// Xóa dòng này: import MOPEdit from './pages/mop/MOPEdit';
 import MOPReview from './pages/mop/MOPReview';
 import RiskAssessment from './pages/assessment/RiskAssessment';
 import HandoverAssessment from './pages/assessment/HandoverAssessment';
@@ -63,6 +63,7 @@ function App() {
             </ProtectedRoute>
           } />
           
+          {/* Xóa route này:
           <Route path="/mop-edit/:id" element={
             <ProtectedRoute>
               <Layout>
@@ -70,6 +71,7 @@ function App() {
               </Layout>
             </ProtectedRoute>
           } />
+          */}
           
           <Route path="/mop-review" element={
             <ProtectedRoute>

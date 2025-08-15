@@ -6,11 +6,22 @@ import Modal from '../../components/common/Modal';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ErrorMessage from '../../components/common/ErrorMessage';
 
+// Cập nhật interface User để bao gồm đầy đủ thông tin
 interface User {
   id: number;
   username: string;
+  email: string;
+  full_name: string;
   role: string;
+  is_active: boolean;
   created_at: string;
+  updated_at?: string;
+  last_login?: string;
+  stats?: {
+    total_mops: number;
+    total_executions: number;
+    pending_mops: number;
+  };
 }
 
 interface CreateUserData {
@@ -137,7 +148,7 @@ const UserManagement: React.FC = () => {
     try {
       const data = await apiService.get<any>(`/api/users/${userId}`);
       if (data.success) {
-        setSelectedUser(data.user);
+        setSelectedUser(data.data); // Sửa từ data.user thành data.data
         setShowDetailsModal(true);
       } else {
         showAlert('error', 'Error loading user details');
@@ -373,49 +384,135 @@ const UserManagement: React.FC = () => {
         </div>
       </section>
 
-      {/* User Details Modal */}
+      {/* Cải thiện User Details Modal */}
       <Modal
         show={showDetailsModal}
         onHide={() => setShowDetailsModal(false)}
-        title="User Details"
+        title="Chi tiết người dùng"
         footer={
           <button 
             type="button" 
             className="btn btn-secondary" 
             onClick={() => setShowDetailsModal(false)}
           >
-            Close
+            <i className="fas fa-times mr-1"></i>Đóng
           </button>
         }
       >
         {selectedUser && (
           <div className="row">
-            <div className="col-md-12">
-              <table className="table table-sm">
-                <tbody>
-                  <tr>
-                    <td><strong>ID:</strong></td>
-                    <td>{selectedUser.id}</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Username:</strong></td>
-                    <td>{selectedUser.username}</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Role:</strong></td>
-                    <td>
-                      <span className={`badge ${getRoleBadgeClass(selectedUser.role)}`}>
-                        {selectedUser.role}
-                      </span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td><strong>Created:</strong></td>
-                    <td>{new Date(selectedUser.created_at).toLocaleString()}</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="col-md-6">
+              <div className="card border-0">
+                <div className="card-header bg-light">
+                  <h6 className="mb-0"><i className="fas fa-user mr-2"></i>Thông tin cơ bản</h6>
+                </div>
+                <div className="card-body p-3">
+                  <table className="table table-sm table-borderless">
+                    <tbody>
+                      <tr>
+                        <td className="font-weight-bold" style={{width: '40%'}}>ID:</td>
+                        <td>{selectedUser.id}</td>
+                      </tr>
+                      <tr>
+                        <td className="font-weight-bold">Tên đăng nhập:</td>
+                        <td>{selectedUser.username}</td>
+                      </tr>
+                      <tr>
+                        <td className="font-weight-bold">Họ và tên:</td>
+                        <td>{selectedUser.full_name || 'Chưa cập nhật'}</td>
+                      </tr>
+                      <tr>
+                        <td className="font-weight-bold">Email:</td>
+                        <td>{selectedUser.email || 'Chưa cập nhật'}</td>
+                      </tr>
+                      <tr>
+                        <td className="font-weight-bold">Vai trò:</td>
+                        <td>
+                          <span className={`badge ${getRoleBadgeClass(selectedUser.role)}`}>
+                            {selectedUser.role === 'admin' ? 'Quản trị viên' : 'Người dùng'}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="font-weight-bold">Trạng thái:</td>
+                        <td>
+                          <span className={`badge ${selectedUser.is_active ? 'badge-success' : 'badge-danger'}`}>
+                            {selectedUser.is_active ? 'Hoạt động' : 'Vô hiệu hóa'}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="font-weight-bold">Ngày tạo:</td>
+                        <td>{new Date(selectedUser.created_at).toLocaleString('vi-VN')}</td>
+                      </tr>
+                      {selectedUser.updated_at && (
+                        <tr>
+                          <td className="font-weight-bold">Cập nhật lần cuối:</td>
+                          <td>{new Date(selectedUser.updated_at).toLocaleString('vi-VN')}</td>
+                        </tr>
+                      )}
+                      {selectedUser.last_login && (
+                        <tr>
+                          <td className="font-weight-bold">Đăng nhập lần cuối:</td>
+                          <td>{new Date(selectedUser.last_login).toLocaleString('vi-VN')}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
+            
+            {/* Thống kê hoạt động (chỉ hiển thị cho admin) */}
+            {currentUser?.role === 'admin' && selectedUser.stats && (
+              <div className="col-md-6">
+                <div className="card border-0">
+                  <div className="card-header bg-light">
+                    <h6 className="mb-0"><i className="fas fa-chart-bar mr-2"></i>Thống kê hoạt động</h6>
+                  </div>
+                  <div className="card-body p-3">
+                    <div className="row text-center">
+                      <div className="col-4">
+                        <div className="border rounded p-2 mb-2">
+                          <div className="h4 text-primary mb-1">{selectedUser.stats.total_mops}</div>
+                          <small className="text-muted">Tổng MOPs</small>
+                        </div>
+                      </div>
+                      <div className="col-4">
+                        <div className="border rounded p-2 mb-2">
+                          <div className="h4 text-success mb-1">{selectedUser.stats.total_executions}</div>
+                          <small className="text-muted">Lần thực thi</small>
+                        </div>
+                      </div>
+                      <div className="col-4">
+                        <div className="border rounded p-2 mb-2">
+                          <div className="h4 text-warning mb-1">{selectedUser.stats.pending_mops}</div>
+                          <small className="text-muted">MOPs chờ duyệt</small>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Biểu đồ hoạt động đơn giản */}
+                    <div className="mt-3">
+                      <div className="progress-group">
+                        <span className="float-right"><b>{selectedUser.stats.total_executions}</b>/{selectedUser.stats.total_mops}</span>
+                        <span className="progress-description">Tỷ lệ thực thi MOPs</span>
+                        <div className="progress progress-sm">
+                          <div 
+                            className="progress-bar bg-primary" 
+                            style={{
+                              width: selectedUser.stats.total_mops > 0 
+                                ? `${(selectedUser.stats.total_executions / selectedUser.stats.total_mops) * 100}%` 
+                                : '0%'
+                            }}
+                          ></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>

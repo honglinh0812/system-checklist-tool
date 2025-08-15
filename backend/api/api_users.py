@@ -273,6 +273,12 @@ def delete_user(user_id):
         if not user:
             return api_error('User not found', 404)
         
+        # Protect the first admin account (lowest ID admin) from deletion
+        if user.role == 'admin':
+            first_admin = User.query.filter_by(role='admin').order_by(User.id.asc()).first()
+            if first_admin and user.id == first_admin.id:
+                return api_error('Cannot delete the first admin account', 403)
+        
         # Check if user has associated data
         from models.mop import MOP
         from models.execution import ExecutionHistory
@@ -436,8 +442,13 @@ def change_user_status(user_id):
         if not isinstance(is_active, bool):
             return api_error('is_active must be a boolean', 400)
         
-        # Prevent deactivating the last admin
+        # Protect the first admin account from deactivation
         if not is_active and user.role == 'admin':
+            first_admin = User.query.filter_by(role='admin').order_by(User.id.asc()).first()
+            if first_admin and user.id == first_admin.id:
+                return api_error('Cannot deactivate the first admin account', 403)
+            
+            # Prevent deactivating the last admin
             active_admins = User.query.filter_by(role='admin', is_active=True).count()
             if active_admins <= 1:
                 return api_error('Cannot deactivate the last admin user', 400)

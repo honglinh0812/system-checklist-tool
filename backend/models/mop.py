@@ -13,14 +13,13 @@ class MOP(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    # Use PostgreSQL-specific ARRAY to enable operators like contains/any
     type = db.Column(ARRAY(db.String(20)), nullable=False)
     status = db.Column(db.String(20), nullable=False, default='pending')
-    assessment_type = db.Column(db.String(50), nullable=False, default='handover_assessment')  # Type of assessment
-    category = db.Column(db.String(50), nullable=True)  # Set by admin during approval
-    priority = db.Column(db.String(20), nullable=True)  # Set by admin during approval
-    estimated_duration = db.Column(db.Integer, nullable=True)  # Set by admin during approval
-    risk_level = db.Column(db.String(20), nullable=True)  # Set by admin during approval
+    assessment_type = db.Column(db.String(50), nullable=False, default='handover_assessment')
+    category = db.Column(db.String(50), nullable=True)
+    priority = db.Column(db.String(20), nullable=True)
+    estimated_duration = db.Column(db.Integer, nullable=True)
+    risk_level = db.Column(db.String(20), nullable=True)
     prerequisites = db.Column(db.Text, nullable=True)
     rollback_plan = db.Column(db.Text, nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
@@ -28,7 +27,7 @@ class MOP(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
+    # Relationships - loại bỏ assessment_results để tránh xung đột
     commands = db.relationship('Command', backref='mop', cascade='all, delete-orphan')
     files = db.relationship('MOPFile', backref='mop', cascade='all, delete-orphan')
     reviews = db.relationship('MOPReview', backref='mop', cascade='all, delete-orphan')

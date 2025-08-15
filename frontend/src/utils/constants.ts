@@ -22,9 +22,11 @@ export const API_ENDPOINTS = {
     RISK_TEST_CONNECTION: '/api/assessments/risk/test-connection',
     RISK_START: '/api/assessments/risk/start',
     RISK_RESULTS: (assessmentId: number) => `/api/assessments/risk/results/${assessmentId}`,
+    RISK_DOWNLOAD: (assessmentId: number) => `/api/assessments/risk/download/${assessmentId}`,
     HANDOVER_TEST_CONNECTION: '/api/assessments/handover/test-connection',
     HANDOVER_START: '/api/assessments/handover/start',
     HANDOVER_RESULTS: (assessmentId: number) => `/api/assessments/handover/results/${assessmentId}`,
+    HANDOVER_DOWNLOAD: (assessmentId: number) => `/api/assessments/handover/download/${assessmentId}`,
     TEMPLATE_DOWNLOAD: '/api/assessments/template/download',
   },
   EXECUTIONS: {

@@ -158,6 +158,14 @@ class CommandValidator:
         ]
         
         self.allowed_pipeline_operators = ['|']
+        
+        # Thêm validation_methods
+        self.validation_methods = {
+            'exact_match': self._exact_match,
+            'contains': self._contains,
+            'regex_match': self._regex_match,
+            'custom': self._custom_validation
+        }
 
     def validate_command(self, command: str) -> Dict[str, Any]:
         """
@@ -536,4 +544,4 @@ class CommandValidator:
             'average_score': average_score,
             'validation_summary': validation_summary,
             'results': results
-        } 
+        }

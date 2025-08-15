@@ -78,15 +78,15 @@ const MOPSubmission: React.FC = () => {
     submitFormData.append('description', formData.description);
 
     try {
-      const data = await apiService.upload<any>(API_ENDPOINTS.MOPS.UPLOAD, submitFormData);
+      const response = await apiService.upload<any>(API_ENDPOINTS.MOPS.UPLOAD, submitFormData);
       
-      // Backend returns success response with message field
-      if (data && data.message && data.message.includes('successfully')) {
+      // Backend returns success response with data field containing message
+      if (response && response.success && response.data) {
         setSubmissionStatus({
           type: 'success',
           message: 'MOP submitted successfully.',
-          mopId: data.mop_id,
-          status: data.status
+          mopId: response.data.mop_id,
+          status: response.data.status
         });
         // Reset form
         setFormData({ mopName: '', assessmentType: 'handover_assessment', pdfFile: null, appendixFile: null, description: '' });
@@ -94,7 +94,7 @@ const MOPSubmission: React.FC = () => {
       } else {
         setSubmissionStatus({
           type: 'error',
-          message: data.error || 'Failed to submit MOP'
+          message: response.message || 'Failed to submit MOP'
         });
       }
     } catch (error) {

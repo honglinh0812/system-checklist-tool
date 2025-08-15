@@ -192,44 +192,48 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Approved MOPs */}
-            <div className="col-lg-3 col-6">
-              <div className="small-box bg-success">
-                <div className="inner">
-                  <h3>{stats.approvedMops}</h3>
-                  <p>Approved MOPs</p>
+            {/* Approved MOPs - Only for admin */}
+            {user?.role === 'admin' && (
+              <div className="col-lg-3 col-6">
+                <div className="small-box bg-success">
+                  <div className="inner">
+                    <h3>{stats.approvedMops}</h3>
+                    <p>Approved MOPs</p>
+                  </div>
+                  <div className="icon">
+                    <i className="fas fa-check-circle"></i>
+                  </div>
+                  <Link to="/mop-management" className="small-box-footer">
+                    More info <i className="fas fa-arrow-circle-right"></i>
+                  </Link>
                 </div>
-                <div className="icon">
-                  <i className="fas fa-check-circle"></i>
-                </div>
-                <Link to="/mop-management" className="small-box-footer">
-                  More info <i className="fas fa-arrow-circle-right"></i>
-                </Link>
               </div>
-            </div>
+            )}
 
-            {/* Pending MOPs */}
-            <div className="col-lg-3 col-6">
-              <div className="small-box bg-warning">
-                <div className="inner">
-                  <h3>{stats.pendingMops}</h3>
-                  <p>Pending MOPs</p>
+            {/* Pending MOPs - Only for admin */}
+            {user?.role === 'admin' && (
+              <div className="col-lg-3 col-6">
+                <div className="small-box bg-warning">
+                  <div className="inner">
+                    <h3>{stats.pendingMops}</h3>
+                    <p>Pending MOPs</p>
+                  </div>
+                  <div className="icon">
+                    <i className="fas fa-clock"></i>
+                  </div>
+                  <Link to="/mop-management" className="small-box-footer">
+                    More info <i className="fas fa-arrow-circle-right"></i>
+                  </Link>
                 </div>
-                <div className="icon">
-                  <i className="fas fa-clock"></i>
-                </div>
-                <Link to="/mop-management" className="small-box-footer">
-                  More info <i className="fas fa-arrow-circle-right"></i>
-                </Link>
               </div>
-            </div>
+            )}
 
             {/* Recent Executions */}
             <div className="col-lg-3 col-6">
               <div className="small-box bg-danger">
                 <div className="inner">
                   <h3>{stats.userExecutions}</h3>
-                  <p>Risk/Handover Assessments</p>
+                  <p>Recent Executions</p>
                 </div>
                 <div className="icon">
                   <i className="fas fa-history"></i>

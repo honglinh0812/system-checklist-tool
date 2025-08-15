@@ -18,8 +18,8 @@ class AssessmentResult(db.Model):
     started_at = db.Column(db.DateTime, nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
     
-    # Relationships
-    mop = db.relationship('MOP', backref='assessment_results')
+    # Relationships - thêm cascade delete
+    mop = db.relationship('MOP', backref=db.backref('assessment_results', cascade='all, delete-orphan'))
     executor = db.relationship('User', backref='assessment_results')
     
     def to_dict(self):
