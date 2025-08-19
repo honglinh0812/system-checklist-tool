@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
 
@@ -12,20 +14,28 @@ interface SubmissionStatus {
 
 const MOPSubmission: React.FC = () => {
   const navigate = useNavigate();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>({ type: null, message: '' });
-  const [showStatusModal, setShowStatusModal] = useState(false);
-  const [formData, setFormData] = useState({
+  
+  // Persisted state management with unique keys for MOP Submission
+  const [formData, setFormData] = usePersistedState('submission_formData', {
     mopName: '',
     assessmentType: 'handover_assessment' as 'handover_assessment' | 'risk_assessment',
     pdfFile: null as File | null,
     appendixFile: null as File | null,
     description: ''
+  }, {
+    excludeKeys: ['pdfFile', 'appendixFile'],
+    autoSave: true,
+    autoSaveInterval: 5000
   });
-  const [fileNames, setFileNames] = useState({
+  const [fileNames, setFileNames] = usePersistedState('submission_fileNames', {
     pdfFile: 'Choose PDF file',
     appendixFile: 'Choose Excel/CSV/TXT file'
   });
+  const [submissionStatus, setSubmissionStatus] = usePersistedState<SubmissionStatus>('submission_submissionStatus', { type: null, message: '' });
+  const [showStatusModal, setShowStatusModal] = useModalState(false);
+  
+  // Non-persisted states - loading states
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, fileType: 'pdfFile' | 'appendixFile') => {
     const file = e.target.files?.[0] || null;

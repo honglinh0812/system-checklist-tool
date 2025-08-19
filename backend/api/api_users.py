@@ -8,7 +8,7 @@ from .api_utils import (
     api_response, api_error, paginate_query, validate_json, 
     admin_required, get_request_filters, apply_filters
 )
-from core.schemas import UserCreateSchema, UserSchema, DefaultUserCreateSchema
+from core.schemas import UserCreateSchema, UserSchema, DefaultUserCreateSchema, PublicRegisterSchema, UserApprovalSchema
 from core.auth import get_current_user
 import logging
 
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 users_bp = Blueprint('users', __name__, url_prefix='/api/users')
 
+# Cập nhật endpoint get_users để hỗ trợ filter theo status
 @users_bp.route('', methods=['GET'])
 @jwt_required()
 def get_users():
@@ -494,3 +495,184 @@ def change_my_password():
         db.session.rollback()
         logger.error(f"Change password error: {str(e)}")
         return api_error('Failed to change password', 500)
+
+@users_bp.route('/register', methods=['POST'])
+@validate_json(PublicRegisterSchema())
+def public_register():
+    """Public user registration endpoint"""
+    try:
+        json_data = request.get_json()
+        if not json_data:
+            return api_error('No JSON data provided', 400)
+        
+        data = json_data
+        
+        # Create new user with pending status and viewer role
+        user = User(
+            username=data['username'],
+            email=data['email'],
+            full_name=data['full_name'],
+            password=data['password'],
+            role='viewer',
+            status='pending'
+        )
+        user.is_active = True
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        logger.info(f"New user registered: {user.username} (pending approval)")
+        
+        return api_response({
+            'message': 'Registration successful. Your account is pending admin approval.',
+            'username': user.username,
+            'status': 'pending'
+        }, 'Registration successful', 201)
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Public registration error: {str(e)}")
+        return api_error('Failed to register user', 500)
+
+@users_bp.route('/<int:user_id>/approve', methods=['POST'])
+@admin_required
+@validate_json(UserApprovalSchema())
+def approve_user(user_id):
+    """Approve or reject pending user (admin only)"""
+    try:
+        json_data = request.get_json()
+        if not json_data:
+            return api_error('No JSON data provided', 400)
+        
+        user = User.query.get(user_id)
+        if not user:
+            return api_error('User not found', 404)
+        
+        if user.status != 'pending':
+            return api_error('User is not in pending status', 400)
+        
+        action = json_data['action']
+        
+        if action == 'approve':
+            user.approve_user()
+            message = f"User {user.username} approved and upgraded to user role"
+        else:  # reject
+            user.reject_user()
+            message = f"User {user.username} rejected, remains as viewer"
+        
+        db.session.commit()
+        
+        current_admin = get_current_user()
+        logger.info(f"User {user.username} {action}ed by admin {current_admin.username}")
+        
+        user_schema = UserSchema()
+        user_data = user_schema.dump(user)
+        
+        return api_response(user_data, message)
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"User approval error: {str(e)}")
+        return api_error('Failed to process user approval', 500)
+
+@users_bp.route('/pending', methods=['GET'])
+@admin_required
+def get_pending_users():
+    """Get list of pending users (admin only)"""
+    try:
+        # Get pending users
+        pending_users = User.query.filter_by(status='pending').all()
+        
+        # Check for expired pending users and auto-reject them
+        expired_users = []
+        for user in pending_users:
+            if user.is_pending_expired():
+                user.reject_user()
+                expired_users.append(user.username)
+        
+        if expired_users:
+            db.session.commit()
+            logger.info(f"Auto-rejected expired pending users: {', '.join(expired_users)}")
+        
+        # Get updated pending users list
+        pending_users = User.query.filter_by(status='pending').all()
+        
+        user_schema = UserSchema(many=True)
+        users_data = user_schema.dump(pending_users)
+        
+        return api_response({
+            'pending_users': users_data,
+            'count': len(pending_users),
+            'auto_rejected': expired_users
+        })
+        
+    except Exception as e:
+        logger.error(f"Get pending users error: {str(e)}")
+        return api_error('Failed to fetch pending users', 500)
+
+
+    """Get paginated list of users with filtering"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Admin can view all users, viewer can only view list
+        if not current_user.can_view_users():
+            return api_error('Insufficient permissions', 403)
+        
+        # Get filter parameters
+        filters = get_request_filters()
+        
+        # Build query
+        query = User.query
+        
+        # Apply search filter
+        if filters.get('search'):
+            search_term = f"%{filters['search']}%"
+            query = query.filter(
+                User.username.ilike(search_term)
+            )
+        
+        # Apply role filter
+        if filters.get('role'):
+            query = query.filter(User.role == filters['role'])
+        
+        # Apply status filter
+        if filters.get('status'):
+            query = query.filter(User.status == filters['status'])
+        
+        # Apply active status filter
+        is_active = request.args.get('is_active')
+        if is_active is not None:
+            query = query.filter(User.is_active == (is_active.lower() == 'true'))
+        
+        # Apply sorting
+        sort_by = filters.get('sort_by', 'created_at')
+        sort_order = filters.get('sort_order', 'desc')
+        
+        if hasattr(User, sort_by):
+            column = getattr(User, sort_by)
+            if sort_order.lower() == 'desc':
+                query = query.order_by(column.desc())
+            else:
+                query = query.order_by(column.asc())
+        
+        # Paginate
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        
+        result = paginate_query(query, page, per_page)
+        
+        # Serialize users
+        user_schema = UserSchema(many=True)
+        users_data = user_schema.dump(result['items'])
+        
+        return api_response({
+            'users': users_data,
+            'pagination': result['pagination']
+        })
+        
+    except Exception as e:
+        logger.error(f"Get users error: {str(e)}")
+        return api_error('Failed to fetch users', 500)

@@ -5,6 +5,9 @@ import { API_ENDPOINTS } from '../../utils/constants';
 import Modal from '../../components/common/Modal';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ErrorMessage from '../../components/common/ErrorMessage';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
+
 
 // Cập nhật interface User để bao gồm đầy đủ thông tin
 interface User {
@@ -13,6 +16,7 @@ interface User {
   email: string;
   full_name: string;
   role: string;
+  status: 'pending' | 'active';  // Thêm trường status
   is_active: boolean;
   created_at: string;
   updated_at?: string;
@@ -53,77 +57,131 @@ interface UsersData {
 
 const UserManagement: React.FC = () => {
   const { user: currentUser } = useAuth();
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [createLoading, setCreateLoading] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   
-  const [formData, setFormData] = useState<CreateUserData>({
+  // State management with unique keys for User Management - users không cần persist vì luôn load từ API
+  const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = usePersistedState<User | null>('user_selectedUser', null);
+  const [showDetailsModal, setShowDetailsModal] = useModalState(false);
+  const [formData, setFormData] = usePersistedState<CreateUserData>('user_formData', {
     username: '',
     email: '',
     full_name: '',
     password: '',
     confirm_password: '',
     role: ''
-  });
+  }, { excludeKeys: ['password', 'confirm_password'] });
+  const [searchTerm, setSearchTerm] = usePersistedState<string>('user_searchTerm', '', { autoSave: true, debounceDelay: 500 });
+  const [filterRole, setFilterRole] = usePersistedState<string>('user_filterRole', '', { autoSave: true });
+  const [sortField, setSortField] = usePersistedState<string>('user_sortField', 'username', { autoSave: true });
+  const [sortDirection, setSortDirection] = usePersistedState<'asc' | 'desc'>('user_sortDirection', 'asc', { autoSave: true });
+  const [currentPage, setCurrentPage] = usePersistedState<number>('user_currentPage', 1, { autoSave: true });
+  const [itemsPerPage, setItemsPerPage] = usePersistedState<number>('user_itemsPerPage', 10, { autoSave: true });
+  
+  // Các state không cần persist (loading, alerts, temporary actions)
+  const [loading, setLoading] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'approve' | 'reject';
+    userId: number;
+    username: string;
+    onConfirm: () => void;
+  } | null>(null);
 
+  // Load users khi component mount
   useEffect(() => {
     loadUsers();
   }, []);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const response = await apiService.get<ApiResponse<UsersData>>(API_ENDPOINTS.USERS.LIST);
+      console.log('API Response:', response);
+      
+      // Xử lý nhiều trường hợp cấu trúc dữ liệu từ API
+      let usersData: User[] = [];
+      
+      if (response.success && response.data) {
+        if (Array.isArray(response.data)) {
+          // Trường hợp API trả về trực tiếp array users
+          usersData = response.data;
+        } else if (response.data.users && Array.isArray(response.data.users)) {
+          // Trường hợp API trả về object có property users
+          usersData = response.data.users;
+        } else {
+          console.warn('Unexpected API response structure:', response.data);
+        }
+      }
+       
+       // Đảm bảo chỉ set array hợp lệ
+       if (Array.isArray(usersData)) {
+         setUsers(usersData);
+       } else {
+         console.error('usersData is not an array:', usersData);
+         setUsers([]);
+       }
+       setLoading(false);
+    } catch (error) {
+      console.error('Error loading users:', error);
+      setLoading(false);
+      setAlert({ type: 'error', message: 'Không thể tải danh sách người dùng' });
+    }
+  };
 
   const showAlert = (type: 'success' | 'error', message: string) => {
     setAlert({ type, message });
     setTimeout(() => setAlert(null), 5000);
   };
 
-  const loadUsers = async () => {
-    setLoading(true);
-    try {
-      const data = await apiService.get<ApiResponse<UsersData>>(API_ENDPOINTS.USERS.LIST);
-      if (data.success) {
-        setUsers(data.data.users);
-      } else {
-        showAlert('error', 'Error loading users');
-      }
-    } catch (error) {
-      console.error('Error loading users:', error);
-      showAlert('error', 'Error loading users');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    setFormData({ ...formData, [name]: value });
+  };
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+    setCurrentPage(1); // Reset to first page when searching
+  };
+
+  const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setFilterRole(e.target.value);
+    setCurrentPage(1); // Reset to first page when filtering
+  };
+
+  const handleSort = (field: string) => {
+    const newDirection = sortField === field && sortDirection === 'asc' ? 'desc' : 'asc';
+    setSortField(field);
+    setSortDirection(newDirection);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     // Validation
-    if (formData.password !== formData.confirm_password) {
-      showAlert('error', 'Passwords do not match');
+    if (!formData.username || !formData.email || !formData.full_name || !formData.password || !formData.role) {
+      showAlert('error', 'Vui lòng điền đầy đủ thông tin');
       return;
     }
-    
-    if (formData.password.length < 1) {
-      showAlert('error', 'Password must be at least 1 character long');
+
+    if (formData.password !== formData.confirm_password) {
+      showAlert('error', 'Mật khẩu xác nhận không khớp');
       return;
     }
 
     setCreateLoading(true);
     try {
-      // Remove confirm_password before sending to backend
-      const { confirm_password, ...userData } = formData;
-      const data = await apiService.post<any>(API_ENDPOINTS.USERS.CREATE, userData);
-      if (data.message) {
-        showAlert('success', 'User created successfully');
+      const response = await apiService.post<ApiResponse<User>>(API_ENDPOINTS.USERS.CREATE, {
+        username: formData.username,
+        email: formData.email,
+        full_name: formData.full_name,
+        password: formData.password,
+        role: formData.role
+      });
+
+      if (response.success) {
+        showAlert('success', 'Tạo người dùng thành công');
         setFormData({
           username: '',
           email: '',
@@ -132,390 +190,509 @@ const UserManagement: React.FC = () => {
           confirm_password: '',
           role: ''
         });
-        loadUsers();
-      } else {
-        showAlert('error', data.error || 'Failed to create user');
+        loadUsers(); // Reload users list
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating user:', error);
-      showAlert('error', 'Error creating user');
+      showAlert('error', error.response?.data?.message || 'Có lỗi xảy ra khi tạo người dùng');
     } finally {
       setCreateLoading(false);
     }
   };
 
-  const viewUserDetails = async (userId: number) => {
+  const approveUser = async (userId: number) => {
     try {
-      const data = await apiService.get<any>(`/api/users/${userId}`);
-      if (data.success) {
-        setSelectedUser(data.data); // Sửa từ data.user thành data.data
-        setShowDetailsModal(true);
-      } else {
-        showAlert('error', 'Error loading user details');
+      const response = await apiService.post<ApiResponse<{ message: string }>>(API_ENDPOINTS.USERS.APPROVE(userId));
+      if (response.success) {
+        showAlert('success', 'Phê duyệt người dùng thành công');
+        loadUsers();
       }
-    } catch (error) {
-      console.error('Error loading user details:', error);
-      showAlert('error', 'Error loading user details');
+    } catch (error: any) {
+      console.error('Error approving user:', error);
+      showAlert('error', error.response?.data?.message || 'Có lỗi xảy ra khi phê duyệt người dùng');
     }
   };
 
-  const deleteUser = async (userId: number, username: string) => {
-    if (window.confirm(`Are you sure you want to delete user "${username}"?`)) {
-      try {
-        const data = await apiService.delete<any>(`/api/users/${userId}`);
-        if (data.message) {
-          showAlert('success', 'User deleted successfully');
-          loadUsers();
-        } else {
-          showAlert('error', data.error || 'Failed to delete user');
-        }
-      } catch (error) {
-        console.error('Error deleting user:', error);
-        showAlert('error', 'Error deleting user');
+  const rejectUser = async (userId: number) => {
+    try {
+      const response = await apiService.post<ApiResponse<{ message: string }>>(API_ENDPOINTS.USERS.REJECT(userId));
+      if (response.success) {
+        showAlert('success', 'Từ chối người dùng thành công');
+        loadUsers();
       }
+    } catch (error: any) {
+      console.error('Error rejecting user:', error);
+      showAlert('error', error.response?.data?.message || 'Có lỗi xảy ra khi từ chối người dùng');
     }
   };
 
-  const getRoleBadgeClass = (role: string) => {
-    return role === 'admin' ? 'badge-danger' : 'badge-info';
+  const handleApprove = (user: User) => {
+    setConfirmAction({
+      type: 'approve',
+      userId: user.id,
+      username: user.username,
+      onConfirm: () => {
+        approveUser(user.id);
+        setShowConfirmModal(false);
+        setConfirmAction(null);
+      }
+    });
+    setShowConfirmModal(true);
   };
+
+  const handleReject = (user: User) => {
+    setConfirmAction({
+      type: 'reject',
+      userId: user.id,
+      username: user.username,
+      onConfirm: () => {
+        rejectUser(user.id);
+        setShowConfirmModal(false);
+        setConfirmAction(null);
+      }
+    });
+    setShowConfirmModal(true);
+  };
+
+  const handleViewDetails = (user: User) => {
+    setSelectedUser(user);
+    setShowDetailsModal(true);
+  };
+
+  // Filter and sort users
+  // Đảm bảo users luôn là array để tránh lỗi filter
+  const safeUsers = Array.isArray(users) ? users : [];
+  
+  const filteredUsers = safeUsers.filter(user => {
+    const searchTermLower = (searchTerm || '').toLowerCase();
+    const matchesSearch = user.username?.toLowerCase().includes(searchTermLower) ||
+                         user.email?.toLowerCase().includes(searchTermLower) ||
+                         user.full_name?.toLowerCase().includes(searchTermLower);
+    const matchesRole = !filterRole || user.role === filterRole;
+    return matchesSearch && matchesRole;
+  });
+
+  const sortedUsers = [...filteredUsers].sort((a, b) => {
+    const aValue = a[sortField as keyof User] as string;
+    const bValue = b[sortField as keyof User] as string;
+    if (sortDirection === 'asc') {
+      return aValue.localeCompare(bValue);
+    } else {
+      return bValue.localeCompare(aValue);
+    }
+  });
+
+  // Pagination
+  const totalPages = Math.ceil(sortedUsers.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedUsers = sortedUsers.slice(startIndex, startIndex + itemsPerPage);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  if (loading) {
+    return <LoadingSpinner />;
+  }
+
+  // Safety check for data integrity
+  if (!Array.isArray(users)) {
+    return (
+      <div className="alert alert-warning">
+        <h4>User Data Loading Issue</h4>
+        <p>Unable to load user data. Please refresh the page.</p>
+        <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="content-wrapper">
-      <div className="content-header">
-        <div className="container-fluid">
-          <div className="row mb-2">
-            <div className="col-sm-6">
-              <h1>User Management</h1>
+    <div className="container-fluid">
+      <div className="row">
+        <div className="col-12">
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">Quản lý người dùng</h3>
             </div>
-            <div className="col-sm-6">
-              <ol className="breadcrumb float-sm-right">
-                <li className="breadcrumb-item active">User Management</li>
-              </ol>
+            <div className="card-body">
+              {alert && (
+                <ErrorMessage 
+                  message={alert.message} 
+                  type={alert.type === 'error' ? 'danger' : alert.type === 'success' ? 'info' : 'warning'}
+                  dismissible={true}
+                  onDismiss={() => setAlert(null)}
+                />
+              )}
+
+              {/* Search and Filter */}
+              <div className="row mb-3">
+                <div className="col-md-6">
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Tìm kiếm theo tên, email..."
+                    value={searchTerm}
+                    onChange={handleSearchChange}
+                  />
+                </div>
+                <div className="col-md-3">
+                  <select
+                    className="form-control"
+                    value={filterRole}
+                    onChange={handleFilterChange}
+                  >
+                    <option value="">Tất cả vai trò</option>
+                    <option value="admin">Admin</option>
+                    <option value="user">User</option>
+                  </select>
+                </div>
+                <div className="col-md-3">
+                  <select
+                    className="form-control"
+                    value={itemsPerPage}
+                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                  >
+                    <option value={5}>5 per page</option>
+                    <option value={10}>10 per page</option>
+                    <option value={20}>20 per page</option>
+                    <option value={50}>50 per page</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Create User Form */}
+              {currentUser?.role === 'admin' && (
+                <div className="card mb-4">
+                  <div className="card-header">
+                    <h5>Tạo người dùng mới</h5>
+                  </div>
+                  <div className="card-body">
+                    <form onSubmit={handleSubmit}>
+                      <div className="row">
+                        <div className="col-md-6">
+                          <div className="form-group">
+                            <label>Tên đăng nhập</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              name="username"
+                              value={formData.username}
+                              onChange={handleInputChange}
+                              required
+                            />
+                          </div>
+                        </div>
+                        <div className="col-md-6">
+                          <div className="form-group">
+                            <label>Email</label>
+                            <input
+                              type="email"
+                              className="form-control"
+                              name="email"
+                              value={formData.email}
+                              onChange={handleInputChange}
+                              required
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="row">
+                        <div className="col-md-6">
+                          <div className="form-group">
+                            <label>Họ và tên</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              name="full_name"
+                              value={formData.full_name}
+                              onChange={handleInputChange}
+                              required
+                            />
+                          </div>
+                        </div>
+                        <div className="col-md-6">
+                          <div className="form-group">
+                            <label>Vai trò</label>
+                            <select
+                              className="form-control"
+                              name="role"
+                              value={formData.role}
+                              onChange={handleInputChange}
+                              required
+                            >
+                              <option value="">Chọn vai trò</option>
+                              <option value="admin">Admin</option>
+                              <option value="user">User</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="row">
+                        <div className="col-md-6">
+                          <div className="form-group">
+                            <label>Mật khẩu</label>
+                            <input
+                              type="password"
+                              className="form-control"
+                              name="password"
+                              value={formData.password}
+                              onChange={handleInputChange}
+                              required
+                            />
+                          </div>
+                        </div>
+                        <div className="col-md-6">
+                          <div className="form-group">
+                            <label>Xác nhận mật khẩu</label>
+                            <input
+                              type="password"
+                              className="form-control"
+                              name="confirm_password"
+                              value={formData.confirm_password}
+                              onChange={handleInputChange}
+                              required
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={createLoading}
+                      >
+                        {createLoading ? 'Đang tạo...' : 'Tạo người dùng'}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Users Table */}
+              <div className="table-responsive">
+                <table className="table table-bordered table-striped">
+                  <thead>
+                    <tr>
+                      <th 
+                        onClick={() => handleSort('username')}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        Tên đăng nhập
+                        {sortField === 'username' && (
+                          <i className={`fas fa-sort-${sortDirection === 'asc' ? 'up' : 'down'} ml-1`}></i>
+                        )}
+                      </th>
+                      <th 
+                        onClick={() => handleSort('email')}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        Email
+                        {sortField === 'email' && (
+                          <i className={`fas fa-sort-${sortDirection === 'asc' ? 'up' : 'down'} ml-1`}></i>
+                        )}
+                      </th>
+                      <th 
+                        onClick={() => handleSort('full_name')}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        Họ và tên
+                        {sortField === 'full_name' && (
+                          <i className={`fas fa-sort-${sortDirection === 'asc' ? 'up' : 'down'} ml-1`}></i>
+                        )}
+                      </th>
+                      <th 
+                        onClick={() => handleSort('role')}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        Vai trò
+                        {sortField === 'role' && (
+                          <i className={`fas fa-sort-${sortDirection === 'asc' ? 'up' : 'down'} ml-1`}></i>
+                        )}
+                      </th>
+                      <th>Trạng thái</th>
+                      <th>Ngày tạo</th>
+                      <th>Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedUsers.map((user) => (
+                      <tr key={user.id}>
+                        <td>{user.username}</td>
+                        <td>{user.email}</td>
+                        <td>{user.full_name}</td>
+                        <td>
+                          <span className={`badge badge-${user.role === 'admin' ? 'danger' : 'primary'}`}>
+                            {user.role === 'admin' ? 'Admin' : 'User'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge badge-${user.status === 'active' ? 'success' : 'warning'}`}>
+                            {user.status === 'active' ? 'Hoạt động' : 'Chờ duyệt'}
+                          </span>
+                        </td>
+                        <td>{new Date(user.created_at).toLocaleDateString('vi-VN')}</td>
+                        <td>
+                          <button
+                            className="btn btn-info btn-sm mr-1"
+                            onClick={() => handleViewDetails(user)}
+                          >
+                            <i className="fas fa-eye"></i> Xem
+                          </button>
+                          {currentUser?.role === 'admin' && user.status === 'pending' && (
+                            <>
+                              <button
+                                className="btn btn-success btn-sm mr-1"
+                                onClick={() => handleApprove(user)}
+                              >
+                                <i className="fas fa-check"></i> Duyệt
+                              </button>
+                              <button
+                                className="btn btn-danger btn-sm"
+                                onClick={() => handleReject(user)}
+                              >
+                                <i className="fas fa-times"></i> Từ chối
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <nav>
+                  <ul className="pagination justify-content-center">
+                    <li className={`page-item ${currentPage === 1 ? 'disabled' : ''}`}>
+                      <button
+                        className="page-link"
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                      >
+                        Trước
+                      </button>
+                    </li>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                      <li key={page} className={`page-item ${currentPage === page ? 'active' : ''}`}>
+                        <button
+                          className="page-link"
+                          onClick={() => handlePageChange(page)}
+                        >
+                          {page}
+                        </button>
+                      </li>
+                    ))}
+                    <li className={`page-item ${currentPage === totalPages ? 'disabled' : ''}`}>
+                      <button
+                        className="page-link"
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                      >
+                        Sau
+                      </button>
+                    </li>
+                  </ul>
+                </nav>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      <section className="content">
-        <div className="container-fluid">
-          {alert && (
-        <ErrorMessage
-          message={alert.message}
-          type={alert.type === 'success' ? 'info' : 'danger'}
-          dismissible
-          onDismiss={() => setAlert(null)}
-          className="fade show"
-        />
-      )}
-
-          <div className="row">
-            <div className="col-md-4">
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">
-                    <i className="fas fa-user-plus mr-2"></i>
-                    Create New User
-                  </h3>
-                </div>
-                <div className="card-body">
-                  <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                      <label htmlFor="username"><strong>Username:</strong></label>
-                      <input 
-                        type="text" 
-                        className="form-control" 
-                        id="username" 
-                        name="username" 
-                        value={formData.username}
-                        onChange={handleInputChange}
-                        required 
-                      />
-                    </div>
-                    
-                    <div className="form-group">
-                      <label htmlFor="email"><strong>Email:</strong></label>
-                      <input 
-                        type="email" 
-                        className="form-control" 
-                        id="email" 
-                        name="email" 
-                        value={formData.email}
-                        onChange={handleInputChange}
-                        required 
-                      />
-                    </div>
-                    
-                    <div className="form-group">
-                      <label htmlFor="full_name"><strong>Full Name:</strong></label>
-                      <input 
-                        type="text" 
-                        className="form-control" 
-                        id="full_name" 
-                        name="full_name" 
-                        value={formData.full_name}
-                        onChange={handleInputChange}
-                        required 
-                      />
-                    </div>
-                    
-                    <div className="form-group">
-                      <label htmlFor="password"><strong>Password:</strong></label>
-                      <input 
-                        type="password" 
-                        className="form-control" 
-                        id="password" 
-                        name="password" 
-                        value={formData.password}
-                        onChange={handleInputChange}
-                        required 
-                      />
-                    </div>
-                    
-                    <div className="form-group">
-                      <label htmlFor="confirmPassword"><strong>Confirm Password:</strong></label>
-                      <input 
-                        type="password" 
-                        className="form-control" 
-                        id="confirmPassword" 
-                        name="confirm_password" 
-                        value={formData.confirm_password}
-                        onChange={handleInputChange}
-                        required 
-                      />
-                    </div>
-                    
-                    <div className="form-group">
-                      <label htmlFor="role"><strong>Role:</strong></label>
-                      <select 
-                        className="form-control" 
-                        id="role" 
-                        name="role" 
-                        value={formData.role}
-                        onChange={handleInputChange}
-                        required
-                      >
-                        <option value="">Select Role</option>
-                        <option value="user">User</option>
-                        <option value="admin">Admin</option>
-                      </select>
-                    </div>
-                    
-                    <button type="submit" className="btn btn-primary" disabled={createLoading}>
-                      {createLoading ? (
-                        <LoadingSpinner size="sm" text="Creating..." />
-                      ) : (
-                        <><i className="fas fa-user-plus mr-2"></i>Create User</>
-                      )}
-                    </button>
-                  </form>
-                </div>
-              </div>
-            </div>
-            
-            <div className="col-md-8">
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">
-                    <i className="fas fa-users mr-2"></i>
-                    User List
-                  </h3>
-                </div>
-                <div className="card-body">
-                  <div className="table-responsive">
-                    <table className="table table-striped">
-                      <thead>
-                        <tr>
-                          <th>ID</th>
-                          <th>Username</th>
-                          <th>Role</th>
-                          <th>Created</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {loading ? (
-                          <tr>
-                            <td colSpan={5} className="text-center">
-                              <LoadingSpinner size="sm" />
-                            </td>
-                          </tr>
-                        ) : users.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="text-center">No users found</td>
-                          </tr>
-                        ) : (
-                          users.map(user => (
-                            <tr key={user.id}>
-                              <td>{user.id}</td>
-                              <td><strong>{user.username}</strong></td>
-                              <td>
-                                <span className={`badge ${getRoleBadgeClass(user.role)}`}>
-                                  {user.role}
-                                </span>
-                              </td>
-                              <td>{new Date(user.created_at).toLocaleDateString()}</td>
-                              <td>
-                                <button 
-                                  className="btn btn-sm btn-info mr-1" 
-                                  onClick={() => viewUserDetails(user.id)}
-                                >
-                                  <i className="fas fa-eye mr-1"></i>View
-                                </button>
-                                {user.id !== currentUser?.id && (
-                                  <button 
-                                    className="btn btn-sm btn-danger" 
-                                    onClick={() => deleteUser(user.id, user.username)}
-                                  >
-                                    <i className="fas fa-trash mr-1"></i>Delete
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Cải thiện User Details Modal */}
-      <Modal
-        show={showDetailsModal}
-        onHide={() => setShowDetailsModal(false)}
-        title="Chi tiết người dùng"
-        footer={
-          <button 
-            type="button" 
-            className="btn btn-secondary" 
-            onClick={() => setShowDetailsModal(false)}
-          >
-            <i className="fas fa-times mr-1"></i>Đóng
-          </button>
-        }
-      >
-        {selectedUser && (
+      {/* User Details Modal */}
+      {selectedUser && (
+        <Modal
+          show={showDetailsModal}
+          onHide={() => setShowDetailsModal(false)}
+          title={`Chi tiết người dùng: ${selectedUser.username}`}
+        >
           <div className="row">
             <div className="col-md-6">
-              <div className="card border-0">
-                <div className="card-header bg-light">
-                  <h6 className="mb-0"><i className="fas fa-user mr-2"></i>Thông tin cơ bản</h6>
-                </div>
-                <div className="card-body p-3">
-                  <table className="table table-sm table-borderless">
-                    <tbody>
-                      <tr>
-                        <td className="font-weight-bold" style={{width: '40%'}}>ID:</td>
-                        <td>{selectedUser.id}</td>
-                      </tr>
-                      <tr>
-                        <td className="font-weight-bold">Tên đăng nhập:</td>
-                        <td>{selectedUser.username}</td>
-                      </tr>
-                      <tr>
-                        <td className="font-weight-bold">Họ và tên:</td>
-                        <td>{selectedUser.full_name || 'Chưa cập nhật'}</td>
-                      </tr>
-                      <tr>
-                        <td className="font-weight-bold">Email:</td>
-                        <td>{selectedUser.email || 'Chưa cập nhật'}</td>
-                      </tr>
-                      <tr>
-                        <td className="font-weight-bold">Vai trò:</td>
-                        <td>
-                          <span className={`badge ${getRoleBadgeClass(selectedUser.role)}`}>
-                            {selectedUser.role === 'admin' ? 'Quản trị viên' : 'Người dùng'}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="font-weight-bold">Trạng thái:</td>
-                        <td>
-                          <span className={`badge ${selectedUser.is_active ? 'badge-success' : 'badge-danger'}`}>
-                            {selectedUser.is_active ? 'Hoạt động' : 'Vô hiệu hóa'}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="font-weight-bold">Ngày tạo:</td>
-                        <td>{new Date(selectedUser.created_at).toLocaleString('vi-VN')}</td>
-                      </tr>
-                      {selectedUser.updated_at && (
-                        <tr>
-                          <td className="font-weight-bold">Cập nhật lần cuối:</td>
-                          <td>{new Date(selectedUser.updated_at).toLocaleString('vi-VN')}</td>
-                        </tr>
-                      )}
-                      {selectedUser.last_login && (
-                        <tr>
-                          <td className="font-weight-bold">Đăng nhập lần cuối:</td>
-                          <td>{new Date(selectedUser.last_login).toLocaleString('vi-VN')}</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+              <strong>Tên đăng nhập:</strong> {selectedUser.username}
+            </div>
+            <div className="col-md-6">
+              <strong>Email:</strong> {selectedUser.email}
+            </div>
+          </div>
+          <div className="row mt-2">
+            <div className="col-md-6">
+              <strong>Họ và tên:</strong> {selectedUser.full_name}
+            </div>
+            <div className="col-md-6">
+              <strong>Vai trò:</strong> 
+              <span className={`badge badge-${selectedUser.role === 'admin' ? 'danger' : 'primary'} ml-1`}>
+                {selectedUser.role === 'admin' ? 'Admin' : 'User'}
+              </span>
+            </div>
+          </div>
+          <div className="row mt-2">
+            <div className="col-md-6">
+              <strong>Trạng thái:</strong>
+              <span className={`badge badge-${selectedUser.status === 'active' ? 'success' : 'warning'} ml-1`}>
+                {selectedUser.status === 'active' ? 'Hoạt động' : 'Chờ duyệt'}
+              </span>
+            </div>
+            <div className="col-md-6">
+              <strong>Ngày tạo:</strong> {new Date(selectedUser.created_at).toLocaleDateString('vi-VN')}
+            </div>
+          </div>
+          {selectedUser.last_login && (
+            <div className="row mt-2">
+              <div className="col-12">
+                <strong>Lần đăng nhập cuối:</strong> {new Date(selectedUser.last_login).toLocaleString('vi-VN')}
               </div>
             </div>
-            
-            {/* Thống kê hoạt động (chỉ hiển thị cho admin) */}
-            {currentUser?.role === 'admin' && selectedUser.stats && (
-              <div className="col-md-6">
-                <div className="card border-0">
-                  <div className="card-header bg-light">
-                    <h6 className="mb-0"><i className="fas fa-chart-bar mr-2"></i>Thống kê hoạt động</h6>
-                  </div>
-                  <div className="card-body p-3">
-                    <div className="row text-center">
-                      <div className="col-4">
-                        <div className="border rounded p-2 mb-2">
-                          <div className="h4 text-primary mb-1">{selectedUser.stats.total_mops}</div>
-                          <small className="text-muted">Tổng MOPs</small>
-                        </div>
-                      </div>
-                      <div className="col-4">
-                        <div className="border rounded p-2 mb-2">
-                          <div className="h4 text-success mb-1">{selectedUser.stats.total_executions}</div>
-                          <small className="text-muted">Lần thực thi</small>
-                        </div>
-                      </div>
-                      <div className="col-4">
-                        <div className="border rounded p-2 mb-2">
-                          <div className="h4 text-warning mb-1">{selectedUser.stats.pending_mops}</div>
-                          <small className="text-muted">MOPs chờ duyệt</small>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Biểu đồ hoạt động đơn giản */}
-                    <div className="mt-3">
-                      <div className="progress-group">
-                        <span className="float-right"><b>{selectedUser.stats.total_executions}</b>/{selectedUser.stats.total_mops}</span>
-                        <span className="progress-description">Tỷ lệ thực thi MOPs</span>
-                        <div className="progress progress-sm">
-                          <div 
-                            className="progress-bar bg-primary" 
-                            style={{
-                              width: selectedUser.stats.total_mops > 0 
-                                ? `${(selectedUser.stats.total_executions / selectedUser.stats.total_mops) * 100}%` 
-                                : '0%'
-                            }}
-                          ></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+          )}
+          {selectedUser.stats && (
+            <div className="row mt-3">
+              <div className="col-12">
+                <h6>Thống kê:</h6>
+                <ul>
+                  <li>Tổng số MOP: {selectedUser.stats.total_mops}</li>
+                  <li>Tổng số lần thực thi: {selectedUser.stats.total_executions}</li>
+                  <li>MOP chờ duyệt: {selectedUser.stats.pending_mops}</li>
+                </ul>
               </div>
-            )}
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmAction && (
+        <Modal
+          show={showConfirmModal}
+          onHide={() => {
+            setShowConfirmModal(false);
+            setConfirmAction(null);
+          }}
+          title={`Xác nhận ${confirmAction.type === 'approve' ? 'phê duyệt' : 'từ chối'}`}
+        >
+          <p>
+            Bạn có chắc chắn muốn {confirmAction.type === 'approve' ? 'phê duyệt' : 'từ chối'} người dùng <strong>{confirmAction.username}</strong>?
+          </p>
+          <div className="text-right">
+            <button
+              className="btn btn-secondary mr-2"
+              onClick={() => {
+                setShowConfirmModal(false);
+                setConfirmAction(null);
+              }}
+            >
+              Hủy
+            </button>
+            <button
+              className={`btn btn-${confirmAction.type === 'approve' ? 'success' : 'danger'}`}
+              onClick={confirmAction.onConfirm}
+            >
+              {confirmAction.type === 'approve' ? 'Phê duyệt' : 'Từ chối'}
+            </button>
           </div>
-        )}
-      </Modal>
+        </Modal>
+      )}
     </div>
   );
 };

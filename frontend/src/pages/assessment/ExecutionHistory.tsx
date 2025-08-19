@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import { apiService } from '../../services/api';
-import { API_ENDPOINTS } from '../../utils/constants';
+import { API_ENDPOINTS, USER_ROLES } from '../../utils/constants';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
 
 interface Execution {
   id: number;
@@ -24,8 +27,21 @@ interface Execution {
 }
 
 const ExecutionHistory: React.FC = () => {
-  const [executions, setExecutions] = useState<Execution[]>([]);
+  const { user } = useAuth();
+  
+  // Persisted state management with unique keys for Execution History
+  const [executions, setExecutions] = usePersistedState<Execution[]>('history_executions', [], { autoSave: true, autoSaveInterval: 30000 });
+  const [selectedExecution, setSelectedExecution] = usePersistedState<Execution | null>('history_selectedExecution', null);
+  const [showDetailModal, setShowDetailModal] = useModalState(false);
+  
+  // Non-persisted states - loading
   const [loading, setLoading] = useState(true);
+
+  // Permission checks
+  const isAdmin = user?.role === USER_ROLES.ADMIN;
+  const isUser = user?.role === USER_ROLES.USER;
+  const isViewer = user?.role === USER_ROLES.VIEWER;
+  const canExport = isAdmin || isUser; // Viewer chỉ có thể xem, không export
 
   useEffect(() => {
     fetchExecutions();
@@ -78,19 +94,60 @@ const ExecutionHistory: React.FC = () => {
     }
   };
 
+  const handleViewDetails = async (executionId: number) => {
+    try {
+      const execution = executions.find(e => e.id === executionId);
+      if (execution) {
+        // Fetch detailed execution data if needed
+        const detailData = await apiService.get<any>(`${API_ENDPOINTS.EXECUTIONS.DETAIL}/${executionId}`);
+        if (detailData.success) {
+          setSelectedExecution({ ...execution, ...detailData.data });
+        } else {
+          setSelectedExecution(execution);
+        }
+        setShowDetailModal(true);
+      }
+    } catch (error) {
+      console.error('Error fetching execution details:', error);
+      // Fallback to basic execution data
+      const execution = executions.find(e => e.id === executionId);
+      if (execution) {
+        setSelectedExecution(execution);
+        setShowDetailModal(true);
+      }
+    }
+  };
+
   const handleExportAll = () => {
+    if (!canExport) {
+      alert('You do not have permission to export data.');
+      return;
+    }
     // Logic để export tất cả kết quả
     console.log('Exporting all results...');
   };
 
-  const handleViewDetails = (executionId: number) => {
-    // Logic để xem chi tiết execution
-    console.log('Viewing details for execution:', executionId);
-  };
-
   const handleExportSingle = (executionId: number) => {
+    if (!canExport) {
+      alert('You do not have permission to export data.');
+      return;
+    }
     // Logic để export một execution
     console.log('Exporting execution:', executionId);
+  };
+
+  const getPageTitle = () => {
+    if (isViewer) {
+      return 'Execution History (View Only)';
+    }
+    return 'Execution History';
+  };
+
+  const getPageDescription = () => {
+    if (isViewer) {
+      return 'View execution history and results (read-only access)';
+    }
+    return 'Execution History (Last 7 Days)';
   };
 
   return (
@@ -100,7 +157,13 @@ const ExecutionHistory: React.FC = () => {
         <div className="container-fluid">
           <div className="row mb-2">
             <div className="col-sm-6">
-              <h1>Execution History</h1>
+              <h1>{getPageTitle()}</h1>
+              {isViewer && (
+                <small className="text-muted">
+                  <i className="fas fa-info-circle mr-1"></i>
+                  You have read-only access to execution history
+                </small>
+              )}
             </div>
             <div className="col-sm-6">
               <ol className="breadcrumb float-sm-right">
@@ -123,18 +186,20 @@ const ExecutionHistory: React.FC = () => {
                 <div className="card-header">
                   <h3 className="card-title">
                     <i className="fas fa-history mr-2"></i>
-                    Execution History (Last 7 Days)
+                    {getPageDescription()}
                   </h3>
-                  <div className="card-tools">
-                    <button 
-                      type="button" 
-                      className="btn btn-success"
-                      onClick={handleExportAll}
-                    >
-                      <i className="fas fa-download mr-2"></i>
-                      Export All
-                    </button>
-                  </div>
+                  {canExport && (
+                    <div className="card-tools">
+                      <button 
+                        type="button" 
+                        className="btn btn-success"
+                        onClick={handleExportAll}
+                      >
+                        <i className="fas fa-download mr-2"></i>
+                        Export All
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="card-body">
                   {loading ? (
@@ -152,6 +217,7 @@ const ExecutionHistory: React.FC = () => {
                             <th>MOP được sử dụng</th>
                             <th>Kết quả đánh giá</th>
                             <th>Người thực thi</th>
+                            <th>Thống kê</th>
                             <th>Actions</th>
                           </tr>
                         </thead>
@@ -160,6 +226,14 @@ const ExecutionHistory: React.FC = () => {
                             <tr key={execution.id}>
                               <td>
                                 <strong>{execution.execution_time_formatted}</strong>
+                                {execution.duration && (
+                                  <>
+                                    <br />
+                                    <small className="text-muted">
+                                      Duration: {execution.duration.toFixed(2)}s
+                                    </small>
+                                  </>
+                                )}
                               </td>
                               <td>
                                 {getAssessmentBadges(execution)}
@@ -177,6 +251,28 @@ const ExecutionHistory: React.FC = () => {
                                 {execution.user_name}
                               </td>
                               <td>
+                                {execution.total_commands > 0 && (
+                                  <div>
+                                    <small className="text-success">
+                                      <i className="fas fa-check mr-1"></i>
+                                      {execution.passed_commands}/{execution.total_commands}
+                                    </small>
+                                    <br />
+                                    <small className="text-muted">
+                                      Success: {execution.success_rate.toFixed(1)}%
+                                    </small>
+                                  </div>
+                                )}
+                                {execution.server_count > 0 && (
+                                  <div>
+                                    <small className="text-info">
+                                      <i className="fas fa-server mr-1"></i>
+                                      {execution.server_count} servers
+                                    </small>
+                                  </div>
+                                )}
+                              </td>
+                              <td>
                                 <div className="btn-group" role="group">
                                   <button 
                                     className="btn btn-sm btn-info"
@@ -185,13 +281,15 @@ const ExecutionHistory: React.FC = () => {
                                   >
                                     <i className="fas fa-eye"></i>
                                   </button>
-                                  <button 
-                                    className="btn btn-sm btn-success"
-                                    onClick={() => handleExportSingle(execution.id)}
-                                    title="Export"
-                                  >
-                                    <i className="fas fa-download"></i>
-                                  </button>
+                                  {canExport && (
+                                    <button 
+                                      className="btn btn-sm btn-success"
+                                      onClick={() => handleExportSingle(execution.id)}
+                                      title="Export"
+                                    >
+                                      <i className="fas fa-download"></i>
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -206,6 +304,18 @@ const ExecutionHistory: React.FC = () => {
                       <p className="text-muted">
                         No executions have been performed in the last 7 days.
                       </p>
+                      {(isAdmin || isUser) && (
+                        <div className="mt-3">
+                          <Link to="/risk-assessment" className="btn btn-primary mr-2">
+                            <i className="fas fa-shield-alt mr-2"></i>
+                            Start Risk Assessment
+                          </Link>
+                          <Link to="/handover-assessment" className="btn btn-success">
+                            <i className="fas fa-exchange-alt mr-2"></i>
+                            Start Handover Assessment
+                          </Link>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -214,6 +324,167 @@ const ExecutionHistory: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {/* Execution Detail Modal */}
+      {selectedExecution && (
+        <div className={`modal fade ${showDetailModal ? 'show' : ''}`} 
+             style={{ display: showDetailModal ? 'block' : 'none' }}
+             tabIndex={-1}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h4 className="modal-title">
+                  <i className="fas fa-info-circle mr-2"></i>
+                  Execution Details
+                </h4>
+                <button 
+                  type="button" 
+                  className="close" 
+                  onClick={() => setShowDetailModal(false)}
+                >
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="row">
+                  <div className="col-md-6">
+                    <div className="info-box">
+                      <span className="info-box-icon bg-info">
+                        <i className="fas fa-tasks"></i>
+                      </span>
+                      <div className="info-box-content">
+                        <span className="info-box-text">MOP Name</span>
+                        <span className="info-box-number">{selectedExecution.mop_name}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-md-6">
+                    <div className="info-box">
+                      <span className="info-box-icon bg-success">
+                        <i className="fas fa-user"></i>
+                      </span>
+                      <div className="info-box-content">
+                        <span className="info-box-text">Executed By</span>
+                        <span className="info-box-number">{selectedExecution.user_name}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="row">
+                  <div className="col-md-6">
+                    <div className="info-box">
+                      <span className="info-box-icon bg-warning">
+                        <i className="fas fa-clock"></i>
+                      </span>
+                      <div className="info-box-content">
+                        <span className="info-box-text">Execution Time</span>
+                        <span className="info-box-number">{selectedExecution.execution_time_formatted}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-md-6">
+                    <div className="info-box">
+                      <span className="info-box-icon bg-primary">
+                        <i className="fas fa-stopwatch"></i>
+                      </span>
+                      <div className="info-box-content">
+                        <span className="info-box-text">Duration</span>
+                        <span className="info-box-number">
+                          {selectedExecution.duration ? `${selectedExecution.duration.toFixed(2)}s` : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="row">
+                  <div className="col-md-12">
+                    <h5>Assessment Types</h5>
+                    <div className="mb-3">
+                      {getAssessmentBadges(selectedExecution)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="row">
+                  <div className="col-md-12">
+                    <h5>Execution Status</h5>
+                    <div className="mb-3">
+                      {getResultBadge(selectedExecution.status)}
+                    </div>
+                  </div>
+                </div>
+
+                {selectedExecution.total_commands > 0 && (
+                  <div className="row">
+                    <div className="col-md-12">
+                      <h5>Command Statistics</h5>
+                      <div className="progress mb-2">
+                        <div 
+                          className="progress-bar bg-success" 
+                          style={{ width: `${selectedExecution.success_rate}%` }}
+                        >
+                          {selectedExecution.success_rate.toFixed(1)}%
+                        </div>
+                      </div>
+                      <p>
+                        <span className="text-success">
+                          <i className="fas fa-check mr-1"></i>
+                          Passed: {selectedExecution.passed_commands}
+                        </span>
+                        {' | '}
+                        <span className="text-danger">
+                          <i className="fas fa-times mr-1"></i>
+                          Failed: {selectedExecution.failed_commands}
+                        </span>
+                        {' | '}
+                        <span className="text-info">
+                          <i className="fas fa-list mr-1"></i>
+                          Total: {selectedExecution.total_commands}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {selectedExecution.details && (
+                  <div className="row">
+                    <div className="col-md-12">
+                      <h5>Details</h5>
+                      <pre className="bg-light p-3 rounded" style={{ maxHeight: '200px', overflow: 'auto' }}>
+                        {selectedExecution.details}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                {canExport && (
+                  <button 
+                    type="button" 
+                    className="btn btn-success"
+                    onClick={() => handleExportSingle(selectedExecution.id)}
+                  >
+                    <i className="fas fa-download mr-2"></i>
+                    Export
+                  </button>
+                )}
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowDetailModal(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Modal backdrop */}
+      {showDetailModal && <div className="modal-backdrop fade show"></div>}
     </div>
   );
 };

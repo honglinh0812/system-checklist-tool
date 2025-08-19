@@ -2,9 +2,21 @@
 export const API_ENDPOINTS = {
   AUTH: {
     LOGIN: '/api/auth/login',
+    REGISTER: '/api/users/register', // Sửa từ '/api/auth/register' thành '/api/users/register'
     LOGOUT: '/api/auth/logout',
-    ME: '/api/auth/user',
     REFRESH: '/api/auth/refresh',
+    ME: '/api/users/profile' // Endpoint từ backend
+  },
+  USERS: {
+    LIST: '/api/users',
+    CREATE: '/api/users',
+    DETAIL: (id: number) => `/api/users/${id}`,
+    UPDATE: (id: number) => `/api/users/${id}`,
+    DELETE: (id: number) => `/api/users/${id}`,
+    PENDING: '/api/users/pending',
+    APPROVE: (id: number) => `/api/users/${id}/approve`,
+    REJECT: (id: number) => `/api/users/${id}/reject`,
+    REGISTER: '/api/users/register' // Thêm endpoint register vào USERS section
   },
   MOPS: {
     LIST: '/api/mops',
@@ -41,10 +53,6 @@ export const API_ENDPOINTS = {
     RUN: '/api/commands/run',
     STATUS: (jobId: string) => `/api/commands/status/${jobId}`,
     RESULTS: (jobId: string) => `/api/commands/results/${jobId}`,
-  },
-  USERS: {
-    LIST: '/api/users',
-    CREATE: '/api/users',
   },
   DASHBOARD: {
     STATS: '/api/dashboard/stats',
@@ -85,6 +93,13 @@ export const API_ENDPOINTS = {
 export const USER_ROLES = {
   ADMIN: 'admin',
   USER: 'user',
+  VIEWER: 'viewer',
+} as const;
+
+// User statuses
+export const USER_STATUS = {
+  PENDING: 'pending',
+  ACTIVE: 'active',
 } as const;
 
 // MOP statuses
@@ -111,6 +126,11 @@ export const EXECUTION_TYPE = {
 export const MOP_STATUS_COLORS = {
   [MOP_STATUS.PENDING]: 'warning',
   [MOP_STATUS.APPROVED]: 'success',
+} as const;
+
+export const USER_STATUS_COLORS = {
+  [USER_STATUS.PENDING]: 'warning',
+  [USER_STATUS.ACTIVE]: 'success',
 } as const;
 
 export const EXECUTION_STATUS_COLORS = {
@@ -142,6 +162,7 @@ export const FILE_UPLOAD = {
 // Routes
 export const ROUTES = {
   LOGIN: '/login',
+  REGISTER: '/register',
   DASHBOARD: '/',
   RISK_ASSESSMENT: '/risk-assessment',
   HANDOVER_ASSESSMENT: '/handover-assessment',

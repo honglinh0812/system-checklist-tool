@@ -5,7 +5,7 @@ import Pagination from './Pagination';
 interface Column<T> {
   key: keyof T | string;
   title: string;
-  render?: (value: any, record: T, index: number) => React.ReactNode;
+  render?: (value: unknown, record: T, index: number) => React.ReactNode;
   sortable?: boolean;
   width?: string;
   className?: string;
@@ -48,7 +48,8 @@ function DataTable<T extends Record<string, any>>({
     if (typeof rowKey === 'function') {
       return rowKey(record);
     }
-    return record[rowKey] || index;
+    const keyValue = record[rowKey];
+    return (typeof keyValue === 'string' || typeof keyValue === 'number') ? keyValue : index;
   };
 
   const handleSort = (key: string) => {
@@ -71,7 +72,7 @@ function DataTable<T extends Record<string, any>>({
     if (typeof column.key === 'string' && column.key.includes('.')) {
       // Handle nested properties like 'user.name'
       const keys = column.key.split('.');
-      let value = record;
+      let value: any = record;
       for (const key of keys) {
         value = value?.[key];
       }

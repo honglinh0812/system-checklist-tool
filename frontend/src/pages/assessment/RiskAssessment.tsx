@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 interface MOP {
@@ -20,43 +22,46 @@ interface Command {
 }
 
 const RiskAssessment: React.FC = () => {
-  const [selectedMOP, setSelectedMOP] = useState<string>('');
-  const [filteredMops, setFilteredMops] = useState<MOP[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'assessment' | 'reports'>('assessment');
-  const [showExecutionModal, setShowExecutionModal] = useState(false);
-  const [showFileUploadModal, setShowFileUploadModal] = useState(false);
-  const [showManualInputModal, setShowManualInputModal] = useState(false);
-  const [showViewMOPModal, setShowViewMOPModal] = useState(false);
-  const [servers, setServers] = useState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>([]);
-  const [serverFile, setServerFile] = useState<File | null>(null);
-  const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
-  const [selectedServers, setSelectedServers] = useState<boolean[]>([]);
-  const [canStartAssessment, setCanStartAssessment] = useState(false);
-  const [assessmentResults, setAssessmentResults] = useState<any>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
-  const [assessmentLoading, setAssessmentLoading] = useState(false);
-  const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
-  const [manualServerData, setManualServerData] = useState<{
+  // Persisted state management with unique keys for Risk Assessment
+  const [selectedMOP, setSelectedMOP] = usePersistedState<string>('risk_selectedMOP', '', { autoSave: true });
+  const [filteredMops, setFilteredMops] = usePersistedState<MOP[]>('risk_filteredMops', []);
+  const [activeTab, setActiveTab] = usePersistedState<'assessment' | 'reports'>('risk_activeTab', 'assessment');
+  const [showExecutionModal, setShowExecutionModal] = useModalState(false);
+  const [showFileUploadModal, setShowFileUploadModal] = useModalState(false);
+  const [showManualInputModal, setShowManualInputModal] = useModalState(false);
+  const [showViewMOPModal, setShowViewMOPModal] = useModalState(false);
+  const [servers, setServers] = usePersistedState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>('risk_servers', [], {
+    excludeKeys: ['sshPassword', 'sudoPassword'],
+    autoSave: true,
+    autoSaveInterval: 10000
+  });
+  const [selectedServers, setSelectedServers] = usePersistedState<boolean[]>('risk_selectedServers', []);
+  const [assessmentResults, setAssessmentResults] = usePersistedState<any>('risk_assessmentResults', null);
+  const [manualServerData, setManualServerData] = usePersistedState<{
     serverIP: string;
     sshPort: string;
     sshUser: string;
     sshPassword: string;
     sudoUser: string;
     sudoPassword: string;
-  }>({
+  }>('risk_manualServerData', {
     serverIP: '',
     sshPort: '22',
     sshUser: '',
     sshPassword: '',
     sudoUser: '',
     sudoPassword: ''
-  });
-
-  useEffect(() => {
-    fetchMOPs();
-  }, []);
+  }, { excludeKeys: ['sshPassword', 'sudoPassword'] });
+  
+  // Non-persisted states - loading, temporary actions, và volatile data
+  const [loading, setLoading] = useState<boolean>(true);
+  const [serverFile, setServerFile] = useState<File | null>(null);
+  const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
+  const [canStartAssessment, setCanStartAssessment] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
+  const [assessmentLoading, setAssessmentLoading] = useState(false);
+  const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
 
   // Add useEffect to monitor selectedServers and connectionResults changes
   useEffect(() => {
@@ -70,8 +75,11 @@ const RiskAssessment: React.FC = () => {
   const fetchMOPs = async () => {
     try {
       setLoading(true);
+      console.log('Fetching MOPs for risk assessment...');
       const response = await apiService.get<{success: boolean; data: {mops: MOP[]; pagination: any}}>(`${API_ENDPOINTS.MOPS.LIST}?context=assessment`);
-      if (response.success && response.data) {
+      console.log('MOP API response:', response);
+      
+      if (response && response.success && response.data) {
         const allMops = response.data.mops || [];
         // Filter MOPs for risk assessment (approved status and assessment_type is 'risk_assessment')
         const riskMops = allMops.filter((mop: MOP) => 
@@ -79,13 +87,22 @@ const RiskAssessment: React.FC = () => {
         );
         setFilteredMops(riskMops);
         console.log('Fetched MOPs:', allMops.length, 'Risk MOPs:', riskMops.length);
+      } else {
+        console.warn('Invalid MOP response:', response);
+        setFilteredMops([]);
       }
     } catch (error) {
       console.error('Error fetching MOPs:', error);
+      setFilteredMops([]);
     } finally {
+      console.log('Risk Assessment fetchMOPs completed');
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchMOPs();
+  }, []);
 
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
@@ -127,7 +144,7 @@ const RiskAssessment: React.FC = () => {
       
       // Map results back to original server indices
       let selectedServerIndex = 0;
-      servers.forEach((server, originalIndex) => {
+      servers.forEach((_, originalIndex) => {
         if (selectedServers[originalIndex]) {
           const result = results[selectedServerIndex];
           if (result) {
@@ -164,7 +181,7 @@ const RiskAssessment: React.FC = () => {
     }
 
     // Validate MOP type for risk assessment
-    const selectedMOPData = filteredMops.find(mop => mop.id.toString() === selectedMOP);
+    const selectedMOPData = Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP) : null;
     if (!selectedMOPData || (selectedMOPData as any).assessment_type !== 'risk_assessment') {
       setNotification({type: 'error', message: 'MOP đã chọn không phù hợp với đánh giá rủi ro. Vui lòng chọn MOP có kiểu "risk_assessment".'});
       return;
@@ -387,6 +404,7 @@ const RiskAssessment: React.FC = () => {
   };
 
   const getSelectedMOPCommands = () => {
+    if (!Array.isArray(filteredMops)) return [];
     const selectedMOPData = filteredMops.find(mop => mop.id.toString() === selectedMOP);
     return selectedMOPData?.commands || [];
   };
@@ -522,13 +540,13 @@ const RiskAssessment: React.FC = () => {
                                 onChange={handleMOPSelect}
                               >
                                 <option value="">-- Chọn MOP --</option>
-                                {filteredMops.map(mop => (
+                                {Array.isArray(filteredMops) && filteredMops.map(mop => (
                                   <option key={mop.id} value={mop.id}>
                                     {mop.name}
                                   </option>
                                 ))}
                               </select>
-                              {filteredMops.length === 0 && (
+                              {(!Array.isArray(filteredMops) || filteredMops.length === 0) && (
                                 <small className="text-muted">No approved MOPs for risk assessment are currently available.</small>
                               )}
                             </div>
@@ -717,11 +735,18 @@ const RiskAssessment: React.FC = () => {
                                      {assessmentResults && (
                                        <div className="mt-4">
                                          <div className="card">
-                                           <div className="card-header">
+                                           <div className="card-header d-flex justify-content-between align-items-center">
                                              <h5 className="card-title mb-0">
                                                <i className="fas fa-chart-line mr-2"></i>
                                                Assessment Results
                                              </h5>
+                                             <button 
+                                               className="btn btn-secondary btn-sm"
+                                               onClick={() => setAssessmentResults(null)}
+                                             >
+                                               <i className="fas fa-times mr-2"></i>
+                                               Clear Results
+                                             </button>
                                            </div>
                                            <div className="card-body">
                                              <div className="mb-3">
@@ -1077,7 +1102,7 @@ const RiskAssessment: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">MOP Details: {filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || ''}</h5>
+                <h5 className="modal-title">MOP Details: {Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || '' : ''}</h5>
                 <button 
                   type="button" 
                   className="close" 

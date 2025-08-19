@@ -279,75 +279,99 @@ class ExcelExporter:
             ws.column_dimensions[column_letter].width = adjusted_width
 
     def _create_matrix_sheet(self, wb: openpyxl.Workbook, data: Dict[str, Any]):
-        """Create matrix sheet: rows = commands, columns = server IPs, cells = OK/Not OK, last row final result"""
-        ws = wb.create_sheet("Matrix")
+        """Create matrix sheet theo format yêu cầu: 
+        - Ô (1,1) trống
+        - Cột 1 từ hàng 2: tiêu đề lệnh
+        - Cột 2 từ hàng 2: câu lệnh
+        - Từ cột 3 trở đi: IP server
+        - Hàng cuối: kết quả tổng thể
+        """
+        ws = wb.create_sheet("Assessment Report")
         results = data.get('results', [])
 
-        # Derive unique server IPs and commands order
+        # Collect unique server IPs and commands
         server_ips: List[str] = []
-        commands_order: List[str] = []
-        cmd_key_to_expected: Dict[str, str] = {}
-
-        # Collect server IPs and command titles order
+        commands_data: List[Dict] = []
+        
+        # Group results by command to get unique commands
+        commands_dict = {}
         for r in results:
+            title = r.get('command_title', '')
+            command = r.get('command', '')
+            if title not in commands_dict:
+                commands_dict[title] = {
+                    'title': title,
+                    'command': command,
+                    'results': {}
+                }
+            
             ip = r.get('server_ip', '')
             if ip and ip not in server_ips:
                 server_ips.append(ip)
-            title = r.get('command_title', '')
-            key = title
-            if key and key not in commands_order:
-                commands_order.append(key)
-            if key and 'expected_output' in r:
-                cmd_key_to_expected[key] = r.get('expected_output', '')
+            
+            # Store result for this command-server combination
+            is_valid = bool(r.get('is_valid', False))
+            commands_dict[title]['results'][ip] = is_valid
+        
+        commands_data = list(commands_dict.values())
 
-        # Headers: first col = "Command Title + Command", then each server ip
-        headers = ["Command Title + Command"] + server_ips
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
+        # Ô (1,1) để trống
+        # Hàng 1: headers cho IP servers từ cột 3 trở đi
+        for col, ip in enumerate(server_ips, 3):
+            cell = ws.cell(row=1, column=col, value=ip)
             cell.font = self.header_font
             cell.fill = self.header_fill
             cell.border = self.border
             cell.alignment = self.center_alignment
 
-        # Build a lookup: (title, ip) -> is_valid
-        from collections import defaultdict
-        cell_status: Dict[tuple, bool] = {}
-        cmd_text: Dict[str, str] = {}
-        for r in results:
-            key = r.get('command_title', '')
-            ip = r.get('server_ip', '')
-            is_valid = bool(r.get('is_valid', False))
-            cmd_text[key] = r.get('command', '')
-            if key and ip:
-                cell_status[(key, ip)] = is_valid
-
-        # Fill rows
+        # Từ hàng 2 trở đi: dữ liệu commands
         row = 2
-        for title in commands_order:
-            row_label = f"{title} | {cmd_text.get(title, '')}"
-            ws.cell(row=row, column=1, value=row_label).border = self.border
-            for col, ip in enumerate(server_ips, 2):
-                ok = cell_status.get((title, ip), False)
-                cell = ws.cell(row=row, column=col, value="OK" if ok else "Not OK")
+        for cmd_data in commands_data:
+            # Cột 1: tiêu đề lệnh
+            cell1 = ws.cell(row=row, column=1, value=cmd_data['title'])
+            cell1.border = self.border
+            
+            # Cột 2: câu lệnh
+            cell2 = ws.cell(row=row, column=2, value=cmd_data['command'])
+            cell2.border = self.border
+            
+            # Từ cột 3 trở đi: kết quả cho từng server
+            for col, ip in enumerate(server_ips, 3):
+                is_ok = cmd_data['results'].get(ip, False)
+                cell = ws.cell(row=row, column=col, value="OK" if is_ok else "Not OK")
                 cell.border = self.border
-                cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") if ok else PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                cell.fill = PatternFill(
+                    start_color="C6EFCE" if is_ok else "FFC7CE", 
+                    end_color="C6EFCE" if is_ok else "FFC7CE", 
+                    fill_type="solid"
+                )
                 cell.alignment = self.center_alignment
+            
             row += 1
 
-        # Final row: "Kết quả kiểm tra cuối"
-        ws.cell(row=row, column=1, value="Kết quả kiểm tra cuối").font = Font(bold=True)
-        ws.cell(row=row, column=1).border = self.border
-        for col, ip in enumerate(server_ips, 2):
-            # Column is OK if all above are OK
+        # Hàng cuối: "Kết quả kiểm tra cuối"
+        cell_final = ws.cell(row=row, column=1, value="Kết quả kiểm tra cuối")
+        cell_final.font = Font(bold=True)
+        cell_final.border = self.border
+        
+        # Tính kết quả tổng thể cho từng server
+        for col, ip in enumerate(server_ips, 3):
+            # Kiểm tra tất cả kết quả của server này
             all_ok = True
-            for r_index in range(2, row):
-                if ws.cell(row=r_index, column=col).value != "OK":
+            for check_row in range(2, row):
+                if ws.cell(row=check_row, column=col).value != "OK":
                     all_ok = False
                     break
+            
             cell = ws.cell(row=row, column=col, value="OK" if all_ok else "Not OK")
             cell.border = self.border
-            cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") if all_ok else PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            cell.fill = PatternFill(
+                start_color="C6EFCE" if all_ok else "FFC7CE", 
+                end_color="C6EFCE" if all_ok else "FFC7CE", 
+                fill_type="solid"
+            )
             cell.alignment = self.center_alignment
+            cell.font = Font(bold=True)
 
         # Auto-adjust column widths
         for column in ws.columns:
@@ -359,7 +383,8 @@ class ExcelExporter:
                         max_length = len(str(c.value))
                 except:
                     pass
-            ws.column_dimensions[column_letter].width = min(max_length + 2, 60)
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
     
     def export_mop_template(self, mop_data: Dict[str, Any], filename: str = None) -> str:
         """

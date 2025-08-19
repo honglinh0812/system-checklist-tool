@@ -1,13 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
-
-interface MOPFile {
-  file_type: string;
-  uploaded_at: string;
-}
 
 interface Command {
   title: string;
@@ -29,30 +25,75 @@ interface MOP {
   commands?: Command[];
 }
 
+interface ApiResponse {
+  success: boolean;
+  data?: MOP | {
+    mops?: MOP[];
+    [key: string]: unknown;
+  };
+  error?: string;
+}
+
 const MOPReview: React.FC = () => {
-  const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [pendingMops, setPendingMops] = useState<MOP[]>([]);
+  
+  // Persisted state management with unique keys for MOP Review
+  const [pendingMops, setPendingMops] = usePersistedState<MOP[]>('review_pendingMops', [], { autoSave: true, autoSaveInterval: 30000 });
+  const [showDetailsModal, setShowDetailsModal] = useModalState(false);
+  const [showRejectModal, setShowRejectModal] = useModalState(false);
+  const [showFileModal, setShowFileModal] = useModalState(false);
+  const [showApproveModal, setShowApproveModal] = useModalState(false);
+  const [showSingleApproveModal, setShowSingleApproveModal] = useModalState(false);
+  const [currentMop, setCurrentMop] = usePersistedState<MOP | null>('review_currentMop', null);
+  const [currentMopId, setCurrentMopId] = usePersistedState<string | null>('review_currentMopId', null);
+  const [rejectReason, setRejectReason] = usePersistedState<string>('review_rejectReason', '', { autoSave: true, debounceDelay: 1000 });
+  const [fileViewerTitle, setFileViewerTitle] = usePersistedState<string>('review_fileViewerTitle', '');
+  const [fileViewerContent, setFileViewerContent] = usePersistedState<string>('review_fileViewerContent', '');
+  const [selectedMops, setSelectedMops] = usePersistedState<Set<string>>('review_selectedMops', new Set(), {
+    serialize: (state: unknown) => {
+      if (state instanceof Set) {
+        return JSON.stringify(Array.from(state));
+      }
+      return JSON.stringify([]);
+    },
+    deserialize: (state: unknown) => {
+      try {
+        if (typeof state === 'string') {
+          const parsed = JSON.parse(state);
+          return new Set(Array.isArray(parsed) ? parsed : []);
+        }
+        return new Set();
+      } catch {
+        return new Set();
+      }
+    }
+  });
+  
+  // Non-persisted states - loading và notifications
   const [loading, setLoading] = useState(true);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [showRejectModal, setShowRejectModal] = useState(false);
-  const [showFileModal, setShowFileModal] = useState(false);
-  const [showApproveModal, setShowApproveModal] = useState(false);
-  const [showSingleApproveModal, setShowSingleApproveModal] = useState(false);
-  // Removed approveFormData as it's no longer needed for simplified approval
-  const [currentMop, setCurrentMop] = useState<MOP | null>(null);
-  const [currentMopId, setCurrentMopId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-  const [fileViewerTitle, setFileViewerTitle] = useState('');
-  const [fileViewerContent, setFileViewerContent] = useState('');
-  const [selectedMops, setSelectedMops] = useState<Set<string>>(new Set());
   const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
 
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+  };
+
+  const fetchPendingMOPs = useCallback(async () => {
+    try {
+      const data = await apiService.get<ApiResponse>(API_ENDPOINTS.MOPS.REVIEW);
+      if (data.success && data.data && typeof data.data === 'object' && 'mops' in data.data) {
+        setPendingMops((data.data as { mops?: MOP[] }).mops || []);
+      }
+    } catch (error) {
+      console.error('Error fetching review MOPs:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [setPendingMops]);
 
   useEffect(() => {
     fetchPendingMOPs();
-  }, []);
+  }, [fetchPendingMOPs]);
 
   useEffect(() => {
     if (notification) {
@@ -63,31 +104,14 @@ const MOPReview: React.FC = () => {
     }
   }, [notification]);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-  };
-
-  const fetchPendingMOPs = async () => {
-    try {
-      const data = await apiService.get<any>(API_ENDPOINTS.MOPS.REVIEW);
-      if (data.success) {
-        setPendingMops(data.data?.mops || []);
-      }
-    } catch (error) {
-      console.error('Error fetching review MOPs:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const viewMOPDetails = async (mopId: string) => {
     setCurrentMopId(mopId);
     setShowFileModal(false);
     
     try {
-      const data = await apiService.get<any>(API_ENDPOINTS.MOPS.DETAIL(mopId));
-      if (data.success) {
-        setCurrentMop(data.data);
+      const data = await apiService.get<ApiResponse>(API_ENDPOINTS.MOPS.DETAIL(mopId));
+      if (data.success && data.data && typeof data.data === 'object' && 'id' in data.data) {
+        setCurrentMop(data.data as MOP);
         setShowDetailsModal(true);
       } else {
         alert('Error loading MOP details');
@@ -102,7 +126,7 @@ const MOPReview: React.FC = () => {
     setShowDetailsModal(false);
     
     const fileUrl = `/api/mops/${mopId}/files/${fileType}`;
-    const title = fileType.toUpperCase() + ' File';
+    const title = (fileType?.toUpperCase() || 'Unknown') + ' File';
     
     let content = '';
     
@@ -210,7 +234,7 @@ const MOPReview: React.FC = () => {
     if (!currentMopId) return;
     
     try {
-      const data = await apiService.post<any>(`/api/mops/${currentMopId}/approve`, {});
+      const data = await apiService.post<ApiResponse>(`/api/mops/${currentMopId}/approve`, {});
       if (data.success) {
         showNotification('success', 'MOP đã được phê duyệt thành công');
         fetchPendingMOPs();
@@ -258,7 +282,7 @@ const MOPReview: React.FC = () => {
       }
       
       const promises = mopsToReject.map(mopId => 
-        apiService.post<any>(`/api/mops/${mopId}/reject`, {
+        apiService.post<ApiResponse>(`/api/mops/${mopId}/reject`, {
           comments: rejectReason
         })
       );
@@ -289,9 +313,7 @@ const MOPReview: React.FC = () => {
     setShowDetailsModal(true);
   };
 
-  const getFileIcon = (fileType: string) => {
-    return fileType === 'pdf' ? 'pdf' : 'excel';
-  };
+
 
   const getMOPTypeBadges = (type: string[]) => {
     const typeMap: { [key: string]: { label: string; class: string } } = {

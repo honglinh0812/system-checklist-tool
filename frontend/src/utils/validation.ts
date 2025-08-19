@@ -29,7 +29,7 @@ export const validation = {
   },
 
   // Server list validation
-  validateServerList: function(servers: any[]): { valid: boolean; errors: string[] } {
+  validateServerList: function(servers: unknown[]): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
     
     if (!Array.isArray(servers) || servers.length === 0) {
@@ -38,13 +38,20 @@ export const validation = {
     }
 
     servers.forEach((server, index) => {
-      if (!server.ip) {
+      if (!server || typeof server !== 'object') {
+        errors.push(`Server ${index + 1}: Invalid server object`);
+        return;
+      }
+
+      const serverObj = server as { ip?: unknown; hostname?: unknown };
+
+      if (!serverObj.ip || typeof serverObj.ip !== 'string') {
         errors.push(`Server ${index + 1}: IP address is required`);
-      } else if (!this.validateIPAddress(server.ip)) {
+      } else if (!this.validateIPAddress(serverObj.ip)) {
         errors.push(`Server ${index + 1}: Invalid IP address format`);
       }
       
-      if (!server.hostname) {
+      if (!serverObj.hostname || typeof serverObj.hostname !== 'string') {
         errors.push(`Server ${index + 1}: Hostname is required`);
       }
     });

@@ -1,6 +1,14 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { USER_ROLES } from '../../utils/constants';
+
+interface MenuItem {
+  title: string;
+  icon: string;
+  path: string;
+  roles: string[];
+}
 
 interface SidebarProps {
   collapsed: boolean;
@@ -10,59 +18,84 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   const location = useLocation();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
 
   const menuItems = [
     {
       title: 'Dashboard',
       icon: 'fas fa-tachometer-alt',
-      path: '/dashboard'
+      path: '/dashboard',
+      roles: [USER_ROLES.ADMIN, USER_ROLES.USER, USER_ROLES.VIEWER]
     },
     {
       title: 'Risk assessment',
       icon: 'fas fa-shield-alt',
-      path: '/risk-assessment'
+      path: '/risk-assessment',
+      roles: [USER_ROLES.ADMIN, USER_ROLES.USER]
     },
     {
       title: 'Handover assessment',
       icon: 'fas fa-exchange-alt',
-      path: '/handover-assessment'
+      path: '/handover-assessment',
+      roles: [USER_ROLES.ADMIN, USER_ROLES.USER]
     },
     {
       title: 'MOP submission',
       icon: 'fas fa-upload',
-      path: '/mop-submission'
+      path: '/mop-submission',
+      roles: [USER_ROLES.ADMIN, USER_ROLES.USER]
     },
     {
       title: 'MOP review',
       icon: 'fas fa-eye',
       path: '/mop-review',
-      adminOnly: true
+      roles: [USER_ROLES.ADMIN] // Chỉ admin, bỏ USER và VIEWER
     },
     {
       title: 'MOP management',
       icon: 'fas fa-tasks',
       path: '/mop-management',
-      adminOnly: true
+      roles: [USER_ROLES.ADMIN, USER_ROLES.VIEWER] // Thêm viewer
     },
     {
       title: 'User management',
       icon: 'fas fa-users',
       path: '/user-management',
-      adminOnly: true
+      roles: [USER_ROLES.ADMIN]
     },
     {
       title: 'Execution history',
       icon: 'fas fa-history',
-      path: '/execution-history'
+      path: '/execution-history',
+      roles: [USER_ROLES.ADMIN, USER_ROLES.USER, USER_ROLES.VIEWER]
     },
     {
       title: 'Audit Logs',
       icon: 'fas fa-clipboard-list',
       path: '/audit-logs',
-      adminOnly: true
+      roles: [USER_ROLES.ADMIN, USER_ROLES.VIEWER] // Thêm viewer
     }
   ];
+
+  // Helper function để hiển thị role name
+  const getRoleDisplayName = (role: string) => {
+    switch (role) {
+      case USER_ROLES.ADMIN:
+        return 'Administrator';
+      case USER_ROLES.USER:
+        return 'User';
+      case USER_ROLES.VIEWER:
+        return 'Viewer';
+      default:
+        return 'Unknown';
+    }
+  };
+
+  const getMenuItemTitle = (item: MenuItem) => {
+    if (item.path === '/mop-management' && user?.role === USER_ROLES.VIEWER) {
+      return 'MOP List';
+    }
+    return item.title;
+  };
   
   return (
     <>
@@ -91,12 +124,29 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
 
         {/* Sidebar */}
         <div className="sidebar">
+          {/* User info section */}
+          {user && (
+            <div className="user-panel mt-3 pb-3 mb-3 d-flex">
+              <div className="image">
+                <i className="fas fa-user-circle" style={{ fontSize: '2.1rem', color: '#c2c7d0' }}></i>
+              </div>
+              <div className="info">
+                <Link to="#" className="d-block text-white">
+                  {user.full_name || user.username}
+                </Link>
+                <small className="text-muted">
+                  {getRoleDisplayName(user.role)}
+                </small>
+              </div>
+            </div>
+          )}
+
           {/* Sidebar Menu */}
           <nav className="mt-2">
             <ul className="nav nav-pills nav-sidebar flex-column" data-widget="treeview" role="menu">
               {menuItems.map((item, index) => {
-                // Chỉ hiển thị menu admin nếu user là admin
-                if (item.adminOnly && !isAdmin) {
+                // Kiểm tra quyền truy cập dựa trên roles
+                if (!user?.role || !item.roles.includes(user.role)) {
                   return null;
                 }
                 
@@ -113,7 +163,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
                       }}
                     >
                       <i className={`nav-icon ${item.icon}`}></i>
-                      <p>{item.title}</p>
+                      <p>{getMenuItemTitle(item)}</p>
                     </Link>
                   </li>
                 );

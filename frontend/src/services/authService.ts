@@ -1,6 +1,6 @@
 import { apiService } from './api';
 import { API_ENDPOINTS } from '../utils/constants';
-import type { LoginCredentials, AuthResponse, User } from '../types/auth';
+import type { LoginCredentials, RegisterCredentials, AuthResponse, User } from '../types/auth';
 
 class AuthService {
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
@@ -14,6 +14,13 @@ class AuthService {
     localStorage.setItem('token', response.access_token);
     localStorage.setItem('user', JSON.stringify(response.user));
     
+    return response;
+  }
+
+  async register(credentials: RegisterCredentials): Promise<{ message: string }> {
+    // Remove confirm_password before sending to backend
+    const { confirm_password, ...registerData } = credentials;
+    const response = await apiService.post<{ message: string }>(API_ENDPOINTS.AUTH.REGISTER, registerData);
     return response;
   }
 
@@ -31,12 +38,19 @@ class AuthService {
       localStorage.removeItem('user');
     }
   }
+
   async getCurrentUser(): Promise<User> {
     console.log('[AuthService] Getting current user from:', API_ENDPOINTS.AUTH.ME);
     try {
-      const user = await apiService.get<User>(API_ENDPOINTS.AUTH.ME);
-      console.log('[AuthService] getCurrentUser success:', user);
-      return user;
+      const response = await apiService.get<{success: boolean, data: User}>(API_ENDPOINTS.AUTH.ME);
+      console.log('[AuthService] getCurrentUser response:', response);
+      
+      if (response.success && response.data) {
+        console.log('[AuthService] getCurrentUser success:', response.data);
+        return response.data;
+      } else {
+        throw new Error('Invalid response format');
+      }
     } catch (error) {
       console.log('[AuthService] getCurrentUser error:', error);
       throw error;

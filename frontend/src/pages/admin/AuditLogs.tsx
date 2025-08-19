@@ -2,18 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { auditService, type AuditLog, type AuditLogFilters, type AuditStats } from '../../services/auditService';
 import { Modal, LoadingSpinner, ErrorMessage } from '../../components/common';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
 
 const AuditLogs: React.FC = () => {
   const { user } = useAuth();
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [stats, setStats] = useState<AuditStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<AuditLogFilters>({
+  // Persisted state management with unique keys for Audit Logs
+  const [logs, setLogs] = usePersistedState<AuditLog[]>('audit_logs', [], { autoSave: true, autoSaveInterval: 30000 });
+  const [stats, setStats] = usePersistedState<AuditStats | null>('audit_stats', null);
+  const [filters, setFilters] = usePersistedState<AuditLogFilters>('audit_filters', {
     page: 1,
     per_page: 20
-  });
-  const [pagination, setPagination] = useState({
+  }, { autoSave: true });
+  const [pagination, setPagination] = usePersistedState('audit_pagination', {
     page: 1,
     pages: 1,
     per_page: 20,
@@ -21,10 +22,14 @@ const AuditLogs: React.FC = () => {
     has_next: false,
     has_prev: false
   });
-  const [showStats, setShowStats] = useState(false);
-  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [showStats, setShowStats] = useModalState(false);
+  const [showCleanupModal, setShowCleanupModal] = useModalState(false);
+  const [retentionDays, setRetentionDays] = usePersistedState<number>('audit_retentionDays', 365);
+  
+  // Non-persisted states - loading và error
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [retentionDays, setRetentionDays] = useState(365);
 
   // Check if user is admin
   if (!user || user.role !== 'admin') {

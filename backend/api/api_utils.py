@@ -95,6 +95,26 @@ def admin_required(f):
     """Decorator to require admin role"""
     return require_role('admin')(f)
 
+def viewer_or_admin_required(f):
+    """Decorator to require viewer, user, or admin role"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        current_user = get_current_user()
+        if not current_user or not current_user.can_view_users():
+            return api_error('Insufficient permissions', 403)
+        return f(*args, **kwargs)
+    return decorated_function
+
+def user_or_admin_required(f):
+    """Decorator to require user or admin role"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        current_user = get_current_user()
+        if not current_user or current_user.role not in ['admin', 'user']:
+            return api_error('Insufficient permissions', 403)
+        return f(*args, **kwargs)
+    return decorated_function
+
 def handle_db_error(func):
     """Decorator to handle database errors"""
     @wraps(func)

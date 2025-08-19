@@ -13,32 +13,55 @@ class RefreshTokenSchema(Schema):
     refresh_token = fields.Str(required=True)
 
 # User Schemas
+# Thêm schema cho đăng ký công khai
+class PublicRegisterSchema(Schema):
+    username = fields.Str(required=True, validate=validate.Length(min=3, max=50))
+    password = fields.Str(required=True, validate=validate.Length(min=6))
+    email = fields.Email(required=True)
+    full_name = fields.Str(required=True, validate=validate.Length(min=2, max=100))
+    
+    @validates('username')
+    def validate_username(self, value):
+        if User.query.filter_by(username=value).first():
+            raise ValidationError('Username already exists')
+    
+    @validates('email')
+    def validate_email(self, value):
+        if User.query.filter_by(email=value).first():
+            raise ValidationError('Email already exists')
+
+# Cập nhật UserCreateSchema để hỗ trợ viewer role
 class UserCreateSchema(Schema):
     username = fields.Str(required=True, validate=validate.Length(min=3, max=50))
     password = fields.Str(required=True, validate=validate.Length(min=1))
     email = fields.Email(required=True)
     full_name = fields.Str(required=True, validate=validate.Length(min=2, max=100))
-    role = fields.Str(required=True, validate=validate.OneOf(['admin', 'user']))
-    is_default_account = fields.Bool(missing=False)  # Flag for default accounts
+    role = fields.Str(required=True, validate=validate.OneOf(['admin', 'user', 'viewer']))
+    status = fields.Str(validate=validate.OneOf(['pending', 'active']), missing='active')
+    is_default_account = fields.Bool(missing=False)
     
     @validates('username')
     def validate_username(self, value):
         if User.query.filter_by(username=value).first():
             raise ValidationError('Username already exists')
 
+# Cập nhật DefaultUserCreateSchema
 class DefaultUserCreateSchema(Schema):
-    """Schema for creating default accounts with relaxed password policy"""
     username = fields.Str(required=True, validate=validate.Length(min=3, max=50))
-    password = fields.Str(required=True)  # No minimum length requirement
+    password = fields.Str(required=True)
     email = fields.Email(required=True)
     full_name = fields.Str(required=True, validate=validate.Length(min=2, max=100))
-    role = fields.Str(required=True, validate=validate.OneOf(['admin', 'user']))
+    role = fields.Str(required=True, validate=validate.OneOf(['admin', 'user', 'viewer']))
     
     @validates('username')
     def validate_username(self, value):
         if User.query.filter_by(username=value).first():
             raise ValidationError('Username already exists')
 
+# Schema cho approve/reject user
+class UserApprovalSchema(Schema):
+    action = fields.Str(required=True, validate=validate.OneOf(['approve', 'reject']))
+    
 class UserSchema(SQLAlchemyAutoSchema):
     class Meta:
         model = User

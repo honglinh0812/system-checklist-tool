@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
 
 interface MOP {
   id: number;
@@ -20,44 +22,47 @@ interface Command {
 }
 
 const HandoverAssessment: React.FC = () => {
-  const [selectedMOP, setSelectedMOP] = useState<string>('');
-  const [mops, setMops] = useState<MOP[]>([]);
-  const [filteredMops, setFilteredMops] = useState<MOP[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'assessment' | 'reports'>('assessment');
-  const [showExecutionModal, setShowExecutionModal] = useState(false);
-  const [showFileUploadModal, setShowFileUploadModal] = useState(false);
-  const [showManualInputModal, setShowManualInputModal] = useState(false);
-  const [showViewMOPModal, setShowViewMOPModal] = useState(false);
-  const [servers, setServers] = useState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>([]);
-  const [serverFile, setServerFile] = useState<File | null>(null);
-  const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
-  const [selectedServers, setSelectedServers] = useState<boolean[]>([]);
-  const [canStartAssessment, setCanStartAssessment] = useState(false);
-  const [assessmentLoading, setAssessmentLoading] = useState(false);
-  const [assessmentResults, setAssessmentResults] = useState<any>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
-  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning' | 'info'; message: string} | null>(null);
-  const [manualServerData, setManualServerData] = useState<{
+  // Persisted state management with unique keys for Handover Assessment
+  const [selectedMOP, setSelectedMOP] = usePersistedState<string>('handover_selectedMOP', '', { autoSave: true });
+
+  const [filteredMops, setFilteredMops] = usePersistedState<MOP[]>('handover_filteredMops', []);
+  const [activeTab, setActiveTab] = usePersistedState<'assessment' | 'reports'>('handover_activeTab', 'assessment');
+  const [showExecutionModal, setShowExecutionModal] = useModalState(false);
+  const [showFileUploadModal, setShowFileUploadModal] = useModalState(false);
+  const [showManualInputModal, setShowManualInputModal] = useModalState(false);
+  const [showViewMOPModal, setShowViewMOPModal] = useModalState(false);
+  const [servers, setServers] = usePersistedState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>('handover_servers', [], {
+    excludeKeys: ['sshPassword', 'sudoPassword'],
+    autoSave: true,
+    autoSaveInterval: 10000
+  });
+  const [selectedServers, setSelectedServers] = usePersistedState<boolean[]>('handover_selectedServers', []);
+  const [assessmentResults, setAssessmentResults] = usePersistedState<any>('handover_assessmentResults', null);
+  const [manualServerData, setManualServerData] = usePersistedState<{
     serverIP: string;
     sshPort: string;
     sshUser: string;
     sshPassword: string;
     sudoUser: string;
     sudoPassword: string;
-  }>({
+  }>('handover_manualServerData', {
     serverIP: '',
     sshPort: '22',
     sshUser: '',
     sshPassword: '',
     sudoUser: '',
     sudoPassword: ''
-  });
-
-  useEffect(() => {
-    fetchMOPs();
-  }, []);
+  }, { excludeKeys: ['sshPassword', 'sudoPassword'] });
+  
+  // Non-persisted states - loading, temporary actions, volatile data
+  const [loading, setLoading] = useState<boolean>(true);
+  const [serverFile, setServerFile] = useState<File | null>(null);
+  const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
+  const [canStartAssessment, setCanStartAssessment] = useState(false);
+  const [assessmentLoading, setAssessmentLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
+  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning' | 'info'; message: string} | null>(null);
 
   // Add useEffect to monitor selectedServers and connectionResults changes
   useEffect(() => {
@@ -74,7 +79,6 @@ const HandoverAssessment: React.FC = () => {
       const response = await apiService.get<{success: boolean; data: {mops: MOP[]; pagination: any}}>(`${API_ENDPOINTS.MOPS.LIST}?context=assessment`);
       if (response.success && response.data) {
         const allMops = response.data.mops || [];
-        setMops(allMops);
         // Filter MOPs for handover assessment (approved status and assessment_type is 'handover_assessment')
         const handoverMops = allMops.filter((mop: MOP) => 
           mop.status === 'approved' && (mop as any).assessment_type === 'handover_assessment'
@@ -89,6 +93,10 @@ const HandoverAssessment: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    fetchMOPs();
+  }, []);
+
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
     setSelectedMOP(mopId);
@@ -96,6 +104,7 @@ const HandoverAssessment: React.FC = () => {
   };
 
   const getSelectedMOPCommands = () => {
+    if (!Array.isArray(filteredMops)) return [];
     const selectedMOPData = filteredMops.find(mop => mop.id.toString() === selectedMOP);
     return selectedMOPData?.commands || [];
   };
@@ -141,7 +150,7 @@ const HandoverAssessment: React.FC = () => {
       
       // Map results back to original server indices
       let selectedServerIndex = 0;
-      servers.forEach((server, originalIndex) => {
+      servers.forEach((_, originalIndex) => {
         if (selectedServers[originalIndex]) {
           const result = results[selectedServerIndex]; // Direct index mapping
           if (result) {
@@ -179,7 +188,7 @@ const HandoverAssessment: React.FC = () => {
     }
 
     // Validate MOP type for handover assessment
-    const selectedMOPData = filteredMops.find(mop => mop.id.toString() === selectedMOP);
+    const selectedMOPData = Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP) : null;
     if (!selectedMOPData || (selectedMOPData as any).assessment_type !== 'handover_assessment') {
       setNotification({type: 'warning', message: 'MOP đã chọn không phù hợp với đánh giá bàn giao. Vui lòng chọn MOP có kiểu "handover_assessment".'});
       return;
@@ -379,7 +388,7 @@ const HandoverAssessment: React.FC = () => {
     }
 
     try {
-      const response = await fetch(API_ENDPOINTS.ASSESSMENTS.RISK_DOWNLOAD(assessmentResults.id), {
+      const response = await fetch(API_ENDPOINTS.ASSESSMENTS.HANDOVER_DOWNLOAD(assessmentResults.id), {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -444,9 +453,7 @@ const HandoverAssessment: React.FC = () => {
     setDeleteServerIndex(-1);
   };
 
-  const handleExecuteMOP = () => {
-    setShowExecutionModal(true);
-  };
+
 
   return (
     <div>
@@ -507,7 +514,7 @@ const HandoverAssessment: React.FC = () => {
                         onClick={() => setActiveTab('assessment')}
                         type="button"
                       >
-                        <i className="fas fa-exchange-alt mr-1"></i> Assessment
+                        <i className="fas fa-exchange-alt mr-1"></i> Đánh giá bàn giao
                       </button>
                     </li>
                     <li className="nav-item">
@@ -755,13 +762,22 @@ const HandoverAssessment: React.FC = () => {
                                           <i className="fas fa-chart-line mr-2"></i>
                                           Kết quả Assessment
                                         </h5>
-                                        <button 
-                                          className="btn btn-success btn-sm"
-                                          onClick={handleDownloadReport}
-                                        >
-                                          <i className="fas fa-download mr-2"></i>
-                                          Tải báo cáo Excel
-                                        </button>
+                                        <div>
+                                          <button 
+                                            className="btn btn-success btn-sm mr-2"
+                                            onClick={handleDownloadReport}
+                                          >
+                                            <i className="fas fa-download mr-2"></i>
+                                            Tải báo cáo Excel
+                                          </button>
+                                          <button 
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => setAssessmentResults(null)}
+                                          >
+                                            <i className="fas fa-times mr-2"></i>
+                                            Clear Results
+                                          </button>
+                                        </div>
                                       </div>
                                       <div className="card-body">
                                         <div className="mb-3">
@@ -1099,7 +1115,7 @@ const HandoverAssessment: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Chi tiết MOP: {filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || ''}</h5>
+                <h5 className="modal-title">Chi tiết MOP: {Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || '' : ''}</h5>
                 <button 
                   type="button" 
                   className="btn-close" 

@@ -2,7 +2,7 @@
 
 export const storage = {
   // State persistence functions
-  saveState: function(key: string, data: any): boolean {
+  saveState: function(key: string, data: unknown): boolean {
     try {
       localStorage.setItem(key, JSON.stringify(data));
       return true;
@@ -33,49 +33,52 @@ export const storage = {
   },
 
   // Server list management
-  saveServerList: function(servers: any[]): boolean {
+  saveServerList: function(servers: unknown[]): boolean {
     return this.saveState('servers', servers);
   },
 
-  loadServerList: function(): any[] {
+  loadServerList: function(): unknown[] {
     return this.loadState('servers', []) || [];
   },
 
-  addServer: function(server: any): boolean {
+  addServer: function(server: unknown): boolean {
     const servers = this.loadServerList();
     servers.push(server);
     return this.saveServerList(servers);
   },
 
   removeServer: function(ip: string): boolean {
-    const servers = this.loadServerList().filter((s: any) => s.ip !== ip);
+    const servers = this.loadServerList().filter((s: unknown) => {
+      const server = s as { ip?: string };
+      return server.ip !== ip;
+    });
     return this.saveServerList(servers);
   },
 
   // MOP execution history
-  saveMOPHistory: function(mopId: number, executionData: any): boolean {
-    const history: Record<number, any[]> = this.loadState('mop_history', {}) || {};
+  saveMOPHistory: function(mopId: number, executionData: unknown): boolean {
+    const history: Record<number, unknown[]> = this.loadState('mop_history', {}) || {};
     if (!history[mopId]) {
       history[mopId] = [];
     }
     history[mopId].push({
-      ...executionData,
+      ...(executionData as any),
       timestamp: new Date().toISOString()
     });
     return this.saveState('mop_history', history);
   },
 
-  loadMOPHistory: function(mopId: number): any[] {
-    const history: Record<number, any[]> = this.loadState('mop_history', {}) || {};
+  loadMOPHistory: function(mopId: number): unknown[] {
+    const history: Record<number, unknown[]> = this.loadState('mop_history', {}) || {};
     return history[mopId] || [];
   },
 
   // Execution settings
-  saveExecutionSettings: function(settings: any): boolean {
+  saveExecutionSettings: function(settings: unknown): boolean {
     return this.saveState('execution_settings', settings);
   },
 
-  loadExecutionSettings: function(): any {
+  loadExecutionSettings: function(): unknown {
     return this.loadState('execution_settings', {
       timeout: 300,
       retries: 3,

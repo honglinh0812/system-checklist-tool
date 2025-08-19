@@ -138,6 +138,11 @@ const Login: React.FC = () => {
             <p className="mb-1">
               <a href="#">I forgot my password</a>
             </p>
+            <div className="text-center mt-3">
+              <a href="/register" className="text-center">
+                Don't have an account? Register here
+              </a>
+            </div>
           </div>
         </div>
       </div>

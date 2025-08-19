@@ -1008,16 +1008,24 @@ def download_handover_assessment_report(assessment_id):
             'results': []
         }
         
+        # Get MOP details for command titles
+        mop = MOP.query.get(assessment.mop_id)
+        
         # Convert test_results to the format expected by excel exporter
         if assessment.test_results:
             for result in assessment.test_results:
+                # Map the data structure correctly
+                is_valid = result.get('result') == 'success'
                 export_data['results'].append({
                     'server_ip': result.get('server_ip', ''),
-                    'command_title': result.get('command_title', ''),
-                    'command': result.get('command', ''),
-                    'is_valid': result.get('result') == 'success',
+                    'command_title': f"Command {result.get('command_index', 0) + 1}",  # Generate title from index
+                    'command': result.get('command_text', ''),  # Map command_text to command
                     'expected_output': result.get('reference_value', ''),
-                    'actual_output': result.get('output', '')
+                    'actual_output': result.get('output', ''),
+                    'validation_type': 'exact_match',  # Default validation type
+                    'is_valid': is_valid,
+                    'score': 100.0 if is_valid else 0.0,  # Calculate score based on success
+                    'details': 'Command executed successfully' if is_valid else 'Command execution failed'
                 })
         
         # Create Excel file
@@ -1071,16 +1079,24 @@ def download_risk_assessment_report(assessment_id):
             'results': []
         }
         
+        # Get MOP details for command titles
+        mop = MOP.query.get(assessment.mop_id)
+        
         # Convert test_results to the format expected by excel exporter
         if assessment.test_results:
             for result in assessment.test_results:
+                # Map the data structure correctly
+                is_valid = result.get('result') == 'success'
                 export_data['results'].append({
                     'server_ip': result.get('server_ip', ''),
-                    'command_title': result.get('command_title', ''),
-                    'command': result.get('command', ''),
-                    'is_valid': result.get('result') == 'success',
+                    'command_title': f"Command {result.get('command_index', 0) + 1}",  # Generate title from index
+                    'command': result.get('command_text', ''),  # Map command_text to command
                     'expected_output': result.get('reference_value', ''),
-                    'actual_output': result.get('output', '')
+                    'actual_output': result.get('output', ''),
+                    'validation_type': 'exact_match',  # Default validation type
+                    'is_valid': is_valid,
+                    'score': 100.0 if is_valid else 0.0,  # Calculate score based on success
+                    'details': 'Command executed successfully' if is_valid else 'Command execution failed'
                 })
         
         # Create Excel file

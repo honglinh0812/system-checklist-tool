@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import { usePersistedState } from '../../hooks/usePersistedState';
+import { useModalState } from '../../utils/stateUtils';
+
 
 interface Command {
   id?: number;
@@ -52,37 +54,35 @@ interface MOPFormData {
 }
 
 const MOPManagement: React.FC = () => {
-  const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   
-  // Basic states
-  const [mops, setMops] = useState<MOP[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showMopModal, setShowMopModal] = useState(false);
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
-  const [currentMop, setCurrentMop] = useState<MOP | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [commandCounter, setCommandCounter] = useState(0);
-  const [deleteMopId, setDeleteMopId] = useState<string | null>(null);
-  const [deleteMopName, setDeleteMopName] = useState('');
-  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
-  
-  // Enhanced UI states
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [commandErrors, setCommandErrors] = useState<{[key: number]: {title?: string, command?: string} | undefined}>({});
-  const [showCommandTemplates, setShowCommandTemplates] = useState(false);
-  
-  const [formData, setFormData] = useState<MOPFormData>({
+  // Persisted state management with unique keys for MOP Management
+  const [mops, setMops] = usePersistedState<MOP[]>('management_mops', [], { autoSave: true, autoSaveInterval: 30000 });
+  const [currentMop, setCurrentMop] = usePersistedState<MOP | null>('management_currentMop', null);
+  const [formData, setFormData] = usePersistedState<MOPFormData>('management_formData', {
     name: '',
     description: '',
     risk_assessment: false,
     handover_assessment: false,
     commands: []
-  });
+  }, { autoSave: true, autoSaveInterval: 10000 });
+
+  const [showMopModal, setShowMopModal] = useModalState(false);
+  const [showDetailModal, setShowDetailModal] = useModalState(false);
+  const [showPreviewModal, setShowPreviewModal] = useModalState(false);
+  const [showCommandTemplates, setShowCommandTemplates] = useModalState(false);
+  const [isEditing, setIsEditing] = usePersistedState<boolean>('management_isEditing', false);
+
+  
+  // Non-persisted states - những state không cần duy trì (loading, notifications, temporary actions)
+  const [loading, setLoading] = useState(true);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
+  const [deleteMopId, setDeleteMopId] = useState<string | null>(null);
+  const [deleteMopName, setDeleteMopName] = useState('');
+  const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
+
 
   // Command templates
   const commandTemplates = [
@@ -156,8 +156,6 @@ const MOPManagement: React.FC = () => {
       handover_assessment: false,
       commands: []
     });
-    setCommandCounter(0);
-    setCommandErrors({});
     setShowMopModal(true);
   };
 
@@ -198,8 +196,7 @@ const MOPManagement: React.FC = () => {
             reference_value: cmd.reference_value || cmd.expected_output || ''
           }))
         });
-        setCommandCounter(mop.commands?.length || 0);
-        setCommandErrors({});
+
         setShowMopModal(true);
       } else {
         setNotification({type: 'error', message: 'Error loading MOP for editing'});
@@ -257,7 +254,6 @@ const MOPManagement: React.FC = () => {
       ...prev,
       commands: [...prev.commands, newCommand]
     }));
-    setCommandCounter(prev => prev + 1);
   };
 
   const removeCommand = (index: number) => {
@@ -265,25 +261,7 @@ const MOPManagement: React.FC = () => {
       ...prev,
       commands: prev.commands.filter((_, i) => i !== index)
     }));
-    // Remove validation errors for this command
-    setCommandErrors(prev => {
-      const newErrors = { ...prev };
-      delete newErrors[index];
-      // Reindex remaining errors
-      const reindexedErrors: {[key: number]: {title?: string, command?: string}} = {};
-      Object.keys(newErrors).forEach(key => {
-        const oldIndex = parseInt(key);
-        const errorValue = newErrors[oldIndex];
-        if (errorValue) { // Chỉ thêm vào nếu không undefined
-          if (oldIndex > index) {
-            reindexedErrors[oldIndex - 1] = errorValue;
-          } else {
-            reindexedErrors[oldIndex] = errorValue;
-          }
-        }
-      });
-      return reindexedErrors;
-    });
+
   };
 
   const updateCommand = (index: number, field: keyof Command, value: string) => {
@@ -292,8 +270,7 @@ const MOPManagement: React.FC = () => {
         i === index ? { ...cmd, [field]: value } : cmd
       );
       
-      // Validate after update
-      setTimeout(() => validateCommand(index, newCommands[index]), 100);
+
       
       return {
         ...prev,
@@ -302,86 +279,9 @@ const MOPManagement: React.FC = () => {
     });
   };
 
-  // Validation function
-  const validateCommand = (index: number, command: Command) => {
-    const errors: {title?: string, command?: string} = {};
-    
-    if (!command.title?.trim()) {
-      errors.title = "Command title is required";
-    }
-    
-    if (!command.command?.trim()) {
-      errors.command = "Command is required";
-    } else if (command.command.length > 1000) {
-      errors.command = "Command is too long (max 1000 characters)";
-    }
-    
-    setCommandErrors(prev => {
-      const newErrors = { ...prev };
-      if (Object.keys(errors).length > 0) {
-        newErrors[index] = errors;
-      } else {
-        delete newErrors[index];
-      }
-      return newErrors;
-    });
-    
-    return Object.keys(errors).length === 0;
-  };
 
-  // Drag & Drop functions
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedIndex(index);
-    e.dataTransfer.effectAllowed = 'move';
-  };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
 
-  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
-    e.preventDefault();
-    
-    if (draggedIndex === null || draggedIndex === dropIndex) {
-      setDraggedIndex(null);
-      return;
-    }
-    
-    const newCommands = [...formData.commands];
-    const draggedCommand = newCommands[draggedIndex];
-    
-    // Remove dragged item
-    newCommands.splice(draggedIndex, 1);
-    
-    // Insert at new position
-    newCommands.splice(dropIndex, 0, draggedCommand);
-    
-    setFormData(prev => ({
-      ...prev,
-      commands: newCommands
-    }));
-    
-    setDraggedIndex(null);
-  };
-
-  // Duplicate command function
-  const duplicateCommand = (index: number) => {
-    const commandToDuplicate = formData.commands[index];
-    const duplicatedCommand = {
-      ...commandToDuplicate,
-      title: `${commandToDuplicate.title} (Copy)`
-    };
-    
-    setFormData(prev => ({
-      ...prev,
-      commands: [
-        ...prev.commands.slice(0, index + 1),
-        duplicatedCommand,
-        ...prev.commands.slice(index + 1)
-      ]
-    }));
-  };
 
   // Add command from template
   const addCommandFromTemplate = (template: typeof commandTemplates[0]) => {
@@ -445,16 +345,10 @@ const MOPManagement: React.FC = () => {
       return;
     }
 
-    // Validate all commands
-    let hasErrors = false;
-    formData.commands.forEach((cmd, index) => {
-      if (!validateCommand(index, cmd)) {
-        hasErrors = true;
-      }
-    });
-
-    if (hasErrors) {
-      setNotification({type: 'error', message: 'Please fix command validation errors'});
+    // Basic validation for commands
+    const hasInvalidCommands = formData.commands.some(cmd => !cmd.title?.trim() || !cmd.command?.trim());
+    if (hasInvalidCommands) {
+      setNotification({type: 'error', message: 'Please fill in all command titles and commands'});
       return;
     }
 
@@ -561,6 +455,19 @@ const MOPManagement: React.FC = () => {
     );
   }
 
+  // Safety check for data integrity
+  if (!Array.isArray(mops)) {
+    return (
+      <div className="alert alert-warning">
+        <h4>Data Loading Issue</h4>
+        <p>Unable to load MOP data. Please refresh the page.</p>
+        <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="container-fluid">
       {/* Notification */}
@@ -611,7 +518,7 @@ const MOPManagement: React.FC = () => {
                     <td>
                       {Array.isArray(mop.type) ? mop.type.map(t => (
                         <span key={t} className="badge badge-info mr-1">
-                          {t.replace('_', ' ').toUpperCase()}
+                          {t ? t.replace('_', ' ').toUpperCase() : 'UNKNOWN'}
                         </span>
                       )) : (
                         <span className="badge badge-secondary">Unknown</span>
@@ -619,7 +526,7 @@ const MOPManagement: React.FC = () => {
                     </td>
                     <td>
                       <span className={`badge badge-${mop.status === 'approved' ? 'success' : 'warning'}`}>
-                        {mop.status.toUpperCase()}
+                        {mop.status?.toUpperCase() || 'UNKNOWN'}
                       </span>
                     </td>
                     <td>{mop.created_by?.full_name || mop.created_by?.username || 'Unknown'}</td>
@@ -945,7 +852,7 @@ const MOPManagement: React.FC = () => {
                     <p><strong>Description:</strong> {currentMop.description || 'N/A'}</p>
                     <p><strong>Status:</strong> 
                       <span className={`badge badge-${currentMop.status === 'approved' ? 'success' : 'warning'} ml-2`}>
-                        {currentMop.status.toUpperCase()}
+                        {currentMop.status?.toUpperCase() || 'UNKNOWN'}
                       </span>
                     </p>
                   </div>
@@ -953,7 +860,7 @@ const MOPManagement: React.FC = () => {
                     <p><strong>Type:</strong> 
                       {Array.isArray(currentMop.type) ? currentMop.type.map(t => (
                         <span key={t} className="badge badge-info ml-1">
-                          {t.replace('_', ' ').toUpperCase()}
+                          {t ? t.replace('_', ' ').toUpperCase() : 'UNKNOWN'}
                         </span>
                       )) : 'Unknown'}
                     </p>

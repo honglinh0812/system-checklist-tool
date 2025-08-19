@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
-import { API_ENDPOINTS } from '../utils/constants';
+import { API_ENDPOINTS, USER_ROLES } from '../utils/constants';
 import { useAuth } from '../contexts/AuthContext';
+import { usePersistedState } from '../hooks/usePersistedState';
+
 import { Modal } from '../components/common';
 
 interface DashboardStats {
@@ -50,18 +52,31 @@ interface RecentExecution {
 const Dashboard: React.FC = () => {
   const { user, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
-  const [stats, setStats] = useState<DashboardStats>({
+  
+  // Thêm các biến kiểm tra quyền
+  const isAdmin = user?.role === USER_ROLES.ADMIN;
+  const isUser = user?.role === USER_ROLES.USER;
+  const isViewer = user?.role === USER_ROLES.VIEWER;
+  const canPerformAssessments = isAdmin || isUser;
+  const canViewMOPManagement = isAdmin;
+  
+  // Persisted state management with unique keys for Dashboard
+  const [stats, setStats] = usePersistedState<DashboardStats>('dashboard_stats', {
     totalMops: 0,
     approvedMops: 0,
     pendingMops: 0,
     totalExecutions: 0,
     userExecutions: 0
-  });
-  const [recentMops, setRecentMops] = useState<RecentMOP[]>([]);
-  const [recentExecutions, setRecentExecutions] = useState<RecentExecution[]>([]);
+  }, { autoSave: true, autoSaveInterval: 30000 });
+  const [recentMops, setRecentMops] = usePersistedState<RecentMOP[]>('dashboard_recentMops', [], { autoSave: true });
+  const [recentExecutions, setRecentExecutions] = usePersistedState<RecentExecution[]>('dashboard_recentExecutions', [], { autoSave: true });
+  const [selectedExecution, setSelectedExecution] = usePersistedState<RecentExecution | null>('dashboard_selectedExecution', null);
+  
+  // Non-persisted states
+  const [showExecutionDetailModal, setShowExecutionDetailModal] = useState<boolean>(false);
+  
+  // Non-persisted states - loading states
   const [loading, setLoading] = useState(true);
-  const [showExecutionDetailModal, setShowExecutionDetailModal] = useState(false);
-  const [selectedExecution, setSelectedExecution] = useState<RecentExecution | null>(null);
   //const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -95,7 +110,6 @@ const Dashboard: React.FC = () => {
       if (statsData.success && statsData.data.overview) {
         // Map backend data structure to frontend interface
         const overview = statsData.data.overview;
-        const distributions = statsData.data.distributions;
         
         setStats({
           totalMops: overview.total_mops || 0,
@@ -151,6 +165,19 @@ const Dashboard: React.FC = () => {
     );
   }
 
+  // Safety check for data integrity
+  if (!stats || !Array.isArray(recentMops) || !Array.isArray(recentExecutions)) {
+    return (
+      <div className="alert alert-warning">
+        <h4>Dashboard Loading Issue</h4>
+        <p>Unable to load dashboard data. Please refresh the page.</p>
+        <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
+
 
 
   return (
@@ -176,7 +203,7 @@ const Dashboard: React.FC = () => {
         <div className="container-fluid">
           {/* Info boxes */}
           <div className="row">
-            {/* Total MOPs */}
+            {/* Total MOPs - Hiển thị cho tất cả */}
             <div className="col-lg-3 col-6">
               <div className="small-box bg-info">
                 <div className="inner">
@@ -186,14 +213,20 @@ const Dashboard: React.FC = () => {
                 <div className="icon">
                   <i className="fas fa-tasks"></i>
                 </div>
-                <Link to="/mop-management" className="small-box-footer">
-                  More info <i className="fas fa-arrow-circle-right"></i>
-                </Link>
+                {canViewMOPManagement ? (
+                  <Link to="/mop-management" className="small-box-footer">
+                    More info <i className="fas fa-arrow-circle-right"></i>
+                  </Link>
+                ) : (
+                  <Link to="/mop-review" className="small-box-footer">
+                    View MOPs <i className="fas fa-arrow-circle-right"></i>
+                  </Link>
+                )}
               </div>
             </div>
 
-            {/* Approved MOPs - Only for admin */}
-            {user?.role === 'admin' && (
+            {/* Approved MOPs - Chỉ cho admin */}
+            {isAdmin && (
               <div className="col-lg-3 col-6">
                 <div className="small-box bg-success">
                   <div className="inner">
@@ -210,8 +243,8 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* Pending MOPs - Only for admin */}
-            {user?.role === 'admin' && (
+            {/* Pending MOPs - Chỉ cho admin */}
+            {isAdmin && (
               <div className="col-lg-3 col-6">
                 <div className="small-box bg-warning">
                   <div className="inner">
@@ -228,7 +261,7 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* Recent Executions */}
+            {/* Recent Executions - Hiển thị cho tất cả */}
             <div className="col-lg-3 col-6">
               <div className="small-box bg-danger">
                 <div className="inner">
@@ -245,50 +278,83 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Assessment Cards */}
-          <div className="row">
-            <div className="col-md-6">
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">
-                    <i className="fas fa-shield-alt mr-2"></i>
-                    Risk Assessment
-                  </h3>
-                </div>
-                <div className="card-body">
-                  <p>Perform system risk assessments using predefined MOPs.</p>
-                  <Link to="/risk-assessment" className="btn btn-primary">
-                    <i className="fas fa-play mr-2"></i>
-                    Start Assessment
-                  </Link>
-                </div>
-              </div>
-            </div>
-            
-            <div className="col-md-6">
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">
-                    <i className="fas fa-exchange-alt mr-2"></i>
-                    Handover Assessment
-                  </h3>
-                </div>
-                <div className="card-body">
-                  <p>Perform system handover assessments using predefined MOPs.</p>
-                  <Link to="/handover-assessment" className="btn btn-success">
-                    <i className="fas fa-play mr-2"></i>
-                    Start Assessment
-                  </Link>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent MOPs - Only for admin */}
-          {user?.role === 'admin' && (
+          {/* Assessment Cards - Chỉ cho admin và user */}
+          {canPerformAssessments && (
             <div className="row">
               <div className="col-md-6">
-                {/* Recent MOPs */}
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="card-title">
+                      <i className="fas fa-shield-alt mr-2"></i>
+                      Risk Assessment
+                    </h3>
+                  </div>
+                  <div className="card-body">
+                    <p>Perform system risk assessments using predefined MOPs.</p>
+                    <Link to="/risk-assessment" className="btn btn-primary">
+                      <i className="fas fa-play mr-2"></i>
+                      Start Assessment
+                    </Link>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="col-md-6">
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="card-title">
+                      <i className="fas fa-exchange-alt mr-2"></i>
+                      Handover Assessment
+                    </h3>
+                  </div>
+                  <div className="card-body">
+                    <p>Perform system handover assessments using predefined MOPs.</p>
+                    <Link to="/handover-assessment" className="btn btn-success">
+                      <i className="fas fa-play mr-2"></i>
+                      Start Assessment
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Viewer Info Card - Chỉ cho viewer */}
+          {isViewer && (
+            <div className="row">
+              <div className="col-md-12">
+                <div className="card card-info">
+                  <div className="card-header">
+                    <h3 className="card-title">
+                      <i className="fas fa-info-circle mr-2"></i>
+                      Viewer Access
+                    </h3>
+                  </div>
+                  <div className="card-body">
+                    <p>As a viewer, you have read-only access to:</p>
+                    <ul>
+                      <li><i className="fas fa-eye mr-2"></i>View MOPs and their details</li>
+                      <li><i className="fas fa-history mr-2"></i>View execution history and results</li>
+                      <li><i className="fas fa-chart-line mr-2"></i>View dashboard statistics</li>
+                    </ul>
+                    <div className="mt-3">
+                      <Link to="/mop-review" className="btn btn-info mr-2">
+                        <i className="fas fa-eye mr-2"></i>View MOPs
+                      </Link>
+                      <Link to="/execution-history" className="btn btn-secondary">
+                        <i className="fas fa-history mr-2"></i>View Executions
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recent MOPs - Chỉ cho admin */}
+          {isAdmin && (
+            <div className="row">
+              <div className="col-md-6">
                 <div className="card">
                   <div className="card-header">
                     <h3 className="card-title">
@@ -318,7 +384,7 @@ const Dashboard: React.FC = () => {
                                     mop.status === 'pending' ? 'badge-warning' :
                                     'badge-secondary'
                                   }`}>
-                                    {mop.status.charAt(0).toUpperCase() + mop.status.slice(1)}
+                                    {mop.status ? (mop.status.charAt(0).toUpperCase() + mop.status.slice(1)) : 'Unknown'}
                                   </span>
                                 </td>
                                 <td>{mop.created_by?.username || 'Unknown'}</td>
@@ -348,7 +414,7 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {/* Recent Executions - For all users */}
+          {/* Recent Executions - Cho tất cả users */}
           <div className="row">
             <div className="col-md-12">
               <div className="card">

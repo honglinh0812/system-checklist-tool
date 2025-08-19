@@ -1,12 +1,15 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import { authService } from '../services/authService';
-import type { AuthState, AuthContextType, LoginCredentials, User } from '../types/auth';
+import type { AuthState, AuthContextType, LoginCredentials, RegisterCredentials, User } from '../types/auth';
 
 // Auth reducer
 type AuthAction =
   | { type: 'LOGIN_START' }
   | { type: 'LOGIN_SUCCESS'; payload: { user: User; token: string } }
   | { type: 'LOGIN_FAILURE' }
+  | { type: 'REGISTER_START' }
+  | { type: 'REGISTER_SUCCESS' }
+  | { type: 'REGISTER_FAILURE' }
   | { type: 'LOGOUT' }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_USER'; payload: User };
@@ -42,6 +45,17 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
         user: null,
         token: null,
         isAuthenticated: false,
+        isLoading: false,
+      };
+    case 'REGISTER_START':
+      return {
+        ...state,
+        isLoading: true,
+      };
+    case 'REGISTER_SUCCESS':
+    case 'REGISTER_FAILURE':
+      return {
+        ...state,
         isLoading: false,
       };
     case 'LOGOUT':
@@ -126,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = async (username: string, password: string, _remember?: boolean) => {
+  const login = async (username: string, password: string) => {
     try {
       console.log('[AuthContext] Starting login...');
       dispatch({ type: 'LOGIN_START' });
@@ -165,12 +179,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const register = async (credentials: RegisterCredentials) => {
+    try {
+      console.log('[AuthContext] Starting registration...');
+      dispatch({ type: 'REGISTER_START' });
+      const response = await authService.register(credentials);
+      console.log('[AuthContext] Registration successful:', response);
+      dispatch({ type: 'REGISTER_SUCCESS' });
+      return response;
+    } catch (error) {
+      console.log('[AuthContext] Registration failed:', error);
+      dispatch({ type: 'REGISTER_FAILURE' });
+      throw error;
+    }
+  };
+
   const value: AuthContextType = {
     user: state.user,
     token: state.token,
     isAuthenticated: state.isAuthenticated,
     isLoading: state.isLoading,
     login,
+    register,
     logout,
     checkAuth,
   };
