@@ -4,8 +4,11 @@ from sqlalchemy.dialects.postgresql import ARRAY
 import enum
 
 class MOPStatus(enum.Enum):
+    CREATED = 'created'
+    EDITED = 'edited'
     PENDING = 'pending'
     APPROVED = 'approved'
+    DELETED = 'deleted'
 
 class MOP(db.Model):
     __tablename__ = 'mops'
@@ -14,7 +17,7 @@ class MOP(db.Model):
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text, nullable=False)
     type = db.Column(ARRAY(db.String(20)), nullable=False)
-    status = db.Column(db.String(20), nullable=False, default='pending')
+    status = db.Column(db.String(20), nullable=False, default='created')
     assessment_type = db.Column(db.String(50), nullable=False, default='handover_assessment')
     category = db.Column(db.String(50), nullable=True)
     priority = db.Column(db.String(20), nullable=True)

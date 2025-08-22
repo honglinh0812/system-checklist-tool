@@ -1,6 +1,12 @@
 from datetime import datetime
 from . import db
 from sqlalchemy.dialects.postgresql import JSONB
+import enum
+
+class AssessmentStatus(enum.Enum):
+    PENDING = 'pending'
+    SUCCESS = 'success'
+    FAIL = 'fail'
 
 class AssessmentResult(db.Model):
     __tablename__ = 'assessment_results'
@@ -10,7 +16,7 @@ class AssessmentResult(db.Model):
     assessment_type = db.Column(db.String(20), nullable=False)  # 'risk' or 'handover'
     server_info = db.Column(JSONB, nullable=False)  # Server connection details
     test_results = db.Column(JSONB, nullable=True)  # Test results for each server
-    status = db.Column(db.String(20), nullable=False)  # 'pending', 'running', 'completed', 'failed'
+    status = db.Column(db.String(20), nullable=False, default='pending')  # 'pending', 'success', 'fail'
     executed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     execution_logs = db.Column(db.Text, nullable=True)  # Ansible execution logs
     error_message = db.Column(db.Text, nullable=True)  # Error message if failed

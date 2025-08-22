@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useTranslation } from '../../i18n/useTranslation';
 import ErrorMessage from '../../components/common/ErrorMessage';
 
 const Login: React.FC = () => {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState({
     username: '',
     password: '',
@@ -53,11 +55,11 @@ const Login: React.FC = () => {
         <div className="card card-outline card-primary">
           <div className="card-header text-center">
             <a href="#" className="h1">
-              <i className="fas fa-clipboard-check"></i> System Checklist
+              <i className="fas fa-clipboard-check"></i> {t('systemChecklist')}
             </a>
           </div>
           <div className="card-body">
-            <p className="login-box-msg">Sign in to start your session</p>
+            <p className="login-box-msg">{t('signInToStartSession')}</p>
 
             {error && (
               <ErrorMessage
@@ -74,7 +76,7 @@ const Login: React.FC = () => {
                   type="text" 
                   name="username" 
                   className="form-control" 
-                  placeholder="Username" 
+                  placeholder={t('usernamePlaceholder')} 
                   value={formData.username}
                   onChange={handleInputChange}
                   required 
@@ -90,7 +92,7 @@ const Login: React.FC = () => {
                   type="password" 
                   name="password" 
                   className="form-control" 
-                  placeholder="Password" 
+                  placeholder={t('passwordPlaceholder')} 
                   value={formData.password}
                   onChange={handleInputChange}
                   required 
@@ -112,7 +114,7 @@ const Login: React.FC = () => {
                       onChange={handleInputChange}
                     />
                     <label htmlFor="remember">
-                      Remember Me
+                      {t('rememberMe')}
                     </label>
                   </div>
                 </div>
@@ -125,10 +127,10 @@ const Login: React.FC = () => {
                     {loading ? (
                       <>
                         <i className="fas fa-spinner fa-spin mr-2"></i>
-                        Signing In...
+                        {t('signingIn')}
                       </>
                     ) : (
-                      'Sign In'
+                      t('signIn')
                     )}
                   </button>
                 </div>
@@ -136,11 +138,11 @@ const Login: React.FC = () => {
             </form>
 
             <p className="mb-1">
-              <a href="#">I forgot my password</a>
+              <a href="#">{t('forgotPassword')}</a>
             </p>
             <div className="text-center mt-3">
               <a href="/register" className="text-center">
-                Don't have an account? Register here
+                {t('noAccountRegister')}
               </a>
             </div>
           </div>

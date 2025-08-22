@@ -79,10 +79,11 @@ export function usePersistedState<T>(
 
   // Save state function
   const saveState = useCallback(() => {
-    const stateToSave = { ...stateRef.current };
+    let stateToSave = stateRef.current;
     
     // Remove excluded keys if state is an object
     if (typeof stateToSave === 'object' && stateToSave !== null) {
+      stateToSave = { ...stateToSave };
       excludeKeys.forEach(key => {
         delete (stateToSave as any)[key];
       });
@@ -111,9 +112,10 @@ export function usePersistedState<T>(
     
     debounceTimeoutRef.current = setTimeout(() => {
       // Direct save without callback dependencies
-      const stateToSave = { ...stateRef.current };
+      let stateToSave = stateRef.current;
       
       if (typeof stateToSave === 'object' && stateToSave !== null) {
+        stateToSave = { ...stateToSave };
         excludeKeys.forEach(key => {
           delete (stateToSave as any)[key];
         });
@@ -139,28 +141,39 @@ export function usePersistedState<T>(
     };
   }, [state]); // Only depend on state
 
-  // Save state on unmount và reset modal states khi chuyển trang
+  // Save state on unmount
   useEffect(() => {
     return () => {
       if (autoSave) {
         // Save directly without using the callback to avoid dependency issues
-        const stateToSave = { ...stateRef.current };
+        let stateToSave = stateRef.current;
         
-        // Reset modal states để tránh hiển thị modal khi chuyển trang
-        if (key.toLowerCase().includes('modal') || key.toLowerCase().includes('show')) {
-          if (typeof stateToSave === 'boolean') {
-            // Reset boolean modal states về false
-            const currentPageState = getPageState(pageKey) || {};
-            setPageState(pageKey, {
-              ...currentPageState,
-              [key]: false,
-              lastUpdated: Date.now()
-            });
-            return;
-          }
+        // Chỉ reset modal states nếu key thực sự là modal state
+        // Không reset các state quan trọng như selectedMOP, activeTab, assessmentType, servers, etc.
+        const isModalState = (key.toLowerCase().includes('showmodal') || 
+                             key.toLowerCase().includes('showexecution') ||
+                             key.toLowerCase().includes('showfileupload') ||
+                             key.toLowerCase().includes('showmanualinput') ||
+                             key.toLowerCase().includes('showviewmop') ||
+                             key.toLowerCase().includes('showdelete')) &&
+                            !key.toLowerCase().includes('activetab') &&
+                            !key.toLowerCase().includes('selected') &&
+                            !key.toLowerCase().includes('assessment') &&
+                            !key.toLowerCase().includes('servers');
+        
+        if (isModalState && typeof stateToSave === 'boolean') {
+          // Reset boolean modal states về false
+          const currentPageState = getPageState(pageKey) || {};
+          setPageState(pageKey, {
+            ...currentPageState,
+            [key]: false,
+            lastUpdated: Date.now()
+          });
+          return;
         }
         
         if (typeof stateToSave === 'object' && stateToSave !== null) {
+          stateToSave = { ...stateToSave };
           excludeKeys.forEach(key => {
             delete (stateToSave as any)[key];
           });

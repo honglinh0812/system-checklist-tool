@@ -163,7 +163,9 @@ export const formatUtils = {
       'skipped': 'badge-secondary'
     };
     
-    return statusClasses[status.toLowerCase()] || 'badge-secondary';
+    // Đảm bảo status luôn là string để tránh lỗi toLowerCase
+    const safeStatus = typeof status === 'string' ? status : '';
+    return statusClasses[safeStatus.toLowerCase()] || 'badge-secondary';
   },
 
   // Format MOP title for display

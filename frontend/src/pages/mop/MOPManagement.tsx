@@ -3,8 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
-import { usePersistedState } from '../../hooks/usePersistedState';
-import { useModalState } from '../../utils/stateUtils';
+import { useTranslation } from '../../i18n/useTranslation';
 
 
 interface Command {
@@ -55,24 +54,25 @@ interface MOPFormData {
 
 const MOPManagement: React.FC = () => {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const isAdmin = user?.role === 'admin';
   
   // Persisted state management with unique keys for MOP Management
-  const [mops, setMops] = usePersistedState<MOP[]>('management_mops', [], { autoSave: true, autoSaveInterval: 30000 });
-  const [currentMop, setCurrentMop] = usePersistedState<MOP | null>('management_currentMop', null);
-  const [formData, setFormData] = usePersistedState<MOPFormData>('management_formData', {
+  const [mops, setMops] = useState<MOP[]>([]);
+  const [currentMop, setCurrentMop] = useState<MOP | null>(null);
+  const [formData, setFormData] = useState<MOPFormData>({
     name: '',
     description: '',
     risk_assessment: false,
     handover_assessment: false,
     commands: []
-  }, { autoSave: true, autoSaveInterval: 10000 });
+  });
 
-  const [showMopModal, setShowMopModal] = useModalState(false);
-  const [showDetailModal, setShowDetailModal] = useModalState(false);
-  const [showPreviewModal, setShowPreviewModal] = useModalState(false);
-  const [showCommandTemplates, setShowCommandTemplates] = useModalState(false);
-  const [isEditing, setIsEditing] = usePersistedState<boolean>('management_isEditing', false);
+  const [showMopModal, setShowMopModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showCommandTemplates, setShowCommandTemplates] = useState(false);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
 
   
   // Non-persisted states - những state không cần duy trì (loading, notifications, temporary actions)
@@ -87,34 +87,34 @@ const MOPManagement: React.FC = () => {
   // Command templates
   const commandTemplates = [
     {
-      title: "Check Service Status",
+      title: t('checkServiceStatus'),
       command: "systemctl status <service_name>",
-      reference_value: "active (running)"
+      reference_value: t('activeRunning')
     },
     {
-      title: "Check Disk Usage",
+      title: t('checkDiskUsage'),
       command: "df -h",
-      reference_value: "< 80% usage"
+      reference_value: t('lessThan80Usage')
     },
     {
-      title: "Check Memory Usage",
+      title: t('checkMemoryUsage'),
       command: "free -h",
-      reference_value: "Available memory > 1GB"
+      reference_value: t('availableMemoryGreaterThan1GB')
     },
     {
-      title: "Check Network Connectivity",
+      title: t('checkNetworkConnectivity'),
       command: "ping -c 4 <target_ip>",
-      reference_value: "0% packet loss"
+      reference_value: t('zeroPacketLoss')
     },
     {
-      title: "Check Process Status",
+      title: t('checkProcessStatus'),
       command: "ps aux | grep <process_name>",
-      reference_value: "Process is running"
+      reference_value: t('processIsRunning')
     },
     {
-      title: "Check Port Listening",
+      title: t('checkPortListening'),
       command: "netstat -tlnp | grep <port>",
-      reference_value: "Port is listening"
+      reference_value: t('portIsListening')
     }
   ];
 
@@ -140,13 +140,20 @@ const MOPManagement: React.FC = () => {
       }
     } catch (error) {
       console.error('Error fetching MOPs:', error);
-      setNotification({type: 'error', message: 'Error loading MOPs'});
+      setNotification({type: 'error', message: t('errorLoadingMOPs')});
     } finally {
       setLoading(false);
     }
   };
 
   const showCreateMOPModal = () => {
+    // Close all other modals first
+    setShowDetailModal(false);
+    setShowPreviewModal(false);
+    setShowCommandTemplates(false);
+    setShowDeleteModal(false);
+    setShowApproveConfirm(false);
+    
     setIsEditing(false);
     setCurrentMop(null);
     setFormData({
@@ -161,21 +168,35 @@ const MOPManagement: React.FC = () => {
 
   const viewMOP = async (mopId: string) => {
     try {
+      // Close all other modals first
+      setShowMopModal(false);
+      setShowPreviewModal(false);
+      setShowCommandTemplates(false);
+      setShowDeleteModal(false);
+      setShowApproveConfirm(false);
+      
       const data = await apiService.get<any>(API_ENDPOINTS.MOPS.DETAIL(mopId));
       if (data.success) {
         setCurrentMop(data.data);
         setShowDetailModal(true);
       } else {
-        setNotification({type: 'error', message: 'Error loading MOP details'});
+        setNotification({type: 'error', message: t('errorLoadingMOPDetails')});
       }
     } catch (error) {
       console.error('Error loading MOP details:', error);
-      setNotification({type: 'error', message: 'Error loading MOP details'});
+      setNotification({type: 'error', message: t('errorLoadingMOPDetails')});
     }
   };
 
   const editMOP = async (mopId: string) => {
     try {
+      // Close all other modals first
+      setShowDetailModal(false);
+      setShowPreviewModal(false);
+      setShowCommandTemplates(false);
+      setShowDeleteModal(false);
+      setShowApproveConfirm(false);
+      
       const data = await apiService.get<any>(`${API_ENDPOINTS.MOPS.LIST}/${mopId}`);
       if (data.success) {
         const mop = data.data;
@@ -199,11 +220,11 @@ const MOPManagement: React.FC = () => {
 
         setShowMopModal(true);
       } else {
-        setNotification({type: 'error', message: 'Error loading MOP for editing'});
+        setNotification({type: 'error', message: t('errorLoadingMOPForEditing')});
       }
     } catch (error) {
       console.error('Error loading MOP for editing:', error);
-      setNotification({type: 'error', message: 'Error loading MOP for editing'});
+      setNotification({type: 'error', message: t('errorLoadingMOPForEditing')});
     }
   };
 
@@ -229,17 +250,17 @@ const MOPManagement: React.FC = () => {
     try {
       const data = await apiService.delete<any>(`${API_ENDPOINTS.MOPS.LIST}/${deleteMopId}`);
       if (data.success) {
-        setNotification({type: 'success', message: 'MOP deleted successfully'});
+        setNotification({type: 'success', message: t('mopDeletedSuccessfully')});
         setShowDeleteModal(false);
         setDeleteMopId(null);
         setDeleteMopName('');
         fetchMOPs();
       } else {
-        setNotification({type: 'error', message: data.error || 'Error deleting MOP'});
+        setNotification({type: 'error', message: data.error || t('errorDeletingMOP')});
       }
     } catch (error) {
       console.error('Error deleting MOP:', error);
-      setNotification({type: 'error', message: 'Error deleting MOP'});
+      setNotification({type: 'error', message: t('errorDeletingMOP')});
     }
   };
 
@@ -316,39 +337,39 @@ const MOPManagement: React.FC = () => {
     try {
       const data = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}/approve`);
       if (data.success) {
-        setNotification({type: 'success', message: 'MOP approved successfully'});
+        setNotification({type: 'success', message: t('mopApprovedSuccessfully')});
         setShowApproveConfirm(false);
         setShowDetailModal(false);
         fetchMOPs();
       } else {
-        setNotification({type: 'error', message: data.error || 'Error approving MOP'});
+        setNotification({type: 'error', message: data.error || t('errorApprovingMOP')});
       }
     } catch (error) {
       console.error('Error approving MOP:', error);
-      setNotification({type: 'error', message: 'Error approving MOP'});
+      setNotification({type: 'error', message: t('errorApprovingMOP')});
     }
   };
 
   const saveMOP = async () => {
     if (!formData.name) {
-      setNotification({type: 'warning', message: 'Please enter MOP name'});
+      setNotification({type: 'warning', message: t('pleaseEnterMOPName')});
       return;
     }
     
     if (!formData.risk_assessment && !formData.handover_assessment) {
-      setNotification({type: 'warning', message: 'Please select at least one MOP type'});
+      setNotification({type: 'warning', message: t('pleaseSelectAtLeastOneMOPType')});
       return;
     }
     
     if (formData.commands.length === 0) {
-      setNotification({type: 'warning', message: 'Please add at least one command'});
+      setNotification({type: 'warning', message: t('pleaseAddAtLeastOneCommand')});
       return;
     }
 
     // Basic validation for commands
     const hasInvalidCommands = formData.commands.some(cmd => !cmd.title?.trim() || !cmd.command?.trim());
     if (hasInvalidCommands) {
-      setNotification({type: 'error', message: 'Please fill in all command titles and commands'});
+      setNotification({type: 'error', message: t('pleaseFillInAllCommandTitlesAndCommands')});
       return;
     }
 
@@ -366,7 +387,7 @@ const MOPManagement: React.FC = () => {
         const updateResponse = await apiService.put<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}`, mopUpdateData);
         
         if (!updateResponse.success) {
-          setNotification({type: 'error', message: updateResponse.error || 'Error updating MOP'});
+          setNotification({type: 'error', message: updateResponse.error || t('errorUpdatingMOP')});
           return;
         }
         
@@ -378,14 +399,14 @@ const MOPManagement: React.FC = () => {
             });
             
             if (!commandsResponse.success) {
-              setNotification({type: 'warning', message: 'MOP updated but failed to update commands'});
+              setNotification({type: 'warning', message: t('mopUpdatedButFailedToUpdateCommands')});
             }
           } catch (cmdError) {
             console.log('Commands update not available, skipping...');
           }
         }
         
-        setNotification({type: 'success', message: 'MOP updated successfully'});
+        setNotification({type: 'success', message: t('mopUpdatedSuccessfully')});
       } else {
         const mopData = {
           name: formData.name,
@@ -400,18 +421,18 @@ const MOPManagement: React.FC = () => {
         const data = await apiService.post<any>(API_ENDPOINTS.MOPS.LIST, mopData);
         
         if (!data.success) {
-          setNotification({type: 'error', message: data.error || 'Error creating MOP'});
+          setNotification({type: 'error', message: data.error || t('errorCreatingMOP')});
           return;
         }
         
-        setNotification({type: 'success', message: 'MOP created successfully'});
+        setNotification({type: 'success', message: t('mopCreatedSuccessfully')});
       }
       
       setShowMopModal(false);
       fetchMOPs();
     } catch (error) {
       console.error('Error saving MOP:', error);
-      setNotification({type: 'error', message: 'Error saving MOP'});
+      setNotification({type: 'error', message: t('errorSavingMOP')});
     }
   };
 
@@ -426,7 +447,7 @@ const MOPManagement: React.FC = () => {
       }
     } catch (error) {
       console.error('Error approving MOP:', error);
-      setNotification({type: 'error', message: 'Error approving MOP'});
+      setNotification({type: 'error', message: t('errorApprovingMOP')});
     }
   };
 
@@ -434,14 +455,14 @@ const MOPManagement: React.FC = () => {
     try {
       const data = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${mopId}/reject`);
       if (data.success) {
-        setNotification({type: 'success', message: 'MOP rejected successfully'});
+        setNotification({type: 'success', message: t('mopRejectedSuccessfully')});
         fetchMOPs();
       } else {
-        setNotification({type: 'error', message: data.error || 'Error rejecting MOP'});
+        setNotification({type: 'error', message: data.error || t('errorRejectingMOP')});
       }
     } catch (error) {
       console.error('Error rejecting MOP:', error);
-      setNotification({type: 'error', message: 'Error rejecting MOP'});
+      setNotification({type: 'error', message: t('errorRejectingMOP')});
     }
   };
 
@@ -449,7 +470,7 @@ const MOPManagement: React.FC = () => {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '400px' }}>
         <div className="spinner-border" role="status">
-          <span className="sr-only">Loading...</span>
+          <span className="sr-only">{t('loading')}</span>
         </div>
       </div>
     );
@@ -459,10 +480,10 @@ const MOPManagement: React.FC = () => {
   if (!Array.isArray(mops)) {
     return (
       <div className="alert alert-warning">
-        <h4>Data Loading Issue</h4>
-        <p>Unable to load MOP data. Please refresh the page.</p>
+        <h4>{t('dataLoadingIssue')}</h4>
+        <p>{t('unableToLoadMOPData')}</p>
         <button className="btn btn-primary" onClick={() => window.location.reload()}>
-          Refresh Page
+          {t('refreshPage')}
         </button>
       </div>
     );
@@ -483,32 +504,32 @@ const MOPManagement: React.FC = () => {
 
       {/* Header */}
       <div className="d-sm-flex align-items-center justify-content-between mb-4">
-        <h1 className="h3 mb-0 text-gray-800">MOP Management</h1>
+        <h1 className="h3 mb-0 text-gray-800">{t('mopManagement')}</h1>
         <button 
           className="btn btn-primary btn-sm shadow-sm"
           onClick={showCreateMOPModal}
         >
           <i className="fas fa-plus fa-sm text-white-50 mr-1"></i>
-          Create New MOP
+          {t('createNewMOP')}
         </button>
       </div>
 
       {/* MOPs Table */}
       <div className="card shadow mb-4">
         <div className="card-header py-3">
-          <h6 className="m-0 font-weight-bold text-primary">MOPs List</h6>
+          <h6 className="m-0 font-weight-bold text-primary">{t('mopsList')}</h6>
         </div>
         <div className="card-body">
           <div className="table-responsive">
             <table className="table table-bordered" width="100%" cellSpacing="0">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Created By</th>
-                  <th>Created At</th>
-                  <th>Actions</th>
+                  <th>{t('name')}</th>
+                  <th>{t('type')}</th>
+                  <th>{t('status')}</th>
+                  <th>{t('createdBy')}</th>
+                  <th>{t('createdAt')}</th>
+                  <th>{t('actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -526,24 +547,24 @@ const MOPManagement: React.FC = () => {
                     </td>
                     <td>
                       <span className={`badge badge-${mop.status === 'approved' ? 'success' : 'warning'}`}>
-                        {mop.status?.toUpperCase() || 'UNKNOWN'}
+                        {mop.status?.toUpperCase() || t('unknown')}
                       </span>
                     </td>
-                    <td>{mop.created_by?.full_name || mop.created_by?.username || 'Unknown'}</td>
+                    <td>{mop.created_by?.full_name || mop.created_by?.username || t('unknown')}</td>
                     <td>{new Date(mop.created_at).toLocaleDateString()}</td>
                     <td>
                       <div className="btn-group" role="group">
                         <button 
                           className="btn btn-info btn-sm" 
                           onClick={() => viewMOP(mop.id)}
-                          title="View Details"
+                          title={t('viewDetails')}
                         >
                           <i className="fas fa-eye"></i>
                         </button>
                         <button 
                           className="btn btn-warning btn-sm" 
                           onClick={() => editMOP(mop.id)}
-                          title="Edit MOP"
+                          title={t('editMOP')}
                         >
                           <i className="fas fa-edit"></i>
                         </button>
@@ -551,7 +572,7 @@ const MOPManagement: React.FC = () => {
                           <button 
                             className="btn btn-danger btn-sm" 
                             onClick={() => deleteMOP(mop.id)}
-                            title="Delete MOP"
+                            title={t('deleteMOP')}
                           >
                             <i className="fas fa-trash"></i>
                           </button>
@@ -574,7 +595,7 @@ const MOPManagement: React.FC = () => {
               <div className="modal-header">
                 <h5 className="modal-title">
                   <i className="fas fa-file-alt mr-2"></i>
-                  {isEditing ? 'Edit MOP' : 'Create New MOP'}
+                  {isEditing ? t('editMOP') : t('createNewMOP')}
                 </h5>
                 <button type="button" className="close" onClick={() => setShowMopModal(false)}>
                   <span aria-hidden="true">&times;</span>
@@ -586,14 +607,14 @@ const MOPManagement: React.FC = () => {
                   <div className="form-group">
                     <label className="form-label">
                       <i className="fas fa-tag mr-2"></i>
-                      MOP Name *
+                      {t('mopName')} *
                     </label>
                     <input 
                       type="text" 
                       className="form-control" 
                       value={formData.name || ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Enter MOP name"
+                      placeholder={t('enterMOPName')}
                       required 
                     />
                   </div>
@@ -602,14 +623,14 @@ const MOPManagement: React.FC = () => {
                   <div className="form-group">
                     <label className="form-label">
                       <i className="fas fa-align-left mr-2"></i>
-                      Description
+                      {t('description')}
                     </label>
                     <textarea 
                       className="form-control" 
                       rows={3}
                       value={formData.description || ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                      placeholder="Enter MOP description"
+                      placeholder={t('enterMOPDescription')}
                     />
                   </div>
 
@@ -617,7 +638,7 @@ const MOPManagement: React.FC = () => {
                   <div className="form-group">
                     <label className="form-label">
                       <i className="fas fa-list mr-2"></i>
-                      Assessment Type *
+                      {t('assessmentType')} *
                     </label>
                     <div className="form-check-container">
                       <div className="form-check form-check-inline">

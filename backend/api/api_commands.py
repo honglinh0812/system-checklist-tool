@@ -1,7 +1,10 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required
 from sqlalchemy import or_, desc
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 from models.mop import Command, MOP
 from models.execution import ExecutionHistory
 from models.user import User
@@ -207,7 +210,7 @@ def execute_command(command_id):
                         execution.status = 'failed'
                 
                 execution.duration = time.time() - start_time
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(GMT_PLUS_7)
                 
                 db.session.commit()
                 
@@ -216,14 +219,14 @@ def execute_command(command_id):
             except subprocess.TimeoutExpired:
                 execution.status = 'timeout'
                 execution.error_output = 'Command execution timed out'
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(GMT_PLUS_7)
                 db.session.commit()
                 logger.warning(f"Command timeout: {command.command_text}")
                 
             except Exception as e:
                 execution.status = 'error'
                 execution.error_output = str(e)
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(GMT_PLUS_7)
                 db.session.commit()
                 logger.error(f"Command execution error: {str(e)}")
         
@@ -664,7 +667,7 @@ def stop_execution(execution_id):
         
         # Update execution status
         execution.status = 'cancelled'
-        execution.ended_at = datetime.utcnow()
+        execution.ended_at = datetime.now(GMT_PLUS_7)
         execution.cancelled_by = current_user.id
         
         # TODO: Implement actual process termination logic here
@@ -713,8 +716,8 @@ def get_execution_logs(execution_id):
         
         if execution.status == 'running':
             logs = [
-                {'timestamp': datetime.utcnow().isoformat(), 'level': 'INFO', 'message': 'Execution in progress...'},
-                {'timestamp': datetime.utcnow().isoformat(), 'level': 'DEBUG', 'message': 'Processing commands...'}
+                {'timestamp': datetime.now(GMT_PLUS_7).isoformat(), 'level': 'INFO', 'message': 'Execution in progress...'},
+                {'timestamp': datetime.now(GMT_PLUS_7).isoformat(), 'level': 'DEBUG', 'message': 'Processing commands...'}
             ]
         elif execution.status == 'completed':
             logs = [
@@ -766,7 +769,7 @@ def get_execution_history():
             return api_error('User not found', 404)
         
         # Get executions from last 7 days
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        seven_days_ago = datetime.now(GMT_PLUS_7) - timedelta(days=7)
         
         # Get ExecutionHistory records
         execution_query = ExecutionHistory.query.filter(
@@ -797,10 +800,7 @@ def get_execution_history():
             success_rate = (passed_commands / total_commands * 100) if total_commands > 0 else 0
             
             # Determine assessment type
-            if exec.assessment_type:
-                assessment_type = "Đánh giá rủi ro" if exec.assessment_type == 'risk_assessment' else "Đánh giá bàn giao"
-            else:
-                assessment_type = "Đánh giá rủi ro" if exec.risk_assessment else "Đánh giá bàn giao"
+            assessment_type = "Đánh giá rủi ro" if exec.risk_assessment else "Đánh giá bàn giao"
             
             # Get user info
             user_name = exec.executed_by_user.username if exec.executed_by_user else 'Unknown'
@@ -1007,7 +1007,7 @@ def execute_mop(mop_id):
             try:
                 # Update status to running
                 execution.status = 'running'
-                execution.started_at = datetime.utcnow()
+                execution.started_at = datetime.now(GMT_PLUS_7)
                 db.session.commit()
                 
                 # Convert MOP commands to execution format
@@ -1039,7 +1039,7 @@ def execute_mop(mop_id):
                 
                 # Update status to completed
                 execution.status = 'completed'
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(GMT_PLUS_7)
                 if execution.started_at:
                     execution.duration = (execution.completed_at - execution.started_at).total_seconds()
                 db.session.commit()
@@ -1048,7 +1048,7 @@ def execute_mop(mop_id):
                 logger.error(f"Error in MOP execution thread: {str(e)}")
                 # Update execution status to failed
                 execution.status = 'failed'
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(GMT_PLUS_7)
                 if execution.started_at:
                     execution.duration = (execution.completed_at - execution.started_at).total_seconds()
                 db.session.commit()

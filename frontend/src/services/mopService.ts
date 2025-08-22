@@ -82,7 +82,7 @@ class MOPService {
   }
 
   async exportExecution(id: number): Promise<Blob> {
-    return await apiService.get<Blob>(API_ENDPOINTS.EXECUTIONS.EXPORT(id));
+    return await apiService.get<Blob>(API_ENDPOINTS.EXECUTIONS.EXPORT_BY_ID(id));
   }
 
   async cancelExecution(id: number): Promise<void> {

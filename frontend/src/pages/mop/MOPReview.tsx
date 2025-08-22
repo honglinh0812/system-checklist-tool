@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePersistedState } from '../../hooks/usePersistedState';
-import { useModalState } from '../../utils/stateUtils';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
+import { useTranslation } from '../../i18n/useTranslation'
 
 interface Command {
   title: string;
@@ -21,6 +21,10 @@ interface MOP {
   files?: {
     pdf?: boolean;
     appendix?: boolean;
+    xlsx?: boolean;
+    xls?: boolean;
+    csv?: boolean;
+    txt?: boolean;
   };
   commands?: Command[];
 }
@@ -35,21 +39,13 @@ interface ApiResponse {
 }
 
 const MOPReview: React.FC = () => {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   
   // Persisted state management with unique keys for MOP Review
   const [pendingMops, setPendingMops] = usePersistedState<MOP[]>('review_pendingMops', [], { autoSave: true, autoSaveInterval: 30000 });
-  const [showDetailsModal, setShowDetailsModal] = useModalState(false);
-  const [showRejectModal, setShowRejectModal] = useModalState(false);
-  const [showFileModal, setShowFileModal] = useModalState(false);
-  const [showApproveModal, setShowApproveModal] = useModalState(false);
-  const [showSingleApproveModal, setShowSingleApproveModal] = useModalState(false);
   const [currentMop, setCurrentMop] = usePersistedState<MOP | null>('review_currentMop', null);
-  const [currentMopId, setCurrentMopId] = usePersistedState<string | null>('review_currentMopId', null);
-  const [rejectReason, setRejectReason] = usePersistedState<string>('review_rejectReason', '', { autoSave: true, debounceDelay: 1000 });
-  const [fileViewerTitle, setFileViewerTitle] = usePersistedState<string>('review_fileViewerTitle', '');
-  const [fileViewerContent, setFileViewerContent] = usePersistedState<string>('review_fileViewerContent', '');
   const [selectedMops, setSelectedMops] = usePersistedState<Set<string>>('review_selectedMops', new Set(), {
     serialize: (state: unknown) => {
       if (state instanceof Set) {
@@ -69,6 +65,17 @@ const MOPReview: React.FC = () => {
       }
     }
   });
+  
+  // Non-persisted modal states - should not be saved to localStorage
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showFileModal, setShowFileModal] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showSingleApproveModal, setShowSingleApproveModal] = useState(false);
+  const [currentMopId, setCurrentMopId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState<string>('');
+  const [fileViewerTitle, setFileViewerTitle] = useState<string>('');
+  const [fileViewerContent, setFileViewerContent] = useState<string>('');
   
   // Non-persisted states - loading và notifications
   const [loading, setLoading] = useState(true);
@@ -93,6 +100,12 @@ const MOPReview: React.FC = () => {
 
   useEffect(() => {
     fetchPendingMOPs();
+    
+    // Clear old persisted modal states that might cause conflicts
+    localStorage.removeItem('review_currentMopId');
+    localStorage.removeItem('review_rejectReason');
+    localStorage.removeItem('review_fileViewerTitle');
+    localStorage.removeItem('review_fileViewerContent');
   }, [fetchPendingMOPs]);
 
   useEffect(() => {
@@ -106,7 +119,11 @@ const MOPReview: React.FC = () => {
 
   const viewMOPDetails = async (mopId: string) => {
     setCurrentMopId(mopId);
+    // Reset all other modals
     setShowFileModal(false);
+    setShowApproveModal(false);
+    setShowRejectModal(false);
+    setShowSingleApproveModal(false);
     
     try {
       const data = await apiService.get<ApiResponse>(API_ENDPOINTS.MOPS.DETAIL(mopId));
@@ -114,44 +131,151 @@ const MOPReview: React.FC = () => {
         setCurrentMop(data.data as MOP);
         setShowDetailsModal(true);
       } else {
-        alert('Error loading MOP details');
+        showNotification('error', 'Error loading MOP details');
       }
     } catch (error) {
       console.error('Error loading MOP details:', error);
-      alert('Error loading MOP details');
+      showNotification('error', 'Error loading MOP details');
     }
   };
 
-  const viewMOPFile = (mopId: string, fileType: string) => {
+  const viewMOPFile = async (mopId: string, fileType: string) => {
+    // Reset all modals first
     setShowDetailsModal(false);
+    setShowApproveModal(false);
+    setShowRejectModal(false);
+    setShowSingleApproveModal(false);
     
-    const fileUrl = `/api/mops/${mopId}/files/${fileType}`;
     const title = (fileType?.toUpperCase() || 'Unknown') + ' File';
     
     let content = '';
     
     if (fileType === 'pdf') {
+      // Show loading first
       content = `
-        <div class="embed-responsive embed-responsive-16by9" style="height: 70vh;">
-          <iframe class="embed-responsive-item" src="${fileUrl}" allowfullscreen></iframe>
-        </div>
+        <div class="text-center py-5" style="height: 70vh;">
+            <div class="spinner-border text-primary" role="status">
+              <span class="sr-only">${t('loading')}</span>
+            </div>
+            <p class="mt-2 text-muted">${t('loadingPDF')}</p>
+          </div>
       `;
-    } else if (fileType === 'appendix') {
+      
+      setFileViewerTitle(title);
+      setFileViewerContent(content);
+      setShowFileModal(true);
+      
+      try {
+        // Use direct URL with authentication token as query parameter
+        const token = localStorage.getItem('token');
+        const pdfUrl = `/api/mops/${mopId}/files/${fileType}?token=${encodeURIComponent(token || '')}`;
+        
+        // Test if the URL is accessible
+        const testResponse = await fetch(pdfUrl, {
+          method: 'HEAD',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (testResponse.ok) {
+          content = `
+            <div style="height: 70vh; width: 100%;">
+              <object 
+                data="${pdfUrl}" 
+                type="application/pdf" 
+                width="100%" 
+                height="100%"
+                style="border: none;"
+              >
+                <div class="text-center py-5">
+                  <i class="fas fa-file-pdf fa-4x text-danger mb-3"></i>
+                  <h5>${t('pdfPreviewNotAvailable')}</h5>
+                  <p class="text-muted">${t('browserNotSupportPDF')}</p>
+                  <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+                    <i class="fas fa-external-link-alt mr-2"></i>${t('openInNewTab')}
+                  </a>
+                </div>
+              </object>
+            </div>
+          `;
+        } else {
+          content = `
+            <div class="text-center py-5">
+              <i class="fas fa-exclamation-triangle fa-4x text-danger mb-3"></i>
+              <h5>${t('failedToLoadPDF')}</h5>
+            <p class="text-muted">${t('error')}: ${testResponse.status} ${testResponse.statusText}</p>
+            <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+              <i class="fas fa-download mr-2"></i>${t('tryDownload')}
+            </a>
+            </div>
+          `;
+        }
+      } catch (error) {
+        console.error('Error loading PDF:', error);
+        const token = localStorage.getItem('token');
+        const pdfUrl = `/api/mops/${mopId}/files/${fileType}?token=${encodeURIComponent(token || '')}`;
+        content = `
+          <div class="text-center py-5">
+            <i class="fas fa-exclamation-triangle fa-4x text-danger mb-3"></i>
+            <h5>${t('failedToLoadPDF')}</h5>
+            <p class="text-muted">${t('networkErrorOccurred')}</p>
+            <a href="${pdfUrl}" class="btn btn-primary" target="_blank">
+              <i class="fas fa-download mr-2"></i>${t('tryDownload')}
+            </a>
+          </div>
+        `;
+      }
+      
+      setFileViewerContent(content);
+    } else if (['appendix', 'xlsx', 'xls', 'csv', 'txt'].includes(fileType)) {
+      let icon = 'fas fa-file fa-4x text-primary mb-3';
+      let description = 'This file cannot be previewed directly';
+      
+      if (fileType === 'xlsx' || fileType === 'xls') {
+        icon = 'fas fa-file-excel fa-4x text-success mb-3';
+        description = t('excelCannotPreview');
+      } else if (fileType === 'csv') {
+        icon = 'fas fa-file-csv fa-4x text-info mb-3';
+        description = t('csvCannotPreview');
+      } else if (fileType === 'txt') {
+        icon = 'fas fa-file-alt fa-4x text-secondary mb-3';
+        description = t('textCannotPreview');
+      } else if (fileType === 'appendix') {
+        icon = 'fas fa-file-excel fa-4x text-success mb-3';
+        description = t('appendixCannotPreview');
+      }
+      
       content = `
         <div class="text-center py-5">
-          <i class="fas fa-file-excel fa-4x text-success mb-3"></i>
-          <h5>Excel/CSV files cannot be previewed directly</h5>
-          <p>Please download the file to view its contents</p>
-          <a href="${fileUrl}" class="btn btn-primary" target="_blank">
-            <i class="fas fa-download mr-2"></i>Download File
+          <i class="${icon}"></i>
+          <h5>${description}</h5>
+          <p class="text-muted">${t('pleaseDownloadToView')}</p>
+          <a href="/api/mops/${mopId}/files/${fileType}?token=${encodeURIComponent(localStorage.getItem('token') || '')}" class="btn btn-primary" target="_blank">
+            <i class="fas fa-download mr-2"></i>${t('downloadFile')}
           </a>
         </div>
       `;
+      
+      setFileViewerTitle(title);
+      setFileViewerContent(content);
+      setShowFileModal(true);
+    } else {
+      content = `
+        <div class="text-center py-5">
+          <i class="fas fa-exclamation-triangle fa-4x text-warning mb-3"></i>
+          <h5>${t('unsupportedFileType')}</h5>
+          <p class="text-muted">${t('cannotPreviewFileType')}</p>
+          <a href="/api/mops/${mopId}/files/${fileType}?token=${encodeURIComponent(localStorage.getItem('token') || '')}" class="btn btn-primary" target="_blank">
+            <i class="fas fa-download mr-2"></i>${t('downloadFile')}
+          </a>
+        </div>
+      `;
+      
+      setFileViewerTitle(title);
+      setFileViewerContent(content);
+      setShowFileModal(true);
     }
-    
-    setFileViewerTitle(title);
-    setFileViewerContent(content);
-    setShowFileModal(true);
   };
 
   const handleSelectMop = (mopId: string, checked: boolean) => {
@@ -174,7 +298,7 @@ const MOPReview: React.FC = () => {
 
   const bulkApprove = () => {
     if (selectedMops.size === 0) {
-      showNotification('error', 'Vui lòng chọn ít nhất một MOP để phê duyệt');
+      showNotification('error', t('pleaseSelectAtLeastOneMOPToApprove'));
       return;
     }
     setShowApproveModal(true);
@@ -182,7 +306,7 @@ const MOPReview: React.FC = () => {
 
   const bulkReject = () => {
     if (selectedMops.size === 0) {
-      showNotification('error', 'Vui lòng chọn ít nhất một MOP để từ chối');
+      showNotification('error', t('pleaseSelectAtLeastOneMOPToReject'));
       return;
     }
     setShowRejectModal(true);
@@ -210,16 +334,16 @@ const MOPReview: React.FC = () => {
         fetchPendingMOPs();
         
         if (result.data.failed_mops && result.data.failed_mops.length > 0) {
-          showNotification('success', `Phê duyệt hoàn tất! ${result.data.approved_mops.length} MOP thành công, ${result.data.failed_mops.length} MOP thất bại.`);
+          showNotification('success', t('bulkApproveCompleteWithFailures', { approved: result.data.approved_mops.length, failed: result.data.failed_mops.length }));
         } else {
-          showNotification('success', `Đã phê duyệt thành công ${result.data.approved_mops.length} MOP!`);
+          showNotification('success', t('bulkApproveSuccess', { count: result.data.approved_mops.length }));
         }
       } else {
-        throw new Error(result.message || 'Bulk approve failed');
+        throw new Error(result.message || t('errorApprovingMOPs'));
       }
     } catch (error) {
       console.error('Error bulk approving MOPs:', error);
-      showNotification('error', 'Có lỗi xảy ra khi phê duyệt MOPs!');
+      showNotification('error', t('errorApprovingMOPs'));
     } finally {
       setShowApproveModal(false);
     }
@@ -236,14 +360,14 @@ const MOPReview: React.FC = () => {
     try {
       const data = await apiService.post<ApiResponse>(`/api/mops/${currentMopId}/approve`, {});
       if (data.success) {
-        showNotification('success', 'MOP đã được phê duyệt thành công');
+        showNotification('success', t('mopApprovedSuccessfully'));
         fetchPendingMOPs();
       } else {
-        showNotification('error', data.error || 'Không thể phê duyệt MOP');
+        showNotification('error', data.error || t('cannotApproveMOP'));
       }
     } catch (error) {
       console.error('Error approving MOP:', error);
-      showNotification('error', 'Lỗi khi phê duyệt MOP');
+      showNotification('error', t('errorApprovingMOP'));
     } finally {
       setShowSingleApproveModal(false);
       setCurrentMopId(null);
@@ -269,7 +393,7 @@ const MOPReview: React.FC = () => {
 
   const confirmReject = async () => {
     if (!rejectReason.trim()) {
-      showNotification('error', 'Vui lòng nhập lý do từ chối');
+      showNotification('error', t('pleaseEnterRejectReason'));
       return;
     }
     
@@ -277,7 +401,7 @@ const MOPReview: React.FC = () => {
       const mopsToReject = selectedMops.size > 0 ? Array.from(selectedMops) : (currentMopId ? [currentMopId] : []);
       
       if (mopsToReject.length === 0) {
-        showNotification('error', 'Không có MOP nào được chọn để từ chối');
+        showNotification('error', t('noMOPSelectedToReject'));
         return;
       }
       
@@ -292,15 +416,15 @@ const MOPReview: React.FC = () => {
       const failCount = results.length - successCount;
       
       if (successCount > 0) {
-        showNotification('success', `Đã từ chối thành công ${successCount} MOP${failCount > 0 ? `, ${failCount} MOP thất bại` : ''}`);
+        showNotification('success', t('rejectSuccess', { success: successCount, fail: failCount }));
         setSelectedMops(new Set());
         fetchPendingMOPs();
       } else {
-        showNotification('error', 'Không thể từ chối MOP nào');
+        showNotification('error', t('cannotRejectAnyMOP'));
       }
     } catch (error) {
       console.error('Error rejecting MOP:', error);
-      showNotification('error', 'Lỗi khi từ chối MOP');
+      showNotification('error', t('errorRejectingMOP'));
     } finally {
       setShowRejectModal(false);
       setRejectReason('');
@@ -310,7 +434,12 @@ const MOPReview: React.FC = () => {
 
   const closeFileModal = () => {
     setShowFileModal(false);
-    setShowDetailsModal(true);
+    setFileViewerTitle('');
+    setFileViewerContent('');
+    // Reopen details modal if we have a current MOP
+    if (currentMop) {
+      setShowDetailsModal(true);
+    }
   };
 
 
@@ -359,11 +488,11 @@ const MOPReview: React.FC = () => {
         <div className="container-fluid">
           <div className="row mb-2">
             <div className="col-sm-6">
-              <h1 className="m-0">MOP Review</h1>
+              <h1 className="m-0">{t('mopReview')}</h1>
             </div>
             <div className="col-sm-6">
               <ol className="breadcrumb float-sm-right">
-                <li className="breadcrumb-item active">MOP Review</li>
+                <li className="breadcrumb-item active">{t('mopReview')}</li>
               </ol>
             </div>
           </div>
@@ -379,7 +508,7 @@ const MOPReview: React.FC = () => {
                 <div className="card-header">
                   <h3 className="card-title">
                     <i className="fas fa-eye mr-2"></i>
-                    Pending MOP Reviews
+                    {t('pendingMOPReviews')}
                   </h3>
                   {pendingMops.length > 0 && (
                     <div className="card-tools">
@@ -390,7 +519,7 @@ const MOPReview: React.FC = () => {
                           disabled={selectedMops.size === 0}
                         >
                           <i className="fas fa-check mr-1"></i>
-                          Bulk Approve ({selectedMops.size})
+                          {t('bulkApprove')} ({selectedMops.size})
                         </button>
                         <button 
                           className="btn btn-danger btn-sm" 
@@ -398,7 +527,7 @@ const MOPReview: React.FC = () => {
                           disabled={selectedMops.size === 0}
                         >
                           <i className="fas fa-times mr-1"></i>
-                          Bulk Reject ({selectedMops.size})
+                          {t('bulkReject')} ({selectedMops.size})
                         </button>
                       </div>
                     </div>
@@ -408,7 +537,7 @@ const MOPReview: React.FC = () => {
                   {loading ? (
                     <div className="text-center py-4">
                       <i className="fas fa-spinner fa-spin fa-3x text-muted mb-3"></i>
-                      <h5 className="text-muted">Loading pending MOPs...</h5>
+                      <h5 className="text-muted">{t('loadingPendingMOPs')}</h5>
                     </div>
                   ) : pendingMops.length > 0 ? (
                     <div className="table-responsive">
@@ -427,13 +556,13 @@ const MOPReview: React.FC = () => {
                                 <label className="custom-control-label" htmlFor="selectAll"></label>
                               </div>
                             </th>
-                            <th>MOP ID</th>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>Submitted By</th>
-                            <th>Submitted Date</th>
-                            <th>Files</th>
-                            <th>Actions</th>
+                            <th>{t('mopID')}</th>
+                            <th>{t('name')}</th>
+                            <th>{t('type')}</th>
+                            <th>{t('submittedBy')}</th>
+                            <th>{t('submittedDate')}</th>
+                            <th>{t('files')}</th>
+                            <th>{t('actions')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -466,19 +595,19 @@ const MOPReview: React.FC = () => {
                                     className="btn btn-sm btn-info" 
                                     onClick={() => viewMOPDetails(mop.id)}
                                   >
-                                    <i className="fas fa-eye mr-1"></i>View
+                                    <i className="fas fa-eye mr-1"></i>{t('view')}
                                   </button>
                                   <button 
                                     className="btn btn-sm btn-success" 
                                     onClick={() => approveMOPForEdit(mop.id)}
                                   >
-                                    <i className="fas fa-edit mr-1"></i>Approve for Edit
+                                    <i className="fas fa-edit mr-1"></i>{t('approveForEdit')}
                                   </button>
                                   <button 
                                     className="btn btn-sm btn-danger" 
                                     onClick={() => rejectMOP(mop.id)}
                                   >
-                                    <i className="fas fa-times mr-1"></i>Reject
+                                    <i className="fas fa-times mr-1"></i>{t('reject')}
                                   </button>
                                 </div>
                               </td>
@@ -490,8 +619,8 @@ const MOPReview: React.FC = () => {
                   ) : (
                     <div className="text-center py-4">
                       <i className="fas fa-inbox fa-3x text-muted mb-3"></i>
-                      <h5 className="text-muted">No Pending MOPs</h5>
-                      <p className="text-muted">All submitted MOPs have been reviewed.</p>
+                      <h5 className="text-muted">{t('noPendingMOPs')}</h5>
+                      <p className="text-muted">{t('allMOPsReviewed')}</p>
                     </div>
                   )}
                 </div>
@@ -507,54 +636,54 @@ const MOPReview: React.FC = () => {
           <div className="modal-dialog modal-xl">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">MOP Details</h5>
+                <h5 className="modal-title">{t('mopDetails')}</h5>
                 <button type="button" className="close" onClick={() => setShowDetailsModal(false)}>
                   <span aria-hidden="true">&times;</span>
                 </button>
               </div>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                 <div className="row">
                   <div className="col-md-6">
-                    <h6><strong>MOP Information:</strong></h6>
+                    <h6><strong>{t('mopInformation')}:</strong></h6>
                     <table className="table table-sm">
                       <tbody>
-                        <tr><td><strong>ID:</strong></td><td>{currentMop.id}</td></tr>
-                        <tr><td><strong>Name:</strong></td><td>{currentMop.name}</td></tr>
-                        <tr><td><strong>Status:</strong></td><td><span className="badge badge-warning">{currentMop.status}</span></td></tr>
-                        <tr><td><strong>Created:</strong></td><td>{new Date(currentMop.created_at).toLocaleString()}</td></tr>
+                        <tr><td><strong>{t('id')}:</strong></td><td>{currentMop.id}</td></tr>
+                        <tr><td><strong>{t('name')}:</strong></td><td>{currentMop.name}</td></tr>
+                        <tr><td><strong>{t('status')}:</strong></td><td><span className="badge badge-warning">{currentMop.status}</span></td></tr>
+                        <tr><td><strong>{t('created')}:</strong></td><td>{new Date(currentMop.created_at).toLocaleString()}</td></tr>
                       </tbody>
                     </table>
                   </div>
                   <div className="col-md-6">
-                    <h6><strong>Files:</strong></h6>
+                    <h6><strong>{t('files')}:</strong></h6>
                     <ul className="list-unstyled">
-                      {currentMop.files && (currentMop.files.pdf || currentMop.files.appendix) ? (
+                      {currentMop.files && (currentMop.files.pdf || currentMop.files.appendix || currentMop.files.xlsx || currentMop.files.xls || currentMop.files.csv || currentMop.files.txt) ? (
                         <>
                           {currentMop.files.pdf && (
                             <li className="mb-2">
                               <i className="fas fa-file-pdf mr-2"></i>
-                              PDF File
+                              {t('pdfFile')}
                               {isAdmin && (
                                 <div className="btn-group btn-group-sm ml-2">
                                   <button 
                                     className="btn btn-sm btn-outline-primary" 
                                     onClick={() => viewMOPFile(currentMop.id, 'pdf')}
                                   >
-                                    <i className="fas fa-eye mr-1"></i>View
+                                    <i className="fas fa-eye mr-1"></i>{t('view')}
                                   </button>
                                   <a 
-                                    href={`/api/mops/${currentMop.id}/files/pdf`} 
+                                    href={`/api/mops/${currentMop.id}/files/pdf?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
                                     className="btn btn-sm btn-outline-secondary" 
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
-                                    <i className="fas fa-download mr-1"></i>Download
+                                    <i className="fas fa-download mr-1"></i>{t('download')}
                                   </a>
                                 </div>
                               )}
                               {!isAdmin && (
                                 <a 
-                                  href={`/api/mops/${currentMop.id}/files/pdf`} 
+                                  href={`/api/mops/${currentMop.id}/files/pdf?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
                                   className="btn btn-sm btn-outline-secondary ml-2"
                                   target="_blank"
                                   rel="noopener noreferrer"
@@ -567,7 +696,7 @@ const MOPReview: React.FC = () => {
                           {currentMop.files.appendix && (
                             <li className="mb-2">
                               <i className="fas fa-file-csv mr-2"></i>
-                              Appendix File (CSV)
+                              {t('appendixFile')}
                               {isAdmin && (
                                 <div className="btn-group btn-group-sm ml-2">
                                   <button 
@@ -577,7 +706,7 @@ const MOPReview: React.FC = () => {
                                     <i className="fas fa-eye mr-1"></i>View
                                   </button>
                                   <a 
-                                    href={`/api/mops/${currentMop.id}/files/appendix`} 
+                                    href={`/api/mops/${currentMop.id}/files/appendix?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
                                     className="btn btn-sm btn-outline-secondary" 
                                     target="_blank"
                                     rel="noopener noreferrer"
@@ -588,7 +717,143 @@ const MOPReview: React.FC = () => {
                               )}
                               {!isAdmin && (
                                 <a 
-                                  href={`/api/mops/${currentMop.id}/files/appendix`} 
+                                  href={`/api/mops/${currentMop.id}/files/appendix?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                  className="btn btn-sm btn-outline-secondary ml-2"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <i className="fas fa-download mr-1"></i>Download
+                                </a>
+                              )}
+                            </li>
+                          )}
+                          {currentMop.files.xlsx && (
+                            <li className="mb-2">
+                              <i className="fas fa-file-excel mr-2"></i>
+                              Excel File (XLSX)
+                              {isAdmin && (
+                                <div className="btn-group btn-group-sm ml-2">
+                                  <button 
+                                    className="btn btn-sm btn-outline-primary" 
+                                    onClick={() => viewMOPFile(currentMop.id, 'xlsx')}
+                                  >
+                                    <i className="fas fa-eye mr-1"></i>View
+                                  </button>
+                                  <a 
+                                    href={`/api/mops/${currentMop.id}/files/xlsx?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                    className="btn btn-sm btn-outline-secondary" 
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <i className="fas fa-download mr-1"></i>Download
+                                  </a>
+                                </div>
+                              )}
+                              {!isAdmin && (
+                                <a 
+                                  href={`/api/mops/${currentMop.id}/files/xlsx?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                  className="btn btn-sm btn-outline-secondary ml-2"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <i className="fas fa-download mr-1"></i>Download
+                                </a>
+                              )}
+                            </li>
+                          )}
+                          {currentMop.files.xls && (
+                            <li className="mb-2">
+                              <i className="fas fa-file-excel mr-2"></i>
+                              Excel File (XLS)
+                              {isAdmin && (
+                                <div className="btn-group btn-group-sm ml-2">
+                                  <button 
+                                    className="btn btn-sm btn-outline-primary" 
+                                    onClick={() => viewMOPFile(currentMop.id, 'xls')}
+                                  >
+                                    <i className="fas fa-eye mr-1"></i>View
+                                  </button>
+                                  <a 
+                                    href={`/api/mops/${currentMop.id}/files/xls?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                    className="btn btn-sm btn-outline-secondary" 
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <i className="fas fa-download mr-1"></i>Download
+                                  </a>
+                                </div>
+                              )}
+                              {!isAdmin && (
+                                <a 
+                                  href={`/api/mops/${currentMop.id}/files/xls?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                  className="btn btn-sm btn-outline-secondary ml-2"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <i className="fas fa-download mr-1"></i>Download
+                                </a>
+                              )}
+                            </li>
+                          )}
+                          {currentMop.files.csv && (
+                            <li className="mb-2">
+                              <i className="fas fa-file-csv mr-2"></i>
+                              CSV File
+                              {isAdmin && (
+                                <div className="btn-group btn-group-sm ml-2">
+                                  <button 
+                                    className="btn btn-sm btn-outline-primary" 
+                                    onClick={() => viewMOPFile(currentMop.id, 'csv')}
+                                  >
+                                    <i className="fas fa-eye mr-1"></i>View
+                                  </button>
+                                  <a 
+                                    href={`/api/mops/${currentMop.id}/files/csv?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                    className="btn btn-sm btn-outline-secondary" 
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <i className="fas fa-download mr-1"></i>Download
+                                  </a>
+                                </div>
+                              )}
+                              {!isAdmin && (
+                                <a 
+                                  href={`/api/mops/${currentMop.id}/files/csv?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                  className="btn btn-sm btn-outline-secondary ml-2"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <i className="fas fa-download mr-1"></i>Download
+                                </a>
+                              )}
+                            </li>
+                          )}
+                          {currentMop.files.txt && (
+                            <li className="mb-2">
+                              <i className="fas fa-file-alt mr-2"></i>
+                              Text File
+                              {isAdmin && (
+                                <div className="btn-group btn-group-sm ml-2">
+                                  <button 
+                                    className="btn btn-sm btn-outline-primary" 
+                                    onClick={() => viewMOPFile(currentMop.id, 'txt')}
+                                  >
+                                    <i className="fas fa-eye mr-1"></i>View
+                                  </button>
+                                  <a 
+                                    href={`/api/mops/${currentMop.id}/files/txt?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
+                                    className="btn btn-sm btn-outline-secondary" 
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <i className="fas fa-download mr-1"></i>Download
+                                  </a>
+                                </div>
+                              )}
+                              {!isAdmin && (
+                                <a 
+                                  href={`/api/mops/${currentMop.id}/files/txt?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
                                   className="btn btn-sm btn-outline-secondary ml-2"
                                   target="_blank"
                                   rel="noopener noreferrer"
@@ -600,7 +865,7 @@ const MOPReview: React.FC = () => {
                           )}
                         </>
                       ) : (
-                        <li>No files</li>
+                        <li>{t('noFiles')}</li>
                       )}
                     </ul>
                   </div>
@@ -609,7 +874,7 @@ const MOPReview: React.FC = () => {
                 {currentMop.commands && currentMop.commands.length > 0 && (
                   <div className="row mt-3">
                     <div className="col-md-12">
-                      <h6><strong>Commands:</strong></h6>
+                      <h6><strong>{t('commands')}:</strong></h6>
                       <div className="table-responsive">
                         <table className="table table-sm">
                           <thead className="thead-dark">
@@ -637,12 +902,12 @@ const MOPReview: React.FC = () => {
                 )}
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowDetailsModal(false)}>Close</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowDetailsModal(false)}>{t('close')}</button>
                 <button type="button" className="btn btn-success" onClick={approveCurrentMOPForEdit}>
-                  <i className="fas fa-edit mr-2"></i>Approve for Edit
+                  <i className="fas fa-edit mr-2"></i>{t('approveForEdit')}
                 </button>
                 <button type="button" className="btn btn-danger" onClick={rejectCurrentMOP}>
-                  <i className="fas fa-times mr-2"></i>Reject
+                  <i className="fas fa-times mr-2"></i>{t('reject')}
                 </button>
               </div>
             </div>
@@ -656,19 +921,19 @@ const MOPReview: React.FC = () => {
           <div className="modal-dialog">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Xác nhận phê duyệt MOP</h5>
+                <h5 className="modal-title">{t('confirmMOPApproval')}</h5>
                 <button type="button" className="close" onClick={() => setShowSingleApproveModal(false)}>
                   <span aria-hidden="true">&times;</span>
                 </button>
               </div>
               <div className="modal-body">
-                <p>Bạn có chắc chắn muốn phê duyệt MOP này không?</p>
-                <p className="text-muted">MOP sẽ được chuyển sang trạng thái "approved" và có thể chỉnh sửa.</p>
+                <p>{t('confirmApprovalQuestion')}</p>
+                <p className="text-muted">{t('mopWillBeApproved')}</p>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowSingleApproveModal(false)}>Hủy</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowSingleApproveModal(false)}>{t('cancel')}</button>
                 <button type="button" className="btn btn-success" onClick={confirmSingleApprove}>
-                  <i className="fas fa-check mr-2"></i>Phê duyệt MOP
+                  <i className="fas fa-check mr-2"></i>{t('approveMOP')}
                 </button>
               </div>
             </div>
@@ -682,20 +947,20 @@ const MOPReview: React.FC = () => {
           <div className="modal-dialog">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Confirm Bulk Approval</h5>
+                <h5 className="modal-title">{t('confirmBulkApproval')}</h5>
                 <button type="button" className="close" onClick={() => setShowApproveModal(false)}>
                   <span aria-hidden="true">&times;</span>
                 </button>
               </div>
               <div className="modal-body">
-                <p>Bạn có chắc chắn muốn phê duyệt <strong>{selectedMops.size}</strong> MOP đã chọn?</p>
-                <p className="text-muted">Các MOP này sẽ được chuyển sang trạng thái "approved" và có thể chỉnh sửa.</p>
-                <p className="text-warning"><strong>Lưu ý:</strong> Bulk approve sẽ sử dụng thông tin mặc định. Để thiết lập thông tin chi tiết, vui lòng phê duyệt từng MOP riêng lẻ.</p>
+                <p>{t('confirmBulkApprovalQuestion', { count: selectedMops.size })}</p>
+                <p className="text-muted">{t('mopsWillBeApproved')}</p>
+                <p className="text-warning"><strong>{t('note')}:</strong> {t('bulkApproveNote')}</p>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowApproveModal(false)}>Hủy</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowApproveModal(false)}>{t('cancel')}</button>
                 <button type="button" className="btn btn-success" onClick={confirmBulkApprove}>
-                  <i className="fas fa-check mr-2"></i>Phê duyệt
+                  <i className="fas fa-check mr-2"></i>{t('approve')}
                 </button>
               </div>
             </div>
@@ -710,7 +975,7 @@ const MOPReview: React.FC = () => {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">
-                  {selectedMops.size > 0 ? `Reject ${selectedMops.size} MOPs` : 'Reject MOP'}
+                  {selectedMops.size > 0 ? t('rejectMOPs', { count: selectedMops.size }) : t('rejectMOP')}
                 </h5>
                 <button type="button" className="close" onClick={() => setShowRejectModal(false)}>
                   <span aria-hidden="true">&times;</span>
@@ -718,21 +983,21 @@ const MOPReview: React.FC = () => {
               </div>
               <div className="modal-body">
                 <div className="form-group">
-                  <label htmlFor="rejectReason"><strong>Rejection Reason:</strong></label>
+                  <label htmlFor="rejectReason"><strong>{t('rejectionReason')}:</strong></label>
                   <textarea 
                     className="form-control" 
                     id="rejectReason" 
                     rows={4} 
-                    placeholder="Please provide a reason for rejection..."
+                    placeholder={t('pleaseProvideRejectReason')}
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                   />
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>Cancel</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowRejectModal(false)}>{t('cancel')}</button>
                 <button type="button" className="btn btn-danger" onClick={confirmReject}>
-                  <i className="fas fa-times mr-2"></i>Reject MOP{selectedMops.size > 1 ? 's' : ''}
+                  <i className="fas fa-times mr-2"></i>{selectedMops.size > 1 ? t('rejectMOPs', { count: selectedMops.size }) : t('rejectMOP')}
                 </button>
               </div>
             </div>
@@ -755,7 +1020,7 @@ const MOPReview: React.FC = () => {
                 <div dangerouslySetInnerHTML={{ __html: fileViewerContent }} />
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={closeFileModal}>Close</button>
+                <button type="button" className="btn btn-secondary" onClick={closeFileModal}>{t('close')}</button>
               </div>
             </div>
           </div>

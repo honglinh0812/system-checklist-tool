@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { Link } from 'react-router-dom';
+import { useTranslation } from '../../i18n/useTranslation';
 import ErrorMessage from '../../components/common/ErrorMessage';
 import type { RegisterCredentials } from '../../types/auth';
 
 const Register: React.FC = () => {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState<RegisterCredentials>({
     username: '',
     email: '',
@@ -28,11 +30,11 @@ const Register: React.FC = () => {
 
   const validateForm = (): boolean => {
     if (formData.password !== formData.confirm_password) {
-      setError('Passwords do not match');
+      setError(t('passwordsDoNotMatch'));
       return false;
     }
     if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters long');
+      setError(t('passwordMinLengthError'));
       return false;
     }
     return true;
@@ -51,7 +53,7 @@ const Register: React.FC = () => {
 
     try {
       const response = await register(formData);
-      setSuccess(response.message || 'Registration successful! Please wait for admin approval.');
+      setSuccess(response.message || t('registrationSuccessful'));
       setFormData({
         username: '',
         email: '',
@@ -60,7 +62,7 @@ const Register: React.FC = () => {
         confirm_password: ''
       });
     } catch (err: any) {
-      setError(err.message || 'Registration failed');
+      setError(err.message || t('registrationFailed'));
     } finally {
       setLoading(false);
     }
@@ -72,11 +74,11 @@ const Register: React.FC = () => {
         <div className="card card-outline card-primary">
           <div className="card-header text-center">
             <a href="#" className="h1">
-              <i className="fas fa-clipboard-check"></i> System Checklist
+              <i className="fas fa-clipboard-check"></i> {t('systemChecklist')}
             </a>
           </div>
           <div className="card-body">
-            <p className="login-box-msg">Register a new account</p>
+            <p className="login-box-msg">{t('registerNewAccount')}</p>
 
             {error && (
               <ErrorMessage
@@ -102,7 +104,7 @@ const Register: React.FC = () => {
                   type="text" 
                   name="full_name" 
                   className="form-control" 
-                  placeholder="Full Name" 
+                  placeholder={t('fullNamePlaceholder')} 
                   value={formData.full_name}
                   onChange={handleInputChange}
                   required 
@@ -119,7 +121,7 @@ const Register: React.FC = () => {
                   type="text" 
                   name="username" 
                   className="form-control" 
-                  placeholder="Username" 
+                  placeholder={t('usernamePlaceholder')} 
                   value={formData.username}
                   onChange={handleInputChange}
                   required 
@@ -136,7 +138,7 @@ const Register: React.FC = () => {
                   type="email" 
                   name="email" 
                   className="form-control" 
-                  placeholder="Email" 
+                  placeholder={t('emailPlaceholder')} 
                   value={formData.email}
                   onChange={handleInputChange}
                   required 
@@ -153,7 +155,7 @@ const Register: React.FC = () => {
                   type="password" 
                   name="password" 
                   className="form-control" 
-                  placeholder="Password" 
+                  placeholder={t('passwordPlaceholder')} 
                   value={formData.password}
                   onChange={handleInputChange}
                   required 
@@ -170,7 +172,7 @@ const Register: React.FC = () => {
                   type="password" 
                   name="confirm_password" 
                   className="form-control" 
-                  placeholder="Confirm Password" 
+                  placeholder={t('confirmPasswordPlaceholder')} 
                   value={formData.confirm_password}
                   onChange={handleInputChange}
                   required 
@@ -185,7 +187,7 @@ const Register: React.FC = () => {
               <div className="row">
                 <div className="col-8">
                   <div className="text-muted small">
-                    By registering, you agree that your account will be reviewed by an administrator before activation.
+                    {t('registrationAgreement')}
                   </div>
                 </div>
                 <div className="col-4">
@@ -197,10 +199,10 @@ const Register: React.FC = () => {
                     {loading ? (
                       <>
                         <i className="fas fa-spinner fa-spin mr-2"></i>
-                        Registering...
+                        {t('registering')}
                       </>
                     ) : (
-                      'Register'
+                      t('register')
                     )}
                   </button>
                 </div>
@@ -209,7 +211,7 @@ const Register: React.FC = () => {
 
             <div className="text-center mt-3">
               <Link to="/login" className="text-center">
-                Already have an account? Sign in
+                {t('alreadyHaveAccount')}
               </Link>
             </div>
           </div>

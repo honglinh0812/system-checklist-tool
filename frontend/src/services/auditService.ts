@@ -54,6 +54,8 @@ export interface AuditLogFilters {
   resource_id?: number;
   start_date?: string;
   end_date?: string;
+  mop_name?: string;
+  status?: string;
 }
 
 export const auditService = {

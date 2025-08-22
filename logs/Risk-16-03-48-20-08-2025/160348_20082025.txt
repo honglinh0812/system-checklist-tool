@@ -1,0 +1,34 @@
+Job ID: localhost_test_160348_20082025_risk
+Timestamp: 160348_20082025
+Commands: 3
+Servers: 1
+Return Code: 0
+Localhost servers: 1 (user privileges)
+==================================================
+
+Server: localhost
+------------------------------
+
+Command 1: Test Echo Active
+Command: echo "Active"
+Return Code: 0
+Success: True
+Output:
+Active
+--------------------
+
+Command 2: Test Echo Running
+Command: echo "Running"
+Return Code: 0
+Success: True
+Output:
+Running
+--------------------
+
+Command 3: Test Echo Different
+Command: echo "Different"
+Return Code: 0
+Success: True
+Output:
+Different
+--------------------

@@ -1,28 +1,35 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from . import db
 from sqlalchemy.dialects.postgresql import JSON
 import enum
 
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
+
+def get_gmt_plus_7_now():
+    return datetime.now(GMT_PLUS_7)
+
 class ActionType(enum.Enum):
-    CREATE = 'create'
-    UPDATE = 'update'
-    DELETE = 'delete'
-    APPROVE = 'approve'
-    REJECT = 'reject'
-    SUBMIT = 'submit'
-    LOGIN = 'login'
-    LOGOUT = 'logout'
-    EXECUTE = 'execute'
-    UPLOAD = 'upload'
-    DOWNLOAD = 'download'
+    CREATE = 'CREATE'
+    UPDATE = 'UPDATE'
+    DELETE = 'DELETE'
+    APPROVE = 'APPROVE'
+    REJECT = 'REJECT'
+    SUBMIT = 'SUBMIT'
+    LOGIN = 'LOGIN'
+    LOGOUT = 'LOGOUT'
+    EXECUTE = 'EXECUTE'
+    UPLOAD = 'UPLOAD'
+    DOWNLOAD = 'DOWNLOAD'
 
 class ResourceType(enum.Enum):
-    MOP = 'mop'
-    COMMAND = 'command'
-    USER = 'user'
-    EXECUTION = 'execution'
-    FILE = 'file'
-    SYSTEM = 'system'
+    MOP = 'MOP'
+    COMMAND = 'COMMAND'
+    USER = 'USER'
+    EXECUTION = 'EXECUTION'
+    FILE = 'FILE'
+    SYSTEM = 'SYSTEM'
+    ASSESSMENT = 'ASSESSMENT'
 
 class UserActivityLog(db.Model):
     __tablename__ = 'user_activity_logs'
@@ -37,7 +44,7 @@ class UserActivityLog(db.Model):
     details = db.Column(JSON, nullable=True)  # Additional details in JSON format
     ip_address = db.Column(db.String(45), nullable=True)  # IPv4/IPv6 address
     user_agent = db.Column(db.Text, nullable=True)  # Browser/client info
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=get_gmt_plus_7_now, nullable=False)
     
     # Relationships
     user = db.relationship('User', backref='activity_logs')
@@ -82,7 +89,7 @@ class UserActivityLog(db.Model):
     @classmethod
     def cleanup_old_logs(cls, days_to_keep=365):
         """Clean up logs older than specified days (default 1 year)"""
-        cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
+        cutoff_date = datetime.now(GMT_PLUS_7) - timedelta(days=days_to_keep)
         old_logs = cls.query.filter(cls.created_at < cutoff_date)
         count = old_logs.count()
         old_logs.delete()

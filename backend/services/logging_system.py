@@ -1,10 +1,13 @@
 import logging
 import logging.handlers
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional
 import json
 from pathlib import Path
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 
 class LoggingSystem:
     def __init__(self, log_dir: str = "logs"):
@@ -133,7 +136,7 @@ class LoggingSystem:
             validation_details: Additional validation details
         """
         log_data = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat(),
             'server_ip': server_ip,
             'command': command,
             'output': output,
@@ -166,7 +169,7 @@ class LoggingSystem:
             server_results: List of server results
         """
         log_data = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat(),
             'mop_id': mop_id,
             'mop_name': mop_name,
             'execution_type': execution_type,
@@ -186,7 +189,7 @@ class LoggingSystem:
                            servers: List[str], commands: List[str], executed_by: str):
         """Log execution start"""
         log_data = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat(),
             'event': 'execution_start',
             'mop_id': mop_id,
             'mop_name': mop_name,
@@ -202,7 +205,7 @@ class LoggingSystem:
                          total_time: float, success_rate: float, executed_by: str):
         """Log execution end"""
         log_data = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat(),
             'event': 'execution_end',
             'mop_id': mop_id,
             'mop_name': mop_name,
@@ -218,7 +221,7 @@ class LoggingSystem:
                   server_ip: str = None, command: str = None):
         """Log error information"""
         log_data = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat(),
             'error_type': error_type,
             'error_message': error_message,
             'context': context or {},
@@ -232,7 +235,7 @@ class LoggingSystem:
                        resource_type: str, resource_id: int = None, details: Dict = None):
         """Log user actions for audit trail"""
         log_data = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat(),
             'user_id': user_id,
             'username': username,
             'action': action,
@@ -339,7 +342,7 @@ class LoggingSystem:
         export_dir.mkdir(exist_ok=True)
         
         # Export filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
         export_file = export_dir / f"{log_type}_export_{timestamp}.txt"
         
         try:

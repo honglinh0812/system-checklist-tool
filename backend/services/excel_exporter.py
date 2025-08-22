@@ -2,9 +2,13 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
-from datetime import datetime
-from typing import Dict, List, Any
+from datetime import datetime, timezone, timedelta
+import os
 import logging
+from typing import Dict, List, Any, Optional
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,7 @@ class ExcelExporter:
         """
         try:
             if not filename:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
                 filename = f"execution_results_{timestamp}.xlsx"
             
             # Create workbook and worksheets
@@ -399,7 +403,7 @@ class ExcelExporter:
         """
         try:
             if not filename:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
                 filename = f"mop_template_{timestamp}.xlsx"
             
             wb = openpyxl.Workbook()
@@ -493,7 +497,7 @@ class ExcelExporter:
         """
         try:
             if not filename:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
                 filename = f"user_report_{timestamp}.xlsx"
             
             wb = openpyxl.Workbook()

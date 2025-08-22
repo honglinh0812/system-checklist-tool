@@ -1,7 +1,10 @@
 from flask import Blueprint, request, send_file, current_app
 from flask_jwt_extended import jwt_required
 from sqlalchemy import desc, func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 from models.mop import MOP
 from models.execution import ExecutionHistory
 from models.report import RiskReport
@@ -14,6 +17,8 @@ from .api_utils import (
 )
 from core.auth import get_current_user
 from services.ansible_manager import AnsibleRunner
+from utils.audit_logger import log_user_activity
+from models.audit_log import ActionType, ResourceType
 import logging
 import os
 import tempfile
@@ -202,7 +207,7 @@ def generate_risk_report():
         risk_report = RiskReport(
             report_type=report_type,
             generated_by=current_user.id,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(GMT_PLUS_7),
             parameters={
                 'date_from': date_from,
                 'date_to': date_to,
@@ -384,7 +389,7 @@ def test_risk_connection():
                 'command': 'echo "Connection test successful"'
             }]
             
-            timestamp = datetime.now().strftime("%H%M%S_%d%m%Y")
+            timestamp = datetime.now(GMT_PLUS_7).strftime("%H%M%S_%d%m%Y")
             job_id = f"risk_test_{timestamp}_{index}"
             
             try:
@@ -516,7 +521,7 @@ def start_risk_assessment():
                     
                     logger.info(f"Starting real assessment with job_id: {job_id}")
                     logger.info(f"Starting ansible playbook with job_id: {job_id}, commands: {len(commands)}, servers: {len(ansible_servers)}")
-                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp)
+                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp, execution_id=assessment.id, assessment_type="Risk")
                     logger.info(f"Ansible playbook started for assessment {assessment.id}")
                     
                     # Wait for completion and get results
@@ -546,34 +551,35 @@ def start_risk_assessment():
                     else:
                         logger.warning(f"No logs retrieved for job_id: {job_id}")
                     
-                    if results:
+                    if results and 'servers' in results:
                         # Convert ansible results to assessment format
                         test_results = []
                         for server_ip, server_result in results['servers'].items():
-                            for cmd_idx, cmd_result in enumerate(server_result['commands']):
-                                test_results.append({
-                                    'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
-                                    'command_index': cmd_idx,
-                                    'server_ip': server_ip,
-                                    'command_text': cmd_result['command'],
-                                    'result': 'success' if cmd_result['success'] else 'failed',
-                                    'output': cmd_result['output'],
-                                    'reference_value': cmd_result['expected']
-                                })
+                            if 'commands' in server_result:
+                                for cmd_idx, cmd_result in enumerate(server_result['commands']):
+                                    test_results.append({
+                                        'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
+                                        'command_index': cmd_idx,
+                                        'server_ip': server_ip,
+                                        'command_text': cmd_result['command'],
+                                        'result': 'success' if cmd_result['success'] else 'failed',
+                                        'output': cmd_result['output'],
+                                        'reference_value': cmd_result['expected']
+                                    })
                         
                         # Update assessment with results
                         assessment_obj.test_results = test_results
                         assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'completed'
-                        assessment_obj.completed_at = datetime.utcnow()
+                        assessment_obj.status = 'success'
+                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
                         db.session.commit()
                         logger.info(f"Assessment {assessment.id} completed successfully")
                     else:
                         # Even if no results, save the logs for debugging
                         assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'failed'
+                        assessment_obj.status = 'fail'
                         assessment_obj.error_message = "No results returned from ansible"
-                        assessment_obj.completed_at = datetime.utcnow()
+                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
                         db.session.commit()
                         logger.error(f"Assessment {assessment.id} failed: No results returned from ansible")
                         
@@ -584,17 +590,18 @@ def start_risk_assessment():
                         
                         # Try to get logs even when there's an error
                         execution_logs = ""
-                        try:
-                            logs_data = ansible_runner.get_job_logs(job_id)
-                            if logs_data and logs_data.get('log_content'):
-                                execution_logs = logs_data['log_content']
-                        except:
-                            pass
+                        if 'job_id' in locals():
+                            try:
+                                logs_data = ansible_runner.get_job_logs(job_id)
+                                if logs_data and logs_data.get('log_content'):
+                                    execution_logs = logs_data['log_content']
+                            except:
+                                pass
                         
-                        assessment_obj.status = 'failed'
+                        assessment_obj.status = 'fail'
                         assessment_obj.error_message = str(e)
                         assessment_obj.execution_logs = execution_logs
-                        assessment_obj.completed_at = datetime.utcnow()
+                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
                         db.session.commit()
                     except Exception as commit_error:
                         logger.error(f"Error updating failed status: {str(commit_error)}")
@@ -603,6 +610,22 @@ def start_risk_assessment():
         thread = threading.Thread(target=run_real_assessment)
         thread.daemon = True
         thread.start()
+        
+        # Log assessment creation
+        log_user_activity(
+            user_id=current_user.id,
+            username=current_user.username,
+            action=ActionType.CREATE,
+            resource_type=ResourceType.ASSESSMENT,
+            resource_id=assessment.id,
+            resource_name=f"Risk Assessment for MOP {mop.name}",
+            details={
+                'assessment_type': 'risk',
+                'mop_id': mop.id,
+                'mop_name': mop.name,
+                'server_count': len(data.get('servers', []))
+            }
+        )
         
         return api_response({
             'assessment_id': assessment.id,
@@ -697,7 +720,7 @@ def test_handover_connection():
                 'command': 'echo "Connection test successful"'
             }]
             
-            timestamp = datetime.now().strftime("%H%M%S_%d%m%Y")
+            timestamp = datetime.now(GMT_PLUS_7).strftime("%H%M%S_%d%m%Y")
             job_id = f"handover_test_{timestamp}_{index}"
             
             try:
@@ -824,7 +847,7 @@ def start_handover_assessment():
                     
                     logger.info(f"Starting real handover assessment with job_id: {job_id}")
                     logger.info(f"Starting ansible playbook with job_id: {job_id}, commands: {len(commands)}, servers: {len(ansible_servers)}")
-                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp)
+                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp, execution_id=assessment.id, assessment_type="Handover")
                     logger.info(f"Ansible playbook started for handover assessment {assessment.id}")
                     
                     # Wait for completion and get results
@@ -854,34 +877,35 @@ def start_handover_assessment():
                     else:
                         logger.warning(f"No logs retrieved for handover job_id: {job_id}")
                     
-                    if results:
+                    if results and 'servers' in results:
                         # Convert ansible results to assessment format
                         test_results = []
                         for server_ip, server_result in results['servers'].items():
-                            for cmd_idx, cmd_result in enumerate(server_result['commands']):
-                                test_results.append({
-                                    'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
-                                    'command_index': cmd_idx,
-                                    'server_ip': server_ip,
-                                    'command_text': cmd_result['command'],
-                                    'result': 'success' if cmd_result['success'] else 'failed',
-                                    'output': cmd_result['output'],
-                                    'reference_value': cmd_result['expected']
-                                })
+                            if 'commands' in server_result:
+                                for cmd_idx, cmd_result in enumerate(server_result['commands']):
+                                    test_results.append({
+                                        'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
+                                        'command_index': cmd_idx,
+                                        'server_ip': server_ip,
+                                        'command_text': cmd_result['command'],
+                                        'result': 'success' if cmd_result['success'] else 'failed',
+                                        'output': cmd_result['output'],
+                                        'reference_value': cmd_result['expected']
+                                    })
                         
                         # Update assessment with results
                         assessment_obj.test_results = test_results
                         assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'completed'
-                        assessment_obj.completed_at = datetime.utcnow()
+                        assessment_obj.status = 'success'
+                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
                         db.session.commit()
                         logger.info(f"Handover assessment {assessment.id} completed successfully")
                     else:
                         # Even if no results, save the logs for debugging
                         assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'failed'
+                        assessment_obj.status = 'fail'
                         assessment_obj.error_message = "No results returned from ansible"
-                        assessment_obj.completed_at = datetime.utcnow()
+                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
                         db.session.commit()
                         logger.error(f"Handover assessment {assessment.id} failed: No results returned from ansible")
                         
@@ -892,17 +916,18 @@ def start_handover_assessment():
                         
                         # Try to get logs even when there's an error
                         execution_logs = ""
-                        try:
-                            logs_data = ansible_runner.get_job_logs(job_id)
-                            if logs_data and logs_data.get('log_content'):
-                                execution_logs = logs_data['log_content']
-                        except:
-                            pass
+                        if 'job_id' in locals():
+                            try:
+                                logs_data = ansible_runner.get_job_logs(job_id)
+                                if logs_data and logs_data.get('log_content'):
+                                    execution_logs = logs_data['log_content']
+                            except:
+                                pass
                         
-                        assessment_obj.status = 'failed'
+                        assessment_obj.status = 'fail'
                         assessment_obj.error_message = str(e)
                         assessment_obj.execution_logs = execution_logs
-                        assessment_obj.completed_at = datetime.utcnow()
+                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
                         db.session.commit()
                     except Exception as commit_error:
                         logger.error(f"Error updating failed status: {str(commit_error)}")
@@ -911,6 +936,22 @@ def start_handover_assessment():
         thread = threading.Thread(target=run_real_assessment)
         thread.daemon = True
         thread.start()
+        
+        # Log assessment creation
+        log_user_activity(
+            user_id=current_user.id,
+            username=current_user.username,
+            action=ActionType.CREATE,
+            resource_type=ResourceType.ASSESSMENT,
+            resource_id=assessment.id,
+            resource_name=f"Handover Assessment for MOP {mop.name}",
+            details={
+                'assessment_type': 'handover',
+                'mop_id': mop.id,
+                'mop_name': mop.name,
+                'server_count': len(data.get('servers', []))
+            }
+        )
         
         return api_response({
             'assessment_id': assessment.id,
@@ -1030,7 +1071,7 @@ def download_handover_assessment_report(assessment_id):
         
         # Create Excel file
         exporter = ExcelExporter()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
         filename = f"handover_assessment_{assessment_id}_{timestamp}.xlsx"
         
         # Ensure exports directory exists
@@ -1101,7 +1142,7 @@ def download_risk_assessment_report(assessment_id):
         
         # Create Excel file
         exporter = ExcelExporter()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
         filename = f"risk_assessment_{assessment_id}_{timestamp}.xlsx"
         
         # Ensure exports directory exists

@@ -3,6 +3,7 @@ import os
 import logging
 from typing import List, Dict, Any, Tuple
 from werkzeug.datastructures import FileStorage
+from .command_sanitizer import CommandSanitizer
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ class AppendixParser:
     def __init__(self):
         self.required_columns = ['Command Name', 'Command', 'Reference Value']
         self.allowed_extensions = ['xlsx', 'xls', 'csv', 'txt']
+        self.sanitizer = CommandSanitizer()
     
     def parse_appendix_file(self, file_path: str) -> Tuple[bool, List[Dict[str, Any]], str]:
         """
@@ -63,6 +65,31 @@ class AppendixParser:
             logger.error(f"Error parsing appendix file {file_path}: {str(e)}")
             return False, [], f"Error parsing file: {str(e)}"
     
+    def _validate_file_structure(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Comprehensive validation of file structure and content
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if df.empty:
+            return False, "File is empty"
+        
+        # Validate columns
+        success, error_msg = self._validate_columns(df)
+        if not success:
+            return False, error_msg
+        
+        # Validate content
+        success, error_msg = self._validate_content(df)
+        if not success:
+            return False, error_msg
+        
+        return True, ""
+    
     def _validate_columns(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
         Validate that the DataFrame has required columns
@@ -91,6 +118,100 @@ class AppendixParser:
         
         if missing_columns:
             return False, f"Missing required columns: {', '.join(missing_columns)}. Required columns are: {', '.join(self.required_columns)}"
+        
+        # Check for extra unexpected columns
+        expected_columns = [col.lower() for col in self.required_columns]
+        extra_columns = []
+        for col in df_columns:
+            if col.lower() not in expected_columns:
+                extra_columns.append(col)
+        
+        if extra_columns:
+            logger.warning(f"Found unexpected columns: {', '.join(extra_columns)}. These will be ignored.")
+        
+        return True, ""
+    
+    def _validate_content(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Validate the content of each row in the DataFrame
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Normalize column names for easier access
+        column_mapping = {}
+        for col in df.columns:
+            col_lower = col.strip().lower()
+            if col_lower == 'command name':
+                column_mapping['title'] = col
+            elif col_lower == 'command':
+                column_mapping['command'] = col
+            elif col_lower == 'reference value':
+                column_mapping['reference_value'] = col
+        
+        errors = []
+        valid_rows = 0
+        
+        for index, row in df.iterrows():
+            row_num = index + 1
+            row_errors = []
+            
+            # Check Command Name
+            title = row[column_mapping['title']] if pd.notna(row[column_mapping['title']]) else ""
+            if isinstance(title, str):
+                title = title.strip()
+                # Check for invalid characters in title
+                if any(char in title for char in ['<', '>', '"', "'", '&', ';', '|', '`']):
+                    row_errors.append(f"Command Name contains invalid characters: {title}")
+            
+            # Check Command
+            command = row[column_mapping['command']] if pd.notna(row[column_mapping['command']]) else ""
+            if isinstance(command, str):
+                command = command.strip()
+                if not command:
+                    row_errors.append("Command is empty")
+                else:
+                    # Note: Dangerous commands will be sanitized during processing
+                    # We don't reject them here, just log for awareness
+                    dangerous_patterns = ['rm -rf', 'format', 'del /f', 'shutdown', 'reboot', 'halt']
+                    if any(pattern in command.lower() for pattern in dangerous_patterns):
+                        logger.warning(f"Row {row_num}: Command contains potentially dangerous operations that will be sanitized: {command}")
+                    
+                    # Check command length
+                    if len(command) > 1000:
+                        row_errors.append("Command is too long (max 1000 characters)")
+            else:
+                row_errors.append("Command must be text")
+            
+            # Check Reference Value
+            ref_value = row[column_mapping['reference_value']] if pd.notna(row[column_mapping['reference_value']]) else ""
+            if isinstance(ref_value, str):
+                ref_value = ref_value.strip()
+                # Check reference value length
+                if len(ref_value) > 500:
+                    row_errors.append("Reference Value is too long (max 500 characters)")
+            
+            # Skip completely empty rows
+            if not title and not command and not ref_value:
+                continue
+            
+            if row_errors:
+                errors.append(f"Row {row_num}: {'; '.join(row_errors)}")
+            else:
+                valid_rows += 1
+        
+        if valid_rows == 0:
+            return False, "No valid commands found in the file"
+        
+        if errors:
+            if len(errors) > 10:  # Limit error messages
+                error_msg = "\n".join(errors[:10]) + f"\n... and {len(errors) - 10} more errors"
+            else:
+                error_msg = "\n".join(errors)
+            return False, f"File validation errors:\n{error_msg}"
         
         return True, ""
     
@@ -132,14 +253,22 @@ class AppendixParser:
                     logger.warning(f"Skipping row {index + 1}: empty command")
                     continue
                 
+                # Sanitize command
+                sanitize_result = self.sanitizer.sanitize_command(command)
+                sanitized_command = sanitize_result['sanitized']
+                sanitize_warnings = sanitize_result['warnings']
+                
                 command_dict = {
                     'title': title,
-                    'command': command,
+                    'command': sanitized_command,
+                    'original_command': command,
                     'reference_value': reference_value,
                     'validation_type': self._determine_validation_type(reference_value),
                     'order_index': len(commands) + 1,
                     'is_critical': False,  # Default to non-critical
-                    'timeout_seconds': 30  # Default timeout
+                    'timeout_seconds': 30,  # Default timeout
+                    'sanitized': sanitize_result['is_modified'],
+                    'sanitize_warnings': sanitize_warnings
                 }
                 
                 commands.append(command_dict)
@@ -199,27 +328,45 @@ class AppendixParser:
             if file_extension not in self.allowed_extensions:
                 return False, f"Unsupported file format. Allowed formats: {', '.join(self.allowed_extensions)}"
             
+            # Check file size (max 10MB)
+            file.seek(0, 2)  # Seek to end
+            file_size = file.tell()
+            file.seek(0)  # Reset to beginning
+            
+            if file_size > 10 * 1024 * 1024:  # 10MB
+                return False, "File size too large. Maximum allowed size is 10MB"
+            
+            if file_size == 0:
+                return False, "File is empty"
+            
             # Try to read the file content to validate structure
             try:
                 if file_extension in ['xlsx', 'xls']:
                     df = pd.read_excel(file)
                 elif file_extension in ['csv', 'txt']:
-                    df = pd.read_csv(file)
+                    # Try different encodings for CSV/TXT files
+                    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+                    df = None
+                    for encoding in encodings:
+                        try:
+                            file.seek(0)
+                            df = pd.read_csv(file, encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    if df is None:
+                        return False, "Unable to read file. Please check file encoding or format"
                 else:
                     return False, f"Unsupported file format: {file_extension}"
                 
                 # Reset file pointer
                 file.seek(0)
                 
-                # Validate columns
-                success, error_msg = self._validate_columns(df)
+                # Validate file structure and content
+                success, error_msg = self._validate_file_structure(df)
                 if not success:
                     return False, error_msg
-                
-                # Check if there are any valid commands
-                commands = self._extract_commands(df)
-                if not commands:
-                    return False, "No valid commands found in the file"
                 
                 return True, ""
                 

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 interface HeaderProps {
   onToggleSidebar?: () => void;
@@ -8,6 +9,7 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarCollapsed }) => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   const handleLogout = async () => {
     try {
@@ -69,6 +71,16 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarCollapsed }) =>
           <div className="dropdown-menu dropdown-menu-right">
             <span className="dropdown-item-text">{user?.username}</span>
             <div className="dropdown-divider"></div>
+            <a
+              className="dropdown-item"
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate('/settings');
+              }}
+            >
+              <i className="fas fa-cog mr-2"></i> Settings
+            </a>
             <a
               className="dropdown-item"
               href="#"

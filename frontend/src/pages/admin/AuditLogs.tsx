@@ -3,10 +3,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { auditService, type AuditLog, type AuditLogFilters, type AuditStats } from '../../services/auditService';
 import { Modal, LoadingSpinner, ErrorMessage } from '../../components/common';
 import { usePersistedState } from '../../hooks/usePersistedState';
-import { useModalState } from '../../utils/stateUtils';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const AuditLogs: React.FC = () => {
   const { user } = useAuth();
+  const { t } = useTranslation();
   // Persisted state management with unique keys for Audit Logs
   const [logs, setLogs] = usePersistedState<AuditLog[]>('audit_logs', [], { autoSave: true, autoSaveInterval: 30000 });
   const [stats, setStats] = usePersistedState<AuditStats | null>('audit_stats', null);
@@ -22,22 +23,23 @@ const AuditLogs: React.FC = () => {
     has_next: false,
     has_prev: false
   });
-  const [showStats, setShowStats] = useModalState(false);
-  const [showCleanupModal, setShowCleanupModal] = useModalState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [retentionDays, setRetentionDays] = usePersistedState<number>('audit_retentionDays', 365);
   
   // Non-persisted states - loading và error
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Check if user is admin
   if (!user || user.role !== 'admin') {
     return (
       <div className="container-fluid">
         <div className="alert alert-danger">
-          <h4>Truy cập bị từ chối</h4>
-          <p>Bạn không có quyền truy cập trang này. Chỉ admin mới có thể xem audit logs.</p>
+          <h4>{t('accessDenied')}</h4>
+          <p>{t('accessDeniedMessage')}</p>
         </div>
       </div>
     );
@@ -51,6 +53,11 @@ const AuditLogs: React.FC = () => {
     fetchStats();
   }, []);
 
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setAlert({ type, message });
+    setTimeout(() => setAlert(null), 5000);
+  };
+
   const fetchLogs = async () => {
     try {
       setLoading(true);
@@ -59,7 +66,7 @@ const AuditLogs: React.FC = () => {
       setLogs(response.logs);
       setPagination(response.pagination);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Lỗi khi tải audit logs');
+      setError(err.response?.data?.message || t('loadingAuditLogs'));
     } finally {
       setLoading(false);
     }
@@ -89,9 +96,9 @@ const AuditLogs: React.FC = () => {
       setShowCleanupModal(false);
       fetchLogs(); // Refresh logs
       fetchStats(); // Refresh stats
-      alert('Đã dọn dẹp audit logs cũ thành công!');
+      showAlert('success', t('cleanupSuccess'));
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Lỗi khi dọn dẹp audit logs');
+      showAlert('error', err.response?.data?.message || t('cleanupError'));
     } finally {
       setCleanupLoading(false);
     }
@@ -102,7 +109,9 @@ const AuditLogs: React.FC = () => {
   };
 
   const getActionBadgeClass = (action: string) => {
-    switch (action.toLowerCase()) {
+    // Đảm bảo action luôn là string để tránh lỗi toLowerCase
+    const safeAction = typeof action === 'string' ? action : '';
+    switch (safeAction.toLowerCase()) {
       case 'create': return 'badge bg-success';
       case 'update': return 'badge bg-warning';
       case 'delete': return 'badge bg-danger';
@@ -115,7 +124,9 @@ const AuditLogs: React.FC = () => {
   };
 
   const getResourceTypeBadgeClass = (resourceType: string) => {
-    switch (resourceType.toLowerCase()) {
+    // Đảm bảo resourceType luôn là string để tránh lỗi toLowerCase
+    const safeResourceType = typeof resourceType === 'string' ? resourceType : '';
+    switch (safeResourceType.toLowerCase()) {
       case 'mop': return 'badge bg-primary';
       case 'user': return 'badge bg-info';
       case 'execution': return 'badge bg-success';
@@ -130,10 +141,18 @@ const AuditLogs: React.FC = () => {
       <div className="row">
         <div className="col-12">
           <div className="card">
+            {alert && (
+                <ErrorMessage 
+                  message={alert.message} 
+                  type={alert.type === 'error' ? 'danger' : alert.type === 'success' ? 'info' : 'warning'}
+                  dismissible={true}
+                  onDismiss={() => setAlert(null)}
+                />
+            )}
             <div className="card-header d-flex justify-content-between align-items-center">
               <h3 className="card-title mb-0">
                 <i className="fas fa-history me-2"></i>
-                Audit Logs
+                {t('auditLogsTitle')}
               </h3>
               <div className="btn-group">
                 <button 
@@ -141,14 +160,14 @@ const AuditLogs: React.FC = () => {
                   onClick={() => setShowStats(!showStats)}
                 >
                   <i className="fas fa-chart-bar me-1"></i>
-                  {showStats ? 'Ẩn thống kê' : 'Hiện thống kê'}
+                  {showStats ? t('hideStats') : t('showStats')}
                 </button>
                 <button 
                   className="btn btn-outline-danger btn-sm"
                   onClick={() => setShowCleanupModal(true)}
                 >
                   <i className="fas fa-trash me-1"></i>
-                  Dọn dẹp logs cũ
+                  {t('cleanupOldLogs')}
                 </button>
               </div>
             </div>
@@ -160,11 +179,11 @@ const AuditLogs: React.FC = () => {
                   <div className="col-md-3">
                     <div className="text-center">
                       <h4 className="text-primary">{stats.total_logs}</h4>
-                      <small className="text-muted">Tổng số logs (30 ngày qua)</small>
+                      <small className="text-muted">{t('totalLogsLast30Days')}</small>
                     </div>
                   </div>
                   <div className="col-md-3">
-                    <h6>Top hành động:</h6>
+                    <h6>{t('topActions')}</h6>
                     {stats.action_breakdown?.slice(0, 3).map((item, index) => (
                       <div key={index} className="d-flex justify-content-between">
                         <span className={getActionBadgeClass(item.action)}>{item.action}</span>
@@ -173,7 +192,7 @@ const AuditLogs: React.FC = () => {
                     ))}
                   </div>
                   <div className="col-md-3">
-                    <h6>Top tài nguyên:</h6>
+                    <h6>{t('topResources')}</h6>
                     {stats.resource_breakdown?.slice(0, 3).map((item, index) => (
                       <div key={index} className="d-flex justify-content-between">
                         <span className={getResourceTypeBadgeClass(item.resource_type)}>{item.resource_type}</span>
@@ -182,7 +201,7 @@ const AuditLogs: React.FC = () => {
                     ))}
                   </div>
                   <div className="col-md-3">
-                    <h6>Top người dùng:</h6>
+                    <h6>{t('topUsers')}</h6>
                     {stats.top_users?.slice(0, 3).map((item, index) => (
                       <div key={index} className="d-flex justify-content-between">
                         <span>{item.username}</span>
@@ -198,49 +217,77 @@ const AuditLogs: React.FC = () => {
             <div className="card-body border-bottom">
               <div className="row g-3">
                 <div className="col-md-2">
-                  <label className="form-label">Tên người dùng:</label>
+                  <label className="form-label">{t('usernameFilter')}</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
-                    placeholder="Tìm theo username"
+                    placeholder={t('searchByUsername')}
                     value={filters.username || ''}
                     onChange={(e) => handleFilterChange('username', e.target.value || undefined)}
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Hành động:</label>
+                  <label className="form-label">{t('mopNameFilter')}</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    placeholder={t('searchByMopName')}
+                    value={filters.mop_name || ''}
+                    onChange={(e) => handleFilterChange('mop_name', e.target.value || undefined)}
+                  />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label">{t('actionFilter')}</label>
                   <select
                     className="form-select form-select-sm"
                     value={filters.action || ''}
                     onChange={(e) => handleFilterChange('action', e.target.value || undefined)}
                   >
-                    <option value="">Tất cả</option>
-                    <option value="CREATE">Tạo</option>
-                    <option value="UPDATE">Cập nhật</option>
-                    <option value="DELETE">Xóa</option>
-                    <option value="APPROVE">Phê duyệt</option>
-                    <option value="REJECT">Từ chối</option>
-                    <option value="LOGIN">Đăng nhập</option>
-                    <option value="LOGOUT">Đăng xuất</option>
+                    <option value="">{t('allActions')}</option>
+                    <option value="CREATE">{t('createAction')}</option>
+                    <option value="UPDATE">{t('updateAction')}</option>
+                    <option value="DELETE">{t('deleteAction')}</option>
+                    <option value="APPROVE">{t('approveActionAudit')}</option>
+                    <option value="REJECT">{t('rejectActionAudit')}</option>
+                    <option value="LOGIN">{t('loginAction')}</option>
+                    <option value="LOGOUT">{t('logoutAction')}</option>
                   </select>
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Loại tài nguyên:</label>
+                  <label className="form-label">{t('statusFilter')}</label>
+                  <select
+                    className="form-select form-select-sm"
+                    value={filters.status || ''}
+                    onChange={(e) => handleFilterChange('status', e.target.value || undefined)}
+                  >
+                    <option value="">{t('allStatuses')}</option>
+                    <option value="pending">{t('pendingStatus')}</option>
+                    <option value="approved">{t('approvedStatus')}</option>
+                    <option value="rejected">{t('rejectedStatus')}</option>
+                    <option value="completed">{t('completedStatus')}</option>
+                    <option value="failed">{t('failedStatus')}</option>
+                    <option value="running">{t('runningStatus')}</option>
+                  </select>
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label">{t('resourceTypeFilter')}</label>
                   <select
                     className="form-select form-select-sm"
                     value={filters.resource_type || ''}
                     onChange={(e) => handleFilterChange('resource_type', e.target.value || undefined)}
                   >
-                    <option value="">Tất cả</option>
-                    <option value="MOP">MOP</option>
-                    <option value="USER">Người dùng</option>
-                    <option value="EXECUTION">Thực thi</option>
-                    <option value="FILE">File</option>
-                    <option value="AUTH">Xác thực</option>
+                    <option value="">{t('allResourceTypes')}</option>
+                    <option value="MOP">{t('mopResourceType')}</option>
+                    <option value="USER">{t('userResourceType')}</option>
+                    <option value="EXECUTION">{t('executionResourceType')}</option>
+                    <option value="FILE">{t('fileResourceType')}</option>
+                    <option value="AUTH">{t('authResourceType')}</option>
                   </select>
                 </div>
+              </div>
+              <div className="row g-3 mt-2">
                 <div className="col-md-2">
-                  <label className="form-label">Từ ngày:</label>
+                  <label className="form-label">{t('fromDate')}</label>
                   <input
                     type="date"
                     className="form-control form-control-sm"
@@ -249,7 +296,7 @@ const AuditLogs: React.FC = () => {
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Đến ngày:</label>
+                  <label className="form-label">{t('toDate')}</label>
                   <input
                     type="date"
                     className="form-control form-control-sm"
@@ -258,17 +305,32 @@ const AuditLogs: React.FC = () => {
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Số bản ghi/trang:</label>
+                  <label className="form-label">{t('recordsPerPage')}</label>
                   <select
                     className="form-select form-select-sm"
-                    value={filters.per_page || 20}
+                    value={filters.per_page || 10}
                     onChange={(e) => handleFilterChange('per_page', parseInt(e.target.value))}
                   >
                     <option value={10}>10</option>
-                    <option value={20}>20</option>
+                    <option value={25}>25</option>
                     <option value={50}>50</option>
                     <option value={100}>100</option>
                   </select>
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">&nbsp;</label>
+                  <div className="d-flex gap-2">
+                    <button 
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => {
+                        setFilters({ page: 1, per_page: 20 });
+                        fetchLogs();
+                      }}
+                    >
+                      <i className="fas fa-undo me-1"></i>
+                      {t('resetFilters')}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -279,7 +341,7 @@ const AuditLogs: React.FC = () => {
               {loading ? (
                 <div className="text-center py-4">
                   <LoadingSpinner size="lg" />
-                  <p className="mt-2 mb-0">Đang tải audit logs...</p>
+                  <p className="mt-2 mb-0">{t('loadingAuditLogs')}</p>
                 </div>
               ) : (
                 <>
@@ -287,12 +349,12 @@ const AuditLogs: React.FC = () => {
                     <table className="table table-striped table-hover">
                       <thead>
                         <tr>
-                          <th>Thời gian</th>
-                          <th>Người dùng</th>
-                          <th>Hành động</th>
-                          <th>Tài nguyên</th>
-                          <th>Chi tiết</th>
-                          <th>IP Address</th>
+                          <th>{t('timeColumn')}</th>
+                          <th>{t('userColumn')}</th>
+                          <th>{t('actionColumn')}</th>
+                          <th>{t('resourceColumn')}</th>
+                          <th>{t('detailsColumn')}</th>
+                          <th>{t('ipAddressColumn')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -300,7 +362,7 @@ const AuditLogs: React.FC = () => {
                           <tr>
                             <td colSpan={6} className="text-center py-4">
                               <i className="fas fa-inbox fa-2x text-muted mb-2"></i>
-                              <p className="text-muted mb-0">Không có audit logs nào</p>
+                              <p className="text-muted mb-0">{t('noAuditLogs')}</p>
                             </td>
                           </tr>
                         ) : (
@@ -366,7 +428,7 @@ const AuditLogs: React.FC = () => {
                             onClick={() => handleFilterChange('page', (pagination?.page || 1) - 1)}
                             disabled={!pagination?.has_prev}
                           >
-                            Trước
+                            {t('previousPage')}
                           </button>
                         </li>
                         
@@ -392,16 +454,18 @@ const AuditLogs: React.FC = () => {
                             onClick={() => handleFilterChange('page', (pagination?.page || 1) + 1)}
                             disabled={!pagination?.has_next}
                           >
-                            Sau
+                            {t('nextPage')}
                           </button>
                         </li>
                       </ul>
                       
                       <div className="text-center mt-2">
                         <small className="text-muted">
-                          Hiển thị {(((pagination?.page || 1) - 1) * (pagination?.per_page || 20)) + 1} - {Math.min((pagination?.page || 1) * (pagination?.per_page || 20), pagination?.total || 0)} 
-                          trong tổng số {pagination?.total || 0} bản ghi
-                        </small>
+                           {t('showingRecords')
+                             .replace('{start}', String((((pagination?.page || 1) - 1) * (pagination?.per_page || 20)) + 1))
+                             .replace('{end}', String(Math.min((pagination?.page || 1) * (pagination?.per_page || 20), pagination?.total || 0)))
+                             .replace('{total}', String(pagination?.total || 0))}
+                         </small>
                       </div>
                     </nav>
                   )}
@@ -416,17 +480,17 @@ const AuditLogs: React.FC = () => {
       <Modal
         show={showCleanupModal}
         onHide={() => setShowCleanupModal(false)}
-        title="Dọn dẹp Audit Logs cũ"
+        title={t('cleanupAuditLogsTitle')}
         size="md"
       >
         <div className="modal-body">
           <div className="alert alert-warning">
             <i className="fas fa-exclamation-triangle me-2"></i>
-            <strong>Cảnh báo:</strong> Hành động này sẽ xóa vĩnh viễn tất cả audit logs cũ hơn số ngày được chỉ định.
+            <strong>Cảnh báo:</strong> {t('cleanupWarning')}
           </div>
           
           <div className="mb-3">
-            <label className="form-label">Số ngày giữ lại:</label>
+            <label className="form-label">{t('retentionDays')}</label>
             <input
               type="number"
               className="form-control"
@@ -436,7 +500,7 @@ const AuditLogs: React.FC = () => {
               max="3650"
             />
             <div className="form-text">
-              Logs cũ hơn {retentionDays} ngày sẽ bị xóa vĩnh viễn.
+              {t('retentionDaysHelp').replace('{days}', String(retentionDays))}
             </div>
           </div>
         </div>
@@ -448,7 +512,7 @@ const AuditLogs: React.FC = () => {
             onClick={() => setShowCleanupModal(false)}
             disabled={cleanupLoading}
           >
-            Hủy
+            {t('cancel')}
           </button>
           <button
             type="button"
@@ -459,12 +523,12 @@ const AuditLogs: React.FC = () => {
             {cleanupLoading ? (
               <>
                 <LoadingSpinner size="sm" className="me-2" />
-                Đang dọn dẹp...
+                {t('cleanupInProgress')}
               </>
             ) : (
               <>
                 <i className="fas fa-trash me-2"></i>
-                Xác nhận dọn dẹp
+                {t('confirmCleanup')}
               </>
             )}
           </button>

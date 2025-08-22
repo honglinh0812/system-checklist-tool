@@ -12,7 +12,11 @@ import MOPReview from './pages/mop/MOPReview';
 import RiskAssessment from './pages/assessment/RiskAssessment';
 import HandoverAssessment from './pages/assessment/HandoverAssessment';
 import ExecutionHistory from './pages/assessment/ExecutionHistory';
+import MOPExecutionHistory from './pages/assessment/MOPExecutionHistory';
+import MOPActionHistory from './pages/assessment/MOPActionHistory';
 import AuditLogs from './pages/admin/AuditLogs';
+import AssessmentLogs from './pages/admin/AssessmentLogs';
+import Settings from './pages/Settings';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import ModalCleaner from './components/ModalCleaner';
 
@@ -100,10 +104,42 @@ function App() {
               </ProtectedRoute>
             } />
             
+            <Route path="/execution-history/mop-executions" element={
+              <ProtectedRoute>
+                <Layout>
+                  <MOPExecutionHistory />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/execution-history/mop-actions" element={
+              <ProtectedRoute>
+                <Layout>
+                  <MOPActionHistory />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            
             <Route path="/audit-logs" element={
               <ProtectedRoute>
                 <Layout>
                   <AuditLogs />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/assessment-logs" element={
+              <ProtectedRoute>
+                <Layout>
+                  <AssessmentLogs />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/settings" element={
+              <ProtectedRoute>
+                <Layout>
+                  <Settings />
                 </Layout>
               </ProtectedRoute>
             } />

@@ -1,7 +1,10 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 
 from models import db
 from models.mop import MOP, Command
@@ -39,7 +42,7 @@ def run_periodic_risk_assessment(app):
             logger.warning("[RISK-JOB] No default servers configured. Job aborted.")
             return
 
-        timestamp = datetime.now().strftime("%H%M%S_%d%m%Y")
+        timestamp = datetime.now(GMT_PLUS_7).strftime("%H%M%S_%d%m%Y")
         job_id = f"riskjob_{timestamp}"
 
         # Combine commands from all risk MOPs maintaining order
@@ -56,7 +59,7 @@ def run_periodic_risk_assessment(app):
         logger.info(f"[RISK-JOB] Running {len(commands)} commands on {len(servers)} servers")
 
         # Use AnsibleRunner synchronously
-        results = runner.run_playbook_sync(commands, servers, timestamp)
+        results = runner.run_playbook_sync(commands, servers, timestamp, assessment_type="Risk")
         # The sync helper we'll implement in AnsibleRunner quickly
         if not results:
             logger.error("[RISK-JOB] Runner returned no results")
@@ -71,7 +74,7 @@ def run_periodic_risk_assessment(app):
 
         # Save RiskReport
         report = RiskReport(
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(GMT_PLUS_7),
             summary=results.get('summary', {}),
             excel_path=excel_path,
             log_path=results.get('log_file', '')

@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
-import { usePersistedState } from '../../hooks/usePersistedState';
-import { useModalState } from '../../utils/stateUtils';
+import { ErrorMessage } from '../../components/common';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface MOP {
   id: number;
@@ -22,39 +22,39 @@ interface Command {
 }
 
 const HandoverAssessment: React.FC = () => {
-  // Persisted state management with unique keys for Handover Assessment
-  const [selectedMOP, setSelectedMOP] = usePersistedState<string>('handover_selectedMOP', '', { autoSave: true });
+  const { t } = useTranslation();
+  
+  // State management
+  const [selectedMOP, setSelectedMOP] = useState<string>('');
 
-  const [filteredMops, setFilteredMops] = usePersistedState<MOP[]>('handover_filteredMops', []);
-  const [activeTab, setActiveTab] = usePersistedState<'assessment' | 'reports'>('handover_activeTab', 'assessment');
-  const [showExecutionModal, setShowExecutionModal] = useModalState(false);
-  const [showFileUploadModal, setShowFileUploadModal] = useModalState(false);
-  const [showManualInputModal, setShowManualInputModal] = useModalState(false);
-  const [showViewMOPModal, setShowViewMOPModal] = useModalState(false);
-  const [servers, setServers] = usePersistedState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>('handover_servers', [], {
-    excludeKeys: ['sshPassword', 'sudoPassword'],
-    autoSave: true,
-    autoSaveInterval: 10000
-  });
-  const [selectedServers, setSelectedServers] = usePersistedState<boolean[]>('handover_selectedServers', []);
-  const [assessmentResults, setAssessmentResults] = usePersistedState<any>('handover_assessmentResults', null);
-  const [manualServerData, setManualServerData] = usePersistedState<{
+  const [filteredMops, setFilteredMops] = useState<MOP[]>([]);
+  const [activeTab, setActiveTab] = useState<'assessment' | 'reports'>('assessment');
+  const [assessmentType] = useState<'emergency' | 'periodic'>('emergency');
+  const [showExecutionModal, setShowExecutionModal] = useState(false);
+  const [showFileUploadModal, setShowFileUploadModal] = useState(false);
+  const [showManualInputModal, setShowManualInputModal] = useState(false);
+  const [showViewMOPModal, setShowViewMOPModal] = useState(false);
+  const [servers, setServers] = useState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>([]);
+  const [selectedServers, setSelectedServers] = useState<boolean[]>([]);
+  const [assessmentResults, setAssessmentResults] = useState<any>(null);
+  const [manualServerData, setManualServerData] = useState<{
     serverIP: string;
     sshPort: string;
     sshUser: string;
     sshPassword: string;
     sudoUser: string;
     sudoPassword: string;
-  }>('handover_manualServerData', {
+  }>({
     serverIP: '',
     sshPort: '22',
     sshUser: '',
     sshPassword: '',
     sudoUser: '',
     sudoPassword: ''
-  }, { excludeKeys: ['sshPassword', 'sudoPassword'] });
+  });
   
   // Non-persisted states - loading, temporary actions, volatile data
+  const [alert, setAlert] = useState<{type: 'error' | 'success' | 'warning' | 'info'; message: string} | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [serverFile, setServerFile] = useState<File | null>(null);
   const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
@@ -72,6 +72,11 @@ const HandoverAssessment: React.FC = () => {
     console.log('Can start assessment updated:', allSuccess, 'Selected results:', selectedResults);
     setCanStartAssessment(allSuccess);
   }, [selectedServers, connectionResults]);
+
+  const showAlert = (type: 'error' | 'success' | 'warning' | 'info', message: string) => {
+    setAlert({type, message});
+    setTimeout(() => setAlert(null), 3000);
+  };
 
   const fetchMOPs = async () => {
     try {
@@ -94,6 +99,13 @@ const HandoverAssessment: React.FC = () => {
   };
 
   useEffect(() => {
+    console.log('HandoverAssessment mounted, current states:', {
+      selectedMOP,
+      activeTab,
+      assessmentType,
+      serversLength: servers.length,
+      selectedServersLength: selectedServers.length
+    });
     fetchMOPs();
   }, []);
 
@@ -114,11 +126,11 @@ const HandoverAssessment: React.FC = () => {
     console.log('servers:', servers);
     console.log('selectedServers:', selectedServers);
     
-    const selectedServerList = servers.filter((_, index) => selectedServers[index]);
+    const selectedServerList = servers.filter((_: any, index: number) => selectedServers[index]);
     console.log('selectedServerList:', selectedServerList);
     
     if (selectedServerList.length === 0) {
-      setNotification({type: 'warning', message: 'Vui lòng chọn ít nhất một server (tick vào checkbox) để test connection.'});
+      setNotification({type: 'warning', message: t('selectAtLeastOneServer')});
       return;
     }
 
@@ -126,7 +138,7 @@ const HandoverAssessment: React.FC = () => {
       console.log('Sending request to:', API_ENDPOINTS.ASSESSMENTS.HANDOVER_TEST_CONNECTION);
       
       // Map frontend fields to backend expected fields
-      const mappedServers = selectedServerList.map(server => ({
+      const mappedServers = selectedServerList.map((server: any) => ({
         ip: server.serverIP,
         admin_username: server.sshUser,
         admin_password: server.sshPassword,
@@ -150,7 +162,7 @@ const HandoverAssessment: React.FC = () => {
       
       // Map results back to original server indices
       let selectedServerIndex = 0;
-      servers.forEach((_, originalIndex) => {
+      servers.forEach((_: any, originalIndex: number) => {
         if (selectedServers[originalIndex]) {
           const result = results[selectedServerIndex]; // Direct index mapping
           if (result) {
@@ -176,28 +188,28 @@ const HandoverAssessment: React.FC = () => {
       setCanStartAssessment(allSuccess);
     } catch (error) {
       console.error('Error testing connection:', error);
-      setNotification({type: 'error', message: 'Có lỗi xảy ra khi test connection.'});
+      setNotification({type: 'error', message: t('connectionTestError')});
     }
   };
 
   const handleStartAssessment = async () => {
     // Validate MOP selection
     if (!selectedMOP) {
-      setNotification({type: 'warning', message: 'Vui lòng chọn MOP trước khi bắt đầu assessment.'});
+      setNotification({type: 'warning', message: t('selectMOPFirst')});
       return;
     }
 
     // Validate MOP type for handover assessment
     const selectedMOPData = Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP) : null;
     if (!selectedMOPData || (selectedMOPData as any).assessment_type !== 'handover_assessment') {
-      setNotification({type: 'warning', message: 'MOP đã chọn không phù hợp với đánh giá bàn giao. Vui lòng chọn MOP có kiểu "handover_assessment".'});
+      setNotification({type: 'warning', message: t('mopNotSuitableForHandover')});
       return;
     }
 
     // Validate server selection
-    const selectedServerList = servers.filter((_, index) => selectedServers[index]);
+    const selectedServerList = servers.filter((_: any, index: number) => selectedServers[index]);
     if (selectedServerList.length === 0) {
-      setNotification({type: 'warning', message: 'Vui lòng chọn ít nhất một server để thực hiện assessment.'});
+      setNotification({type: 'warning', message: t('selectAtLeastOneServerForAssessment')});
       return;
     }
 
@@ -205,7 +217,7 @@ const HandoverAssessment: React.FC = () => {
       setAssessmentLoading(true);
       
       // Map frontend fields to backend expected fields
-      const mappedServers = selectedServerList.map(server => ({
+      const mappedServers = selectedServerList.map((server: any) => ({
         ip: server.serverIP,
         admin_username: server.sshUser,
         admin_password: server.sshPassword,
@@ -220,7 +232,7 @@ const HandoverAssessment: React.FC = () => {
       });
       
       if (response.data && response.data.assessment_id) {
-        setNotification({type: 'success', message: 'Assessment đã được bắt đầu thành công!'});
+        setNotification({type: 'success', message: t('assessmentStartedSuccessfully')});
         
         // Polling for results instead of setTimeout
         const pollResults = async () => {
@@ -235,7 +247,7 @@ const HandoverAssessment: React.FC = () => {
               });
               setAssessmentLoading(false);
             } else if (resultsResponse.data && resultsResponse.data.status === 'failed') {
-              setNotification({type: 'error', message: 'Assessment thất bại. Vui lòng kiểm tra logs.'});
+              setNotification({type: 'error', message: t('assessmentFailed')});
               setAssessmentResults({
                 ...resultsResponse.data,
                 mop_name: selectedMOPData.name,
@@ -248,7 +260,7 @@ const HandoverAssessment: React.FC = () => {
             }
           } catch (error) {
             console.error('Error fetching assessment results:', error);
-            setNotification({type: 'error', message: 'Có lỗi xảy ra khi lấy kết quả assessment.'});
+            setNotification({type: 'error', message: t('errorFetchingAssessmentResults')});
             setAssessmentLoading(false);
           }
         };
@@ -258,7 +270,7 @@ const HandoverAssessment: React.FC = () => {
       }
     } catch (error) {
       console.error('Error starting assessment:', error);
-      setNotification({type: 'error', message: 'Có lỗi xảy ra khi bắt đầu assessment.'});
+      setNotification({type: 'error', message: t('errorStartingAssessment')});
       setAssessmentLoading(false);
     }
   };
@@ -280,7 +292,7 @@ const HandoverAssessment: React.FC = () => {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading template:', error);
-      alert('Error downloading template. Please try again.');
+      showAlert('error', 'Error downloading template. Please try again.');
     }
   };
 
@@ -306,7 +318,7 @@ const HandoverAssessment: React.FC = () => {
       });
       setShowManualInputModal(false);
     } else {
-      setNotification({type: 'warning', message: 'Please fill in required fields: Server IP and SSH User'});
+      setNotification({type: 'warning', message: t('fillRequiredFields')});
     }
   };
 
@@ -368,13 +380,13 @@ const HandoverAssessment: React.FC = () => {
         
         setShowFileUploadModal(false);
         setServerFile(null);
-        setNotification({type: 'success', message: `Đã upload thành công ${newServers.length} server(s).`});
+        setNotification({type: 'success', message: `${t('uploadedSuccessfully')} ${newServers.length} ${t('servers')}`});
       } else {
-        setNotification({type: 'error', message: 'Có lỗi xảy ra khi upload file: ' + (response.message || 'Unknown error')});
+        setNotification({type: 'error', message: t('errorUploadingFile') + (response.message || t('unknownError'))});
       }
     } catch (error) {
       console.error('Error uploading file:', error);
-      setNotification({type: 'error', message: 'Có lỗi xảy ra khi upload file.'});
+      setNotification({type: 'error', message: t('errorUploadingFileGeneral')});
     }
   };
 
@@ -382,7 +394,7 @@ const HandoverAssessment: React.FC = () => {
     if (!assessmentResults?.id) {
       setNotification({
         type: 'error',
-        message: 'Không có kết quả assessment để tải về'
+        message: t('noAssessmentResultsToDownload')
       });
       return;
     }
@@ -396,7 +408,7 @@ const HandoverAssessment: React.FC = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to download report');
+        throw new Error(t('failedToDownloadReport'));
       }
 
       // Get filename from response headers or create default
@@ -423,13 +435,13 @@ const HandoverAssessment: React.FC = () => {
 
       setNotification({
         type: 'success',
-        message: 'Báo cáo đã được tải về thành công'
+        message: t('reportDownloadedSuccessfully')
       });
     } catch (error) {
       console.error('Error downloading report:', error);
       setNotification({
         type: 'error',
-        message: 'Lỗi khi tải báo cáo'
+        message: t('errorDownloadingReport')
       });
     }
   };
@@ -441,9 +453,9 @@ const HandoverAssessment: React.FC = () => {
 
   const confirmDeleteServer = () => {
     if (deleteServerIndex >= 0) {
-      const newServers = servers.filter((_, i) => i !== deleteServerIndex);
-      const newSelectedServers = selectedServers.filter((_, i) => i !== deleteServerIndex);
-      const newConnectionResults = connectionResults.filter((_, i) => i !== deleteServerIndex);
+      const newServers = servers.filter((_: any, i: number) => i !== deleteServerIndex);
+      const newSelectedServers = selectedServers.filter((_: any, i: number) => i !== deleteServerIndex);
+      const newConnectionResults = connectionResults.filter((_: any, i: number) => i !== deleteServerIndex);
       
       setServers(newServers);
       setSelectedServers(newSelectedServers);
@@ -480,20 +492,29 @@ const HandoverAssessment: React.FC = () => {
           </button>
         </div>
       )}
+
+      {alert && (
+        <ErrorMessage 
+          message={alert.message} 
+          type={alert.type === 'error' ? 'danger' : alert.type === 'success' ? 'info' : 'warning'}
+          dismissible={true}
+          onDismiss={() => setAlert(null)}
+        />
+      )}
       
       {/* Content Header */}
       <section className="content-header">
         <div className="container-fluid">
           <div className="row mb-2">
             <div className="col-sm-6">
-              <h1>Handover Assessment</h1>
+              <h1>{t('handoverAssessment')}</h1>
             </div>
             <div className="col-sm-6">
               <ol className="breadcrumb float-sm-right">
                 <li className="breadcrumb-item">
-                  <Link to="/dashboard">Home</Link>
+                  <Link to="/dashboard">{t('home')}</Link>
                 </li>
-                <li className="breadcrumb-item active">Handover Assessment</li>
+                <li className="breadcrumb-item active">{t('handoverAssessment')}</li>
               </ol>
             </div>
           </div>
@@ -514,7 +535,7 @@ const HandoverAssessment: React.FC = () => {
                         onClick={() => setActiveTab('assessment')}
                         type="button"
                       >
-                        <i className="fas fa-exchange-alt mr-1"></i> Đánh giá bàn giao
+                        <i className="fas fa-exchange-alt mr-1"></i> {t('assessment')}
                       </button>
                     </li>
                     <li className="nav-item">
@@ -523,7 +544,7 @@ const HandoverAssessment: React.FC = () => {
                         onClick={() => setActiveTab('reports')}
                         type="button"
                       >
-                        <i className="fas fa-chart-line mr-1"></i> Reports
+                        <i className="fas fa-chart-bar mr-1"></i> {t('reports')}
                       </button>
                     </li>
                   </ul>
@@ -538,14 +559,14 @@ const HandoverAssessment: React.FC = () => {
                             <div className="spinner-border text-primary" role="status">
                               <span className="sr-only">Loading...</span>
                             </div>
-                            <p className="mt-2 text-muted">Đang tải danh sách MOPs...</p>
+                            <p className="mt-2 text-muted">{t('loadingMOPs')}</p>
                           </div>
                         ) : (
                           <>
                             {/* MOP Selection - Always visible */}
                             <div className="form-group">
                               <label htmlFor="mopSelect">
-                                <strong>Chọn MOP:</strong>
+                                <strong>{t('selectMOP')}</strong>
                               </label>
                               <select 
                                 className="form-control" 
@@ -553,7 +574,7 @@ const HandoverAssessment: React.FC = () => {
                                 value={selectedMOP}
                                 onChange={handleMOPSelect}
                               >
-                                <option value="">-- Chọn MOP --</option>
+                                <option value="">{t('chooseMOP')}</option>
                                 {filteredMops.map(mop => (
                                   <option key={mop.id} value={mop.id}>
                                     {mop.name}
@@ -561,24 +582,24 @@ const HandoverAssessment: React.FC = () => {
                                 ))}
                               </select>
                               {filteredMops.length === 0 && (
-                                <small className="text-muted">No approved MOPs for handover assessment are currently available.</small>
+                                <small className="text-muted">{t('noApprovedMOPs')}</small>
                               )}
                             </div>
                             
-                            {selectedMOP && (
+                            {selectedMOP && assessmentType && (
                               <div className="mt-3">
                                 <button 
                                   className="btn btn-info mr-2"
                                   onClick={() => setShowViewMOPModal(true)}
                                 >
-                                  View MOP
+                                  {t('viewMOP')}
                                 </button>
                               </div>
                             )}
 
                             {/* Server Selection Section - Always visible */}
                             <div className="mt-4">
-                              <h6>Chọn Server</h6>
+                              <h6>{t('selectServer')}</h6>
                               <div className="row">
                                 <div className="col-md-6">
                                   <button 
@@ -586,7 +607,7 @@ const HandoverAssessment: React.FC = () => {
                                     onClick={() => setShowFileUploadModal(true)}
                                   >
                                     <i className="fas fa-upload mr-2"></i>
-                                    Upload File Server
+                                    {t('uploadFileServer')}
                                   </button>
                                 </div>
                                 <div className="col-md-6">
@@ -595,7 +616,7 @@ const HandoverAssessment: React.FC = () => {
                                     onClick={() => setShowManualInputModal(true)}
                                   >
                                     <i className="fas fa-keyboard mr-2"></i>
-                                    Nhập Thủ Công
+                                    {t('manualInput')}
                                   </button>
                                 </div>
                               </div>
@@ -610,13 +631,13 @@ const HandoverAssessment: React.FC = () => {
                                   }}
                                 >
                                   <i className="fas fa-download mr-2"></i>
-                                  Download Template
+                                  {t('downloadTemplate')}
                                 </a>
                               </div>
                               
                               {/* Server List Table - Always visible */}
                               <div className="mt-4">
-                                <h6>Danh sách Server</h6>
+                                <h6>{t('serverList')}</h6>
                                 {servers.length > 0 ? (
                                   <div className="table-responsive">
                                     <table className="table table-striped">
@@ -630,13 +651,13 @@ const HandoverAssessment: React.FC = () => {
                                                 const checked = e.target.checked;
                                                 setSelectedServers(servers.map(() => checked));
                                               }}
-                                            /> Chọn tất cả
+                                            /> {t('selectAll')}
                                           </th>
-                                          <th>IP Address</th>
-                                          <th>SSH Port</th>
-                                          <th>SSH User</th>
-                                          <th>Trạng thái kết nối</th>
-                                          <th>Thao tác</th>
+                                          <th>{t('ipAddress')}</th>
+                                          <th>{t('sshPort')}</th>
+                                          <th>{t('sshUser')}</th>
+                                          <th>{t('connectionStatus')}</th>
+                                          <th>{t('actions')}</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -731,14 +752,14 @@ const HandoverAssessment: React.FC = () => {
                                       className="btn btn-info"
                                       onClick={handleTestConnection}
                                     >
-                                      Test Connection
+                                      {t('testConnection')}
                                     </button>
                                     <button 
                                       className="btn btn-success"
                                       onClick={handleStartAssessment}
                                       disabled={!canStartAssessment}
                                     >
-                                      Start Assessment
+                                      {t('executeAssessment')}
                                     </button>
                                   </div>
                                 )}
@@ -748,7 +769,7 @@ const HandoverAssessment: React.FC = () => {
                                   <div className="mt-4">
                                     <div className="alert alert-info">
                                       <i className="fas fa-spinner fa-spin mr-2"></i>
-                                      Đang thực hiện assessment, vui lòng đợi...
+                                      {t('assessmentInProgress')}
                                     </div>
                                   </div>
                                 )}
@@ -760,7 +781,7 @@ const HandoverAssessment: React.FC = () => {
                                       <div className="card-header d-flex justify-content-between align-items-center">
                                         <h5 className="card-title mb-0">
                                           <i className="fas fa-chart-line mr-2"></i>
-                                          Kết quả Assessment
+                                          {t('assessmentResults')}
                                         </h5>
                                         <div>
                                           <button 
@@ -768,34 +789,34 @@ const HandoverAssessment: React.FC = () => {
                                             onClick={handleDownloadReport}
                                           >
                                             <i className="fas fa-download mr-2"></i>
-                                            Tải báo cáo Excel
+                                            {t('downloadExcelReport')}
                                           </button>
                                           <button 
                                             className="btn btn-secondary btn-sm"
                                             onClick={() => setAssessmentResults(null)}
                                           >
                                             <i className="fas fa-times mr-2"></i>
-                                            Clear Results
+                                            {t('clearResults')}
                                           </button>
                                         </div>
                                       </div>
                                       <div className="card-body">
                                         <div className="mb-3">
-                                          <h6><strong>MOP đã chạy:</strong> {assessmentResults.mop_name}</h6>
-                                          <p><strong>Trạng thái:</strong> 
+                                          <h6><strong>{t('mopExecuted')}</strong> {assessmentResults.mop_name}</h6>
+                                          <p><strong>{t('status')}:</strong> 
                                             <span className={`badge ml-2 ${
                                               assessmentResults.status === 'completed' ? 'badge-success' : 
                                               assessmentResults.status === 'failed' ? 'badge-danger' : 'badge-warning'
                                             }`}>
-                                              {assessmentResults.status === 'completed' ? 'Thành công' : 
-                                               assessmentResults.status === 'failed' ? 'Thất bại' : 'Đang xử lý'}
+                                              {assessmentResults.status === 'completed' ? t('success') : 
+                                               assessmentResults.status === 'failed' ? t('failed') : t('processing')}
                                             </span>
                                           </p>
                                           
                                           {/* Execution Logs */}
                                           {assessmentResults.execution_logs && (
                                             <div className="mt-3">
-                                              <h6><strong>Logs thực thi:</strong></h6>
+                                              <h6><strong>{t('executionLogs')}</strong></h6>
                                               <div className="card">
                                                 <div className="card-body" style={{backgroundColor: '#f8f9fa'}}>
                                                   <pre style={{fontSize: '12px', maxHeight: '300px', overflow: 'auto', whiteSpace: 'pre-wrap'}}>
@@ -810,7 +831,7 @@ const HandoverAssessment: React.FC = () => {
                                           {assessmentResults.error_message && (
                                             <div className="mt-3">
                                               <div className="alert alert-danger">
-                                                <h6><strong>Lỗi:</strong></h6>
+                                                <h6><strong>{t('error')}:</strong></h6>
                                                 <p className="mb-0">{assessmentResults.error_message}</p>
                                               </div>
                                             </div>
@@ -823,9 +844,9 @@ const HandoverAssessment: React.FC = () => {
                                               <thead className="thead-dark">
                                                 <tr>
                                                   <th>Server</th>
-                                                  <th>Tên câu lệnh</th>
-                                                  <th>Kết quả thực hiện</th>
-                                                  <th>Giá trị tham chiếu</th>
+                                                  <th>{t('commandName')}</th>
+                                                  <th>{t('executionResult')}</th>
+                                                  <th>{t('referenceValue')}</th>
                                                 </tr>
                                               </thead>
                                               <tbody>
@@ -862,16 +883,16 @@ const HandoverAssessment: React.FC = () => {
                     <div className="tab-pane fade show active">
                       <div className="row">
                         <div className="col-12">
-                          <h5>Handover Assessment Reports</h5>
+                          <h5>{t('handoverAssessmentReports')}</h5>
                           <div className="text-center py-4">
                             <i className="fas fa-chart-line fa-3x text-muted mb-3"></i>
-                            <h6 className="text-muted">Assessment Reports</h6>
+                            <h6 className="text-muted">{t('assessmentReports')}</h6>
                             <p className="text-muted">
-                              View and download handover assessment reports here.
+                              {t('viewAndDownloadReports')}
                             </p>
                             <button className="btn btn-primary">
                               <i className="fas fa-download mr-2"></i>
-                              Download Reports
+                              {t('downloadReports')}
                             </button>
                           </div>
                         </div>
@@ -893,7 +914,7 @@ const HandoverAssessment: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Execute Handover Assessment</h5>
+                <h5 className="modal-title">{t('executeHandoverAssessment')}</h5>
                 <button 
                   type="button" 
                   className="close" 
@@ -902,9 +923,9 @@ const HandoverAssessment: React.FC = () => {
                   <span>&times;</span>
                 </button>
               </div>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                 <div className="form-group">
-                  <label>Select Servers</label>
+                  <label>{t('selectServers')}</label>
                   <div className="border p-3" style={{ maxHeight: '300px', overflowY: 'auto' }}>
                     {servers.length > 0 ? (
                       servers.map((server, index) => (
@@ -916,13 +937,13 @@ const HandoverAssessment: React.FC = () => {
                         </div>
                       ))
                     ) : (
-                      <p className="text-muted">No servers added yet</p>
+                      <p className="text-muted">{t('noServersAddedYet')}</p>
                     )}
                   </div>
                 </div>
                 
                 <div className="form-group">
-                  <label>Server Input</label>
+                  <label>{t('serverInput')}</label>
                   <div className="row">
                     <div className="col-md-4">
                       <button 
@@ -930,7 +951,7 @@ const HandoverAssessment: React.FC = () => {
                         className="btn btn-outline-primary btn-block mb-2"
                         onClick={() => setShowFileUploadModal(true)}
                       >
-                        <i className="fas fa-upload mr-2"></i>Upload Server List
+                        <i className="fas fa-upload mr-2"></i>{t('uploadServerList')}
                       </button>
                     </div>
                     <div className="col-md-4">
@@ -939,7 +960,7 @@ const HandoverAssessment: React.FC = () => {
                         className="btn btn-outline-secondary btn-block mb-2"
                         onClick={() => setShowManualInputModal(true)}
                       >
-                        <i className="fas fa-edit mr-2"></i>Manual Input
+                        <i className="fas fa-edit mr-2"></i>{t('manualInputButton')}
                       </button>
                     </div>
                     <div className="col-md-4">
@@ -947,7 +968,7 @@ const HandoverAssessment: React.FC = () => {
                         type="button" 
                         className="btn btn-outline-info btn-block mb-2"
                       >
-                        <i className="fas fa-plug mr-2"></i>Test Connection
+                        <i className="fas fa-plug mr-2"></i>{t('testConnectionButton')}
                       </button>
                     </div>
                   </div>
@@ -959,10 +980,10 @@ const HandoverAssessment: React.FC = () => {
                   className="btn btn-secondary" 
                   onClick={() => setShowExecutionModal(false)}
                 >
-                  Cancel
+                  {t('cancel')}
                 </button>
                 <button type="button" className="btn btn-primary">
-                  Execute Assessment
+                  {t('executeAssessment')}
                 </button>
               </div>
             </div>
@@ -976,14 +997,14 @@ const HandoverAssessment: React.FC = () => {
           <div className="modal-dialog">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Upload Server List</h5>
+                <h5 className="modal-title">{t('uploadServerList')}</h5>
                 <button type="button" className="close" onClick={() => setShowFileUploadModal(false)}>
                   <span>&times;</span>
                 </button>
               </div>
               <div className="modal-body">
                 <div className="form-group">
-                  <label htmlFor="serverFile">Select File (Excel/CSV)</label>
+                  <label htmlFor="serverFile">{t('selectFileExcelCSV')}</label>
                   <input 
                     type="file" 
                     className="form-control-file" 
@@ -991,13 +1012,13 @@ const HandoverAssessment: React.FC = () => {
                     accept=".xlsx,.xls,.csv"
                     onChange={(e) => setServerFile(e.target.files?.[0] || null)}
                   />
-                  <small className="form-text text-muted">Upload Excel or CSV file with server information</small>
+                  <small className="form-text text-muted">{t('uploadExcelOrCSV')}</small>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowFileUploadModal(false)}>Cancel</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowFileUploadModal(false)}>{t('cancel')}</button>
                 <button type="button" className="btn btn-primary" disabled={!serverFile} onClick={handleFileUpload}>
-                  <i className="fas fa-upload mr-2"></i>Upload
+                  <i className="fas fa-upload mr-2"></i>{t('upload')}
                 </button>
               </div>
             </div>
@@ -1011,7 +1032,7 @@ const HandoverAssessment: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Manual Server Input</h5>
+                <h5 className="modal-title">{t('manualServerInput')}</h5>
                 <button type="button" className="close" onClick={() => setShowManualInputModal(false)}>
                   <span>&times;</span>
                 </button>
@@ -1020,7 +1041,7 @@ const HandoverAssessment: React.FC = () => {
                 <div className="row">
                   <div className="col-md-6">
                     <div className="form-group">
-                      <label htmlFor="serverIP">Server IP</label>
+                      <label htmlFor="serverIP">{t('serverIP')}</label>
                       <input 
                         type="text" 
                         className="form-control" 
@@ -1033,7 +1054,7 @@ const HandoverAssessment: React.FC = () => {
                   </div>
                   <div className="col-md-6">
                     <div className="form-group">
-                      <label htmlFor="sshPort">SSH Port</label>
+                      <label htmlFor="sshPort">{t('sshPort')}</label>
                       <input 
                         type="text" 
                         className="form-control" 
@@ -1048,7 +1069,7 @@ const HandoverAssessment: React.FC = () => {
                 <div className="row">
                   <div className="col-md-6">
                     <div className="form-group">
-                      <label htmlFor="sshUser">SSH User</label>
+                      <label htmlFor="sshUser">{t('sshUser')}</label>
                       <input 
                         type="text" 
                         className="form-control" 
@@ -1061,7 +1082,7 @@ const HandoverAssessment: React.FC = () => {
                   </div>
                   <div className="col-md-6">
                       <div className="form-group">
-                        <label htmlFor="sshPassword">SSH Password</label>
+                        <label htmlFor="sshPassword">{t('sshPassword')}</label>
                         <input 
                           type="password" 
                           className="form-control" 
@@ -1073,7 +1094,7 @@ const HandoverAssessment: React.FC = () => {
                     </div>
                     <div className="col-md-6">
                       <div className="form-group">
-                        <label htmlFor="sudoUser">Sudo User</label>
+                        <label htmlFor="sudoUser">{t('sudoUser')}</label>
                         <input 
                           type="text" 
                           className="form-control" 
@@ -1086,7 +1107,7 @@ const HandoverAssessment: React.FC = () => {
                     </div>
                     <div className="col-md-6">
                       <div className="form-group">
-                        <label htmlFor="sudoPassword">Sudo Password</label>
+                        <label htmlFor="sudoPassword">{t('sudoPassword')}</label>
                         <input 
                           type="password" 
                           className="form-control" 
@@ -1099,9 +1120,9 @@ const HandoverAssessment: React.FC = () => {
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowManualInputModal(false)}>Cancel</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowManualInputModal(false)}>{t('cancel')}</button>
                 <button type="button" className="btn btn-primary" onClick={handleAddManualServer}>
-                  <i className="fas fa-plus mr-2"></i>Add Server
+                  <i className="fas fa-plus mr-2"></i>{t('addServer')}
                 </button>
               </div>
             </div>
@@ -1115,7 +1136,7 @@ const HandoverAssessment: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Chi tiết MOP: {Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || '' : ''}</h5>
+                <h5 className="modal-title">{t('mopDetails')}: {Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || '' : ''}</h5>
                 <button 
                   type="button" 
                   className="btn-close" 
@@ -1127,16 +1148,16 @@ const HandoverAssessment: React.FC = () => {
                   <table className="table table-striped">
                     <thead>
                       <tr>
-                        <th>ID</th>
-                        <th>Tên lệnh</th>
-                        <th>Nội dung lệnh</th>
+                        <th>{t('id')}</th>
+                        <th>{t('commandName')}</th>
+                        <th>{t('commandContent')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {getSelectedMOPCommands().map((command, index) => (
                         <tr key={index}>
                           <td>{typeof command === 'string' ? index + 1 : command.id}</td>
-                          <td>{typeof command === 'string' ? `Command ${index + 1}` : command.description || `Command ${index + 1}`}</td>
+                          <td>{typeof command === 'string' ? `${t('command')} ${index + 1}` : command.description || `${t('command')} ${index + 1}`}</td>
                           <td><code>{typeof command === 'string' ? command : command.command_text}</code></td>
                         </tr>
                       ))}
@@ -1150,7 +1171,7 @@ const HandoverAssessment: React.FC = () => {
                   className="btn btn-secondary" 
                   onClick={() => setShowViewMOPModal(false)}
                 >
-                  Đóng
+                  {t('close')}
                 </button>
               </div>
             </div>
@@ -1163,10 +1184,10 @@ const HandoverAssessment: React.FC = () => {
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={confirmDeleteServer}
-        title="Xác nhận xóa server"
-        message="Bạn có chắc chắn muốn xóa server này?"
-        confirmText="Xóa"
-        cancelText="Hủy"
+        title={t('confirmDeleteServer')}
+        message={t('confirmDeleteServerMessage')}
+        confirmText={t('delete')}
+        cancelText={t('cancel')}
         confirmVariant="danger"
       />
     </div>

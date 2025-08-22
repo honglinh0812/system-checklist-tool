@@ -2,8 +2,11 @@ from flask import Blueprint, request, send_file
 from flask_jwt_extended import jwt_required
 from werkzeug.utils import secure_filename
 from sqlalchemy import or_, desc
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import os
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 from models.mop import MOP, Command, MOPFile, MOPReview, MOPStatus
 from models.user import User
 from models import db
@@ -197,7 +200,7 @@ def create_mop():
             prerequisites='',
             rollback_plan='',
             created_by=current_user.id,
-            status=MOPStatus.PENDING.value
+            status=MOPStatus.CREATED.value
         )
         
         db.session.add(mop)
@@ -268,7 +271,7 @@ def update_mop(mop_id):
                 setattr(mop, field, data[field])
         
         # Update timestamp
-        mop.updated_at = datetime.utcnow()
+        mop.updated_at = datetime.now(GMT_PLUS_7)
         
         db.session.commit()
         
@@ -561,7 +564,7 @@ def review_mop(mop_id):
         if action == 'approve':
             mop.status = MOPStatus.APPROVED.value
             mop.approved_by = current_user.id
-            mop.approved_at = datetime.utcnow()
+            mop.approved_at = datetime.now(GMT_PLUS_7)
         else:  
             db.session.delete(mop)
             db.session.commit()
@@ -605,7 +608,7 @@ def submit_mop_for_review(mop_id):
             return api_error('MOP must have at least one command', 400)
         
         # MOP is already pending, just update submitted timestamp
-        mop.submitted_at = datetime.utcnow()
+        mop.submitted_at = datetime.now(GMT_PLUS_7)
         db.session.commit()
         
         logger.info(f"MOP submitted for review: {mop.name} by {current_user.username}")
@@ -790,7 +793,7 @@ def approve_mop(mop_id):
             admin_id=current_user.id,
             status='approved',
             reject_reason=request_data.get('comments', ''),
-            reviewed_at=datetime.utcnow()
+            reviewed_at=datetime.now(GMT_PLUS_7)
         )
         
         db.session.add(review)
@@ -964,7 +967,7 @@ def upload_mop_files(mop_id):
             file_path=file_path,
             file_size=os.path.getsize(file_path),
             uploaded_by=current_user.id,
-            uploaded_at=datetime.utcnow()
+            uploaded_at=datetime.now(GMT_PLUS_7)
         )
         
         db.session.add(mop_file)
@@ -1063,10 +1066,79 @@ def delete_mop_file(file_id):
         db.session.rollback()
         return api_error('Failed to delete file', 500)
 
+@mops_bp.route('/<int:mop_id>/files/<string:file_type>', methods=['GET'])
+def get_mop_file(mop_id, file_type):
+    """Get/view a MOP file by type (pdf or appendix)"""
+    try:
+        # Check for token in query parameter first, then in header
+        token = request.args.get('token')
+        if token:
+            # Validate token manually
+            from flask_jwt_extended import decode_token
+            try:
+                decoded_token = decode_token(token)
+                user_id = decoded_token['sub']
+                from models.user import User
+                current_user = User.query.get(user_id)
+            except Exception as e:
+                return api_error('Invalid token', 401)
+        else:
+            # Use standard JWT authentication
+            from flask_jwt_extended import jwt_required, get_current_user as jwt_get_current_user
+            jwt_required()(lambda: None)()
+            current_user = get_current_user()
+        
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get MOP and check permissions
+        mop = MOP.query.get_or_404(mop_id)
+        if current_user.role == 'user' and mop.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        # Find file by type
+        if file_type == 'pdf':
+            mop_file = MOPFile.query.filter_by(mop_id=mop_id, file_type='pdf').first()
+        elif file_type == 'appendix':
+            # Appendix can be xlsx, xls, csv, txt
+            mop_file = MOPFile.query.filter_by(mop_id=mop_id).filter(
+                MOPFile.file_type.in_(['xlsx', 'xls', 'csv', 'txt'])
+            ).first()
+        else:
+            return api_error('Invalid file type', 400)
+        
+        if not mop_file:
+            return api_error(f'{file_type.upper()} file not found', 404)
+        
+        if not os.path.exists(mop_file.file_path):
+            return api_error('File not found on disk', 404)
+        
+        # Check if download is requested
+        download = request.args.get('download', 'false').lower() == 'true'
+        
+        # For PDF files, serve inline for viewing unless download is explicitly requested
+        if file_type == 'pdf' and not download:
+            return send_file(
+                mop_file.file_path,
+                as_attachment=False,
+                mimetype='application/pdf'
+            )
+        else:
+            # For appendix files or when download is requested, serve as attachment
+            return send_file(
+                mop_file.file_path,
+                as_attachment=True,
+                download_name=mop_file.filename
+            )
+        
+    except Exception as e:
+        logger.error(f"Error serving file {file_type} for MOP {mop_id}: {str(e)}")
+        return api_error('Failed to serve file', 500)
+
 @mops_bp.route('/files/<int:file_id>/download', methods=['GET'])
 @jwt_required()
 def download_mop_file(file_id):
-    """Download a MOP file"""
+    """Download a MOP file by file ID"""
     try:
         current_user = get_current_user()
         if not current_user:
@@ -1133,8 +1205,8 @@ def upload_mop():
             return api_error(f'Invalid appendix file: {error_msg}', 400)
         
         # Save files
-        pdf_filename = secure_filename(f"mop_pdf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-        appendix_filename = secure_filename(f"mop_appendix_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{appendix_ext}")
+        pdf_filename = secure_filename(f"mop_pdf_{datetime.now(GMT_PLUS_7).strftime('%Y%m%d_%H%M%S')}.pdf")
+        appendix_filename = secure_filename(f"mop_appendix_{datetime.now(GMT_PLUS_7).strftime('%Y%m%d_%H%M%S')}.{appendix_ext}")
         
         # Create upload directories
         pdf_dir = os.path.join('uploads', 'pdf')
@@ -1161,7 +1233,7 @@ def upload_mop():
         
         # Create MOP record
         mop = MOP(
-            name=mop_name if mop_name else f"MOP_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            name=mop_name if mop_name else f"MOP_{datetime.now(GMT_PLUS_7).strftime('%Y%m%d_%H%M%S')}",
             description=description,
             type=[assessment_type],  # Set type to match assessment_type
             status='pending',
@@ -1216,13 +1288,27 @@ def upload_mop():
         db.session.add(appendix_mop_file)
         db.session.commit()
         
-        logger.info(f"MOP files uploaded successfully by user {current_user.id}, MOP ID: {mop.id}, Commands: {len(commands_data)}")
+        # Calculate sanitization statistics
+        sanitized_commands = [cmd for cmd in commands_data if cmd.get('sanitized', False)]
+        sanitization_warnings = []
+        for cmd in commands_data:
+            if cmd.get('sanitize_warnings'):
+                sanitization_warnings.extend(cmd['sanitize_warnings'])
+        
+        logger.info(f"MOP files uploaded successfully by user {current_user.id}, MOP ID: {mop.id}, Commands: {len(commands_data)}, Sanitized: {len(sanitized_commands)}")
         
         return api_response({
             'message': 'MOP files uploaded successfully',
             'mop_id': mop.id,
             'status': 'pending',
-            'commands_count': len(commands_data)
+            'commands_count': len(commands_data),
+            'sanitization_info': {
+                'total_commands': len(commands_data),
+                'sanitized_commands': len(sanitized_commands),
+                'unchanged_commands': len(commands_data) - len(sanitized_commands),
+                'warnings_count': len(sanitization_warnings),
+                'has_sanitized_commands': len(sanitized_commands) > 0
+            }
         })
         
     except Exception as e:

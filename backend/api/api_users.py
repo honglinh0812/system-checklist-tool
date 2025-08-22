@@ -8,79 +8,14 @@ from .api_utils import (
     api_response, api_error, paginate_query, validate_json, 
     admin_required, get_request_filters, apply_filters
 )
-from core.schemas import UserCreateSchema, UserSchema, DefaultUserCreateSchema, PublicRegisterSchema, UserApprovalSchema
+from core.schemas import UserCreateSchema, UserSchema, DefaultUserCreateSchema, PublicRegisterSchema, UserApprovalSchema, ChangePasswordSchema
 from core.auth import get_current_user
+from utils.audit_logger import log_user_management_action
 import logging
 
 logger = logging.getLogger(__name__)
 
 users_bp = Blueprint('users', __name__, url_prefix='/api/users')
-
-# Cập nhật endpoint get_users để hỗ trợ filter theo status
-@users_bp.route('', methods=['GET'])
-@jwt_required()
-def get_users():
-    """Get paginated list of users with filtering"""
-    try:
-        current_user = get_current_user()
-        if not current_user:
-            return api_error('User not found', 404)
-        
-        # Only admin can view all users
-        if current_user.role != 'admin':
-            return api_error('Insufficient permissions', 403)
-        
-        # Get filter parameters
-        filters = get_request_filters()
-        
-        # Build query
-        query = User.query
-        
-        # Apply search filter
-        if filters.get('search'):
-            search_term = f"%{filters['search']}%"
-            query = query.filter(
-                User.username.ilike(search_term)
-            )
-        
-        # Apply role filter
-        if filters.get('status'):  # Using status field for role filter
-            query = query.filter(User.role == filters['status'])
-        
-        # Apply active status filter
-        is_active = request.args.get('is_active')
-        if is_active is not None:
-            query = query.filter(User.is_active == (is_active.lower() == 'true'))
-        
-        # Apply sorting
-        sort_by = filters.get('sort_by', 'created_at')
-        sort_order = filters.get('sort_order', 'desc')
-        
-        if hasattr(User, sort_by):
-            column = getattr(User, sort_by)
-            if sort_order.lower() == 'desc':
-                query = query.order_by(column.desc())
-            else:
-                query = query.order_by(column.asc())
-        
-        # Paginate
-        page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
-        
-        result = paginate_query(query, page, per_page)
-        
-        # Serialize users
-        user_schema = UserSchema(many=True)
-        users_data = user_schema.dump(result['items'])
-        
-        return api_response({
-            'users': users_data,
-            'pagination': result['pagination']
-        })
-        
-    except Exception as e:
-        logger.error(f"Get users error: {str(e)}")
-        return api_error('Failed to fetch users', 500)
 
 @users_bp.route('/<int:user_id>', methods=['GET'])
 @jwt_required()
@@ -152,10 +87,22 @@ def create_user():
         db.session.add(user)
         db.session.commit()
         
+        # Log user management action
+        current_user = get_current_user()
+        log_user_management_action(
+            user_id=current_user.id,
+            username=current_user.username,
+            action='create',
+            target_user_id=user.id,
+            target_username=user.username,
+            details=f"Created user {user.username} with role {user.role}",
+            ip_address=request.remote_addr
+        )
+        
         user_schema = UserSchema()
         user_data = user_schema.dump(user)
         
-        logger.info(f"User created: {user.username} by admin {get_current_user().username}")
+        logger.info(f"User created: {user.username} by admin {current_user.username}")
         
         return api_response(user_data, 'User created successfully', 201)
         
@@ -247,6 +194,17 @@ def update_user(user_id):
         
         db.session.commit()
         
+        # Log user management action
+        log_user_management_action(
+            user_id=current_user.id,
+            username=current_user.username,
+            action='update',
+            target_user_id=user.id,
+            target_username=user.username,
+            details=f"Updated user {user.username}",
+            ip_address=request.remote_addr
+        )
+        
         user_schema = UserSchema()
         user_data = user_schema.dump(user)
         
@@ -292,11 +250,34 @@ def delete_user(user_id):
             user.is_active = False
             db.session.commit()
             
+            # Log user management action
+            log_user_management_action(
+                user_id=current_user.id,
+                username=current_user.username,
+                action='deactivate',
+                target_user_id=user.id,
+                target_username=user.username,
+                details=f"Deactivated user {user.username} due to existing data associations",
+                ip_address=request.remote_addr
+            )
+            
             logger.info(f"User deactivated: {user.username} by admin {current_user.username}")
             return api_response(None, 'User deactivated due to existing data associations')
         else:
             # Safe to delete
             username = user.username
+            
+            # Log user management action before deletion
+            log_user_management_action(
+                user_id=current_user.id,
+                username=current_user.username,
+                action='delete',
+                target_user_id=user.id,
+                target_username=user.username,
+                details=f"Deleted user {username}",
+                ip_address=request.remote_addr
+            )
+            
             db.session.delete(user)
             db.session.commit()
             
@@ -482,10 +463,22 @@ def change_my_password():
         current_user = get_current_user()
         if not current_user:
             return api_error('User not found', 404)
-        data = request.validated_json
+        
+        # Validate request data with schema
+        schema = ChangePasswordSchema()
+        try:
+            data = schema.load(request.get_json())
+        except Exception as e:
+            return api_error(f'Validation error: {str(e)}', 400)
+        
+        # Check if new password matches confirm password
+        if data['new_password'] != data['confirm_password']:
+            return api_error('New password and confirm password do not match', 400)
+        
         # verify current password
         if not current_user.check_password(data['current_password']):
             return api_error('Current password is incorrect', 400)
+        
         # set new password
         current_user.set_password(data['new_password'])
         db.session.commit()
@@ -610,7 +603,10 @@ def get_pending_users():
         logger.error(f"Get pending users error: {str(e)}")
         return api_error('Failed to fetch pending users', 500)
 
-
+# Cập nhật endpoint get_users để hỗ trợ filter theo status
+@users_bp.route('', methods=['GET'])
+@jwt_required()
+def get_users():
     """Get paginated list of users with filtering"""
     try:
         current_user = get_current_user()

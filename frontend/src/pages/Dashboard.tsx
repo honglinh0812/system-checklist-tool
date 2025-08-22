@@ -4,6 +4,7 @@ import { apiService } from '../services/api';
 import { API_ENDPOINTS, USER_ROLES } from '../utils/constants';
 import { useAuth } from '../contexts/AuthContext';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useTranslation } from '../i18n/useTranslation';
 
 import { Modal } from '../components/common';
 
@@ -52,6 +53,7 @@ interface RecentExecution {
 const Dashboard: React.FC = () => {
   const { user, isAuthenticated, isLoading } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   
   // Thêm các biến kiểm tra quyền
   const isAdmin = user?.role === USER_ROLES.ADMIN;
@@ -157,9 +159,9 @@ const Dashboard: React.FC = () => {
       <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
         <div className="text-center">
           <div className="spinner-border" role="status">
-            <span className="sr-only">Loading...</span>
+            <span className="sr-only">{t('loading')}</span>
           </div>
-          <p className="mt-2">Loading dashboard...</p>
+          <p className="mt-2">{t('loadingDashboard')}</p>
         </div>
       </div>
     );
@@ -169,10 +171,10 @@ const Dashboard: React.FC = () => {
   if (!stats || !Array.isArray(recentMops) || !Array.isArray(recentExecutions)) {
     return (
       <div className="alert alert-warning">
-        <h4>Dashboard Loading Issue</h4>
-        <p>Unable to load dashboard data. Please refresh the page.</p>
+        <h4>{t('dashboardLoadingIssue')}</h4>
+        <p>{t('unableToLoadDashboard')}</p>
         <button className="btn btn-primary" onClick={() => window.location.reload()}>
-          Refresh Page
+          {t('refreshPage')}
         </button>
       </div>
     );
@@ -187,11 +189,11 @@ const Dashboard: React.FC = () => {
         <div className="container-fluid">
           <div className="row mb-2">
             <div className="col-sm-6">
-              <h1>Dashboard</h1>
+              <h1>{t('dashboard')}</h1>
             </div>
             <div className="col-sm-6">
               <ol className="breadcrumb float-sm-right">
-                <li className="breadcrumb-item active">Dashboard</li>
+                <li className="breadcrumb-item active">{t('dashboard')}</li>
               </ol>
             </div>
           </div>
@@ -208,18 +210,18 @@ const Dashboard: React.FC = () => {
               <div className="small-box bg-info">
                 <div className="inner">
                   <h3>{stats.totalMops}</h3>
-                  <p>Total MOPs</p>
+                  <p>{t('totalMops')}</p>
                 </div>
                 <div className="icon">
                   <i className="fas fa-tasks"></i>
                 </div>
                 {canViewMOPManagement ? (
                   <Link to="/mop-management" className="small-box-footer">
-                    More info <i className="fas fa-arrow-circle-right"></i>
+                    {t('moreInfo')} <i className="fas fa-arrow-circle-right"></i>
                   </Link>
                 ) : (
                   <Link to="/mop-review" className="small-box-footer">
-                    View MOPs <i className="fas fa-arrow-circle-right"></i>
+                    {t('viewMops')} <i className="fas fa-arrow-circle-right"></i>
                   </Link>
                 )}
               </div>
@@ -231,13 +233,13 @@ const Dashboard: React.FC = () => {
                 <div className="small-box bg-success">
                   <div className="inner">
                     <h3>{stats.approvedMops}</h3>
-                    <p>Approved MOPs</p>
+                    <p>{t('approvedMops')}</p>
                   </div>
                   <div className="icon">
                     <i className="fas fa-check-circle"></i>
                   </div>
                   <Link to="/mop-management" className="small-box-footer">
-                    More info <i className="fas fa-arrow-circle-right"></i>
+                    {t('moreInfo')} <i className="fas fa-arrow-circle-right"></i>
                   </Link>
                 </div>
               </div>
@@ -249,13 +251,13 @@ const Dashboard: React.FC = () => {
                 <div className="small-box bg-warning">
                   <div className="inner">
                     <h3>{stats.pendingMops}</h3>
-                    <p>Pending MOPs</p>
+                    <p>{t('pendingMops')}</p>
                   </div>
                   <div className="icon">
                     <i className="fas fa-clock"></i>
                   </div>
                   <Link to="/mop-management" className="small-box-footer">
-                    More info <i className="fas fa-arrow-circle-right"></i>
+                    {t('moreInfo')} <i className="fas fa-arrow-circle-right"></i>
                   </Link>
                 </div>
               </div>
@@ -266,14 +268,14 @@ const Dashboard: React.FC = () => {
               <div className="small-box bg-danger">
                 <div className="inner">
                   <h3>{stats.userExecutions}</h3>
-                  <p>Recent Executions</p>
+                  <p>{t('recentExecutions')}</p>
                 </div>
                 <div className="icon">
                   <i className="fas fa-history"></i>
                 </div>
                 <Link to="/execution-history" className="small-box-footer">
-                  More info <i className="fas fa-arrow-circle-right"></i>
-                </Link>
+                    {t('moreInfo')} <i className="fas fa-arrow-circle-right"></i>
+                  </Link>
               </div>
             </div>
           </div>
@@ -286,14 +288,14 @@ const Dashboard: React.FC = () => {
                   <div className="card-header">
                     <h3 className="card-title">
                       <i className="fas fa-shield-alt mr-2"></i>
-                      Risk Assessment
+                      {t('riskAssessment')}
                     </h3>
                   </div>
                   <div className="card-body">
-                    <p>Perform system risk assessments using predefined MOPs.</p>
+                    <p>{t('performSystemRiskAssessments')}</p>
                     <Link to="/risk-assessment" className="btn btn-primary">
                       <i className="fas fa-play mr-2"></i>
-                      Start Assessment
+                      {t('startAssessment')}
                     </Link>
                   </div>
                 </div>
@@ -304,14 +306,14 @@ const Dashboard: React.FC = () => {
                   <div className="card-header">
                     <h3 className="card-title">
                       <i className="fas fa-exchange-alt mr-2"></i>
-                      Handover Assessment
+                      {t('handoverAssessment')}
                     </h3>
                   </div>
                   <div className="card-body">
-                    <p>Perform system handover assessments using predefined MOPs.</p>
+                    <p>{t('performSystemHandoverAssessments')}</p>
                     <Link to="/handover-assessment" className="btn btn-success">
                       <i className="fas fa-play mr-2"></i>
-                      Start Assessment
+                      {t('startAssessment')}
                     </Link>
                   </div>
                 </div>
@@ -327,22 +329,22 @@ const Dashboard: React.FC = () => {
                   <div className="card-header">
                     <h3 className="card-title">
                       <i className="fas fa-info-circle mr-2"></i>
-                      Viewer Access
+                      {t('viewerAccess')}
                     </h3>
                   </div>
                   <div className="card-body">
-                    <p>As a viewer, you have read-only access to:</p>
+                    <p>{t('viewerAccessDescription')}</p>
                     <ul>
-                      <li><i className="fas fa-eye mr-2"></i>View MOPs and their details</li>
-                      <li><i className="fas fa-history mr-2"></i>View execution history and results</li>
-                      <li><i className="fas fa-chart-line mr-2"></i>View dashboard statistics</li>
+                      <li><i className="fas fa-eye mr-2"></i>{t('viewMopsDetails')}</li>
+                      <li><i className="fas fa-history mr-2"></i>{t('viewExecutionHistory')}</li>
+                      <li><i className="fas fa-chart-line mr-2"></i>{t('viewDashboardStats')}</li>
                     </ul>
                     <div className="mt-3">
                       <Link to="/mop-review" className="btn btn-info mr-2">
-                        <i className="fas fa-eye mr-2"></i>View MOPs
+                        <i className="fas fa-eye mr-2"></i>{t('viewMops')}
                       </Link>
                       <Link to="/execution-history" className="btn btn-secondary">
-                        <i className="fas fa-history mr-2"></i>View Executions
+                        <i className="fas fa-history mr-2"></i>{t('viewExecutions')}
                       </Link>
                     </div>
                   </div>
@@ -359,7 +361,7 @@ const Dashboard: React.FC = () => {
                   <div className="card-header">
                     <h3 className="card-title">
                       <i className="fas fa-tasks mr-2"></i>
-                      Recent MOPs
+                      {t('recentMops')}
                     </h3>
                   </div>
                   <div className="card-body p-0">
@@ -367,10 +369,10 @@ const Dashboard: React.FC = () => {
                       <table className="table m-0">
                         <thead>
                           <tr>
-                            <th>Name</th>
-                            <th>Status</th>
-                            <th>Created by</th>
-                            <th>Time</th>
+                            <th>{t('name')}</th>
+                            <th>{t('status')}</th>
+                            <th>{t('createdBy')}</th>
+                            <th>{t('time')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -387,7 +389,7 @@ const Dashboard: React.FC = () => {
                                     {mop.status ? (mop.status.charAt(0).toUpperCase() + mop.status.slice(1)) : 'Unknown'}
                                   </span>
                                 </td>
-                                <td>{mop.created_by?.username || 'Unknown'}</td>
+                                <td>{mop.created_by?.username || t('unknownUser')}</td>
                                 <td>
                                   {mop.status === 'approved' && mop.approved_at 
                                     ? new Date(mop.approved_at).toLocaleDateString()
@@ -401,7 +403,7 @@ const Dashboard: React.FC = () => {
                           ) : (
                             <tr>
                               <td colSpan={4} className="text-center text-muted">
-                                No recent MOPs found
+                                {t('noRecentMopsFound')}
                               </td>
                             </tr>
                           )}
@@ -421,7 +423,7 @@ const Dashboard: React.FC = () => {
                 <div className="card-header">
                   <h3 className="card-title">
                     <i className="fas fa-history mr-2"></i>
-                    Recent Executions
+                    {t('recentExecutions')}
                   </h3>
                 </div>
                 <div className="card-body p-0">
@@ -429,9 +431,9 @@ const Dashboard: React.FC = () => {
                     <table className="table m-0">
                       <thead>
                         <tr>
-                          <th>Time</th>
-                          <th>MOP</th>
-                          <th>Chi tiết</th>
+                          <th>{t('time')}</th>
+                          <th>{t('mop')}</th>
+                          <th>{t('details')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -444,7 +446,7 @@ const Dashboard: React.FC = () => {
                                   : new Date(execution.execution_time).toLocaleString()
                                 }
                               </td>
-                              <td>{execution.mop?.name || 'Unknown MOP'}</td>
+                              <td>{execution.mop?.name || t('unknownMop')}</td>
                               <td>
                                 <a 
                                   href="#" 
@@ -454,7 +456,7 @@ const Dashboard: React.FC = () => {
                                     handleExecutionClick(execution);
                                   }}
                                 >
-                                  Xem chi tiết
+                                  {t('viewDetails')}
                                 </a>
                               </td>
                             </tr>
@@ -462,7 +464,7 @@ const Dashboard: React.FC = () => {
                         ) : (
                           <tr>
                             <td colSpan={3} className="text-center text-muted">
-                              No recent executions found
+                              {t('noRecentExecutionsFound')}
                             </td>
                           </tr>
                         )}
@@ -481,17 +483,17 @@ const Dashboard: React.FC = () => {
         <Modal
           show={showExecutionDetailModal}
           onHide={handleCloseExecutionModal}
-          title="Chi tiết thực thi"
+          title={t('executionDetails')}
           size="lg"
         >
           <div className="row">
             <div className="col-md-12">
               <div className="row mb-3">
-                <div className="col-sm-3"><strong>Tên MOP:</strong></div>
-                <div className="col-sm-9">{selectedExecution.mop?.name || 'Unknown MOP'}</div>
+                <div className="col-sm-3"><strong>{t('mopName')}:</strong></div>
+                <div className="col-sm-9">{selectedExecution.mop?.name || t('unknownMop')}</div>
               </div>
               <div className="row mb-3">
-                <div className="col-sm-3"><strong>Thời gian chạy:</strong></div>
+                <div className="col-sm-3"><strong>{t('executionTime')}:</strong></div>
                 <div className="col-sm-9">
                   {selectedExecution.started_at 
                     ? new Date(selectedExecution.started_at).toLocaleString()
@@ -500,7 +502,7 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
               <div className="row mb-3">
-                <div className="col-sm-3"><strong>Trạng thái:</strong></div>
+                <div className="col-sm-3"><strong>{t('status')}:</strong></div>
                 <div className="col-sm-9">
                   <span className={`badge ${
                     selectedExecution.status === 'completed' ? 'badge-success' :
@@ -508,16 +510,16 @@ const Dashboard: React.FC = () => {
                     selectedExecution.status === 'running' ? 'badge-warning' :
                     'badge-secondary'
                   }`}>
-                    {selectedExecution.status === 'completed' ? 'Hoàn thành' :
-                     selectedExecution.status === 'failed' ? 'Thất bại' :
-                     selectedExecution.status === 'running' ? 'Đang chạy' :
-                     selectedExecution.status || 'Unknown'}
+                    {selectedExecution.status === 'completed' ? t('completed') :
+                     selectedExecution.status === 'failed' ? t('failed') :
+                     selectedExecution.status === 'running' ? t('running') :
+                     selectedExecution.status || t('unknown')}
                   </span>
                 </div>
               </div>
               {selectedExecution.output && (
                 <div className="row mb-3">
-                  <div className="col-sm-3"><strong>Kết quả thực hiện:</strong></div>
+                  <div className="col-sm-3"><strong>{t('executionResult')}:</strong></div>
                   <div className="col-sm-9">
                     <pre className="bg-light p-2 rounded" style={{maxHeight: '200px', overflow: 'auto'}}>
                       {selectedExecution.output}
@@ -527,7 +529,7 @@ const Dashboard: React.FC = () => {
               )}
               {selectedExecution.error_output && (
                 <div className="row mb-3">
-                  <div className="col-sm-3"><strong>Lỗi:</strong></div>
+                  <div className="col-sm-3"><strong>{t('error')}:</strong></div>
                   <div className="col-sm-9">
                     <pre className="bg-danger text-white p-2 rounded" style={{maxHeight: '200px', overflow: 'auto'}}>
                       {selectedExecution.error_output}
@@ -536,17 +538,17 @@ const Dashboard: React.FC = () => {
                 </div>
               )}
               <div className="row mb-3">
-                <div className="col-sm-3"><strong>Thời lượng:</strong></div>
+                <div className="col-sm-3"><strong>{t('duration')}:</strong></div>
                 <div className="col-sm-9">
                   {selectedExecution.duration 
-                    ? `${selectedExecution.duration.toFixed(2)} giây`
+                    ? `${selectedExecution.duration.toFixed(2)} ${t('seconds')}`
                     : 'N/A'
                   }
                 </div>
               </div>
               <div className="row mb-3">
-                <div className="col-sm-3"><strong>Người thực hiện:</strong></div>
-                <div className="col-sm-9">{selectedExecution.executed_by?.username || 'Unknown'}</div>
+                <div className="col-sm-3"><strong>{t('executedBy')}:</strong></div>
+                <div className="col-sm-9">{selectedExecution.executed_by?.username || t('unknownUser')}</div>
               </div>
             </div>
           </div>

@@ -251,3 +251,5 @@ test.csv
 test.pdf
 test_appendix.csv
 .trae/
+checklist*
+COMMAND_SANITIZATION.md

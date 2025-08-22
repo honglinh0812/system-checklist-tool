@@ -16,7 +16,8 @@ export const API_ENDPOINTS = {
     PENDING: '/api/users/pending',
     APPROVE: (id: number) => `/api/users/${id}/approve`,
     REJECT: (id: number) => `/api/users/${id}/reject`,
-    REGISTER: '/api/users/register' // Thêm endpoint register vào USERS section
+    REGISTER: '/api/users/register', // Thêm endpoint register vào USERS section
+    CHANGE_PASSWORD: '/api/users/profile/change-password'
   },
   MOPS: {
     LIST: '/api/mops',
@@ -46,7 +47,8 @@ export const API_ENDPOINTS = {
     HISTORY: '/api/executions/history',
     DETAIL: (id: number) => `/api/executions/${id}/detail`,
     CANCEL: (id: number) => `/api/executions/${id}/cancel`,
-    EXPORT: (id: number) => `/api/export/execution/${id}`,
+    EXPORT: '/api/executions/export',
+    EXPORT_BY_ID: (id: number) => `/api/export/execution/${id}`,
   },
   COMMANDS: {
     VALIDATE: '/api/commands/validate',
@@ -76,6 +78,10 @@ export const API_ENDPOINTS = {
     SYSTEM: '/api/logs/system',
     SYSTEM_CONTENT: (logType: string) => `/api/logs/system/${logType}`,
     SYSTEM_EXPORT: (logType: string) => `/api/logs/system/${logType}/export`,
+    ASSESSMENTS: '/api/logs/assessments',
+    ASSESSMENT_CONTENT: (logDir: string, filename: string) => `/api/logs/assessments/${logDir}/${filename}`,
+    ASSESSMENT_DOWNLOAD: (logDir: string, filename: string) => `/api/logs/assessments/${logDir}/${filename}/download`,
+    ASSESSMENT_DOWNLOAD_ALL: (logDir: string) => `/api/logs/assessments/${logDir}/download-all`,
   },
   RISK_REPORTS: {
     LIST: '/api/risk-reports',
@@ -167,6 +173,8 @@ export const ROUTES = {
   RISK_ASSESSMENT: '/risk-assessment',
   HANDOVER_ASSESSMENT: '/handover-assessment',
   EXECUTION_HISTORY: '/execution-history',
+  MOP_EXECUTION_HISTORY: '/execution-history/mop-executions',
+  MOP_ACTION_HISTORY: '/execution-history/mop-actions',
   MOP_SUBMISSION: '/mop-submission',
   MOP_MANAGEMENT: '/mop-management',
   MOP_EDIT: '/mop-edit',

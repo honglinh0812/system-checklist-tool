@@ -4,16 +4,21 @@ import { usePersistedState } from '../../hooks/usePersistedState';
 import { useModalState } from '../../utils/stateUtils';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface SubmissionStatus {
   type: 'success' | 'error' | null;
   message: string;
   mopId?: string;
   status?: string;
+  commandsCount?: number;
+  sanitizedCommands?: number;
+  sanitizeWarnings?: number;
 }
 
 const MOPSubmission: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   
   // Persisted state management with unique keys for MOP Submission
   const [formData, setFormData] = usePersistedState('submission_formData', {
@@ -63,7 +68,7 @@ const MOPSubmission: React.FC = () => {
     if (!formData.mopName.trim()) {
       setSubmissionStatus({
         type: 'error',
-        message: 'Please enter MOP name.'
+        message: t('pleaseEnterMOPNameError')
       });
       setShowStatusModal(true);
       return;
@@ -72,7 +77,7 @@ const MOPSubmission: React.FC = () => {
     if (!formData.pdfFile || !formData.appendixFile) {
       setSubmissionStatus({
         type: 'error',
-        message: 'Please select both PDF and appendix files.'
+        message: t('pleaseSelectBothFilesError')
       });
       setShowStatusModal(true);
       return;
@@ -94,9 +99,12 @@ const MOPSubmission: React.FC = () => {
       if (response && response.success && response.data) {
         setSubmissionStatus({
           type: 'success',
-          message: 'MOP submitted successfully.',
+          message: t('mopSubmittedSuccessfully'),
           mopId: response.data.mop_id,
-          status: response.data.status
+          status: response.data.status,
+          commandsCount: response.data.commands_count,
+          sanitizedCommands: response.data.sanitized_commands,
+          sanitizeWarnings: response.data.sanitize_warnings
         });
         // Reset form
         setFormData({ mopName: '', assessmentType: 'handover_assessment', pdfFile: null, appendixFile: null, description: '' });
@@ -104,14 +112,28 @@ const MOPSubmission: React.FC = () => {
       } else {
         setSubmissionStatus({
           type: 'error',
-          message: response.message || 'Failed to submit MOP'
+          message: response.message || t('failedToSubmitMOP')
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting MOP:', error);
+      
+      let errorMessage = t('failedToSubmitMOPTryAgain');
+      
+      // Extract detailed error message from backend response
+      if (error.response && error.response.data) {
+        if (error.response.data.message) {
+          errorMessage = error.response.data.message;
+        } else if (error.response.data.error) {
+          errorMessage = error.response.data.error;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       setSubmissionStatus({
         type: 'error',
-        message: 'Failed to submit MOP. Please try again.'
+        message: errorMessage
       });
     } finally {
       setIsSubmitting(false);
@@ -120,7 +142,9 @@ const MOPSubmission: React.FC = () => {
   };
 
   const downloadTemplate = () => {
-    window.open('/api/template/mop-appendix', '_blank');
+    const token = localStorage.getItem('token');
+    const templateUrl = `/api/template/mop-appendix?token=${encodeURIComponent(token || '')}`;
+    window.open(templateUrl, '_blank');
   };
 
   const closeModal = () => {
@@ -140,9 +164,9 @@ const MOPSubmission: React.FC = () => {
             <div className="col-sm-6">
               <ol className="breadcrumb float-sm-right">
                 <li className="breadcrumb-item">
-                  <a href="#" onClick={(e) => { e.preventDefault(); navigate('/dashboard'); }}>Home</a>
+                  <a href="#" onClick={(e) => { e.preventDefault(); navigate('/dashboard'); }}>{t('home')}</a>
                 </li>
-                <li className="breadcrumb-item active">MOP Submission</li>
+                <li className="breadcrumb-item active">{t('mopSubmissionTitle')}</li>
               </ol>
             </div>
           </div>
@@ -154,11 +178,30 @@ const MOPSubmission: React.FC = () => {
         <div className="container-fluid">
           <div className="row">
             <div className="col-12">
+
+              <div className="row">
+                <div className="col-md-12">
+                  <div className="alert alert-info">
+                    <h5><i className="fas fa-info-circle mr-2"></i>{t('fileRequirements')}:</h5>
+                    <ul className="mb-0">
+                      <li><strong>{t('pdfFile')}:</strong> {t('pdfFileRequirement')}</li>
+                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')}:
+                        <ul>
+                          <li>{t('columnCommandName')}</li>
+                          <li>{t('columnCommand')}</li>
+                          <li>{t('columnReferenceValue')}</li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
               <div className="card">
                 <div className="card-header">
                   <h3 className="card-title">
                     <i className="fas fa-upload mr-2"></i>
-                    Submit New MOP
+                    {t('submitNewMOP')}
                   </h3>
                 </div>
                 <div className="card-body">
@@ -167,17 +210,17 @@ const MOPSubmission: React.FC = () => {
                     <div className="row">
                       <div className="col-md-12">
                         <div className="form-group">
-                          <label htmlFor="mopName"><strong>MOP Name:</strong></label>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            id="mopName" 
-                            placeholder="Enter MOP name"
-                            value={formData.mopName}
-                            onChange={handleMopNameChange}
-                            required
-                          />
-                          <small className="form-text text-muted">Enter a descriptive name for this MOP</small>
+                          <label htmlFor="mopName"><strong>{t('mopNameLabel')}</strong></label>
+                           <input 
+                             type="text" 
+                             className="form-control" 
+                             id="mopName" 
+                             placeholder={t('enterMOPNamePlaceholder')}
+                             value={formData.mopName}
+                             onChange={handleMopNameChange}
+                             required
+                           />
+                           <small className="form-text text-muted">{t('enterMOPNameHelp')}</small>
                         </div>
                       </div>
                     </div>
@@ -186,7 +229,7 @@ const MOPSubmission: React.FC = () => {
                     <div className="row">
                       <div className="col-md-12">
                         <div className="form-group">
-                          <label><strong>Loại đánh giá:</strong></label>
+                          <label><strong>{t('assessmentType')}:</strong></label>
                           <div className="mt-2">
                             <div className="form-check form-check-inline">
                               <input 
@@ -199,7 +242,7 @@ const MOPSubmission: React.FC = () => {
                                 onChange={handleAssessmentTypeChange}
                               />
                               <label className="form-check-label" htmlFor="risk_assessment">
-                                Đánh giá rủi ro
+                                {t('riskAssessment')}
                               </label>
                             </div>
                             <div className="form-check form-check-inline">
@@ -213,11 +256,11 @@ const MOPSubmission: React.FC = () => {
                                 onChange={handleAssessmentTypeChange}
                               />
                               <label className="form-check-label" htmlFor="handover_assessment">
-                                Đánh giá bàn giao
+                                {t('handoverAssessment')}
                               </label>
                             </div>
                           </div>
-                          <small className="form-text text-muted">Chọn loại đánh giá cho MOP này</small>
+                          <small className="form-text text-muted">{t('selectAssessmentTypeHelp')}</small>
                         </div>
                       </div>
                     </div>
@@ -225,28 +268,28 @@ const MOPSubmission: React.FC = () => {
                     <div className="row">
                       <div className="col-md-6">
                         <div className="form-group">
-                          <label htmlFor="pdfFile"><strong>PDF File:</strong></label>
-                          <div className="input-group">
-                            <div className="custom-file">
-                              <input 
-                                type="file" 
-                                className="custom-file-input" 
-                                id="pdfFile" 
-                                accept=".pdf" 
-                                required
-                                onChange={(e) => handleFileChange(e, 'pdfFile')}
-                              />
-                              <label className="custom-file-label" htmlFor="pdfFile">
-                                {fileNames.pdfFile}
-                              </label>
-                            </div>
-                          </div>
-                          <small className="form-text text-muted">Upload the MOP PDF document</small>
+                          <label htmlFor="pdfFile"><strong>{t('pdfFileLabel')}</strong></label>
+                           <div className="input-group">
+                             <div className="custom-file">
+                               <input 
+                                 type="file" 
+                                 className="custom-file-input" 
+                                 id="pdfFile" 
+                                 accept=".pdf"
+                                 onChange={(e) => handleFileChange(e, 'pdfFile')}
+                                 required
+                               />
+                               <label className="custom-file-label" htmlFor="pdfFile">
+                                 {fileNames.pdfFile}
+                               </label>
+                             </div>
+                           </div>
+                           <small className="form-text text-muted">{t('uploadMOPPDFHelp')}</small>
                         </div>
                       </div>
                       <div className="col-md-6">
                         <div className="form-group">
-                          <label htmlFor="appendixFile"><strong>Appendix File:</strong></label>
+                          <label htmlFor="appendixFile"><strong>{t('appendixFileLabel')}</strong></label>
                           <div className="input-group">
                             <div className="custom-file">
                               <input 
@@ -263,42 +306,31 @@ const MOPSubmission: React.FC = () => {
                             </div>
                           </div>
                           <small className="form-text text-muted">
-                            Upload appendix file (Excel/CSV/TXT) with 3 columns: Command Name, Command, Reference Value
+                            {t('uploadAppendixHelp')}
                           </small>
                         </div>
                       </div>
+                      <button 
+                        type="button" 
+                        className="btn btn-secondary ml-2" 
+                        onClick={downloadTemplate}
+                      >
+                        <i className="fas fa-download mr-2"></i>{t('download')} Template
+                      </button>
                     </div>
                     
                     <div className="row">
                       <div className="col-md-12">
                         <div className="form-group">
-                          <label htmlFor="mopDescription"><strong>MOP Description:</strong></label>
-                          <textarea 
-                            className="form-control" 
-                            id="mopDescription" 
-                            rows={3} 
-                            placeholder="Brief description of the MOP..."
-                            value={formData.description}
-                            onChange={handleDescriptionChange}
+                          <label htmlFor="mopDescription"><strong>{t('mopDescriptionLabel')}</strong></label>
+                           <textarea 
+                             className="form-control" 
+                             id="mopDescription" 
+                             rows={3} 
+                             placeholder={t('mopDescriptionPlaceholder')}
+                             value={formData.description}
+                             onChange={handleDescriptionChange}
                           />
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="row">
-                      <div className="col-md-12">
-                        <div className="alert alert-info">
-                          <h5><i className="fas fa-info-circle mr-2"></i>File Requirements:</h5>
-                          <ul className="mb-0">
-                            <li><strong>PDF File:</strong> Must contain the complete MOP documentation</li>
-                            <li><strong>Appendix File:</strong> Excel/CSV/TXT with exactly 3 columns:
-                              <ul>
-                                <li>Column 1: Command Name (e.g., "SSH1 - Check root login")</li>
-                                <li>Column 2: Command (e.g., "grep -i '^PermitRootLogin' /etc/ssh/sshd_config")</li>
-                                <li>Column 3: Reference Value (e.g., "no")</li>
-                              </ul>
-                            </li>
-                          </ul>
                         </div>
                       </div>
                     </div>
@@ -307,17 +339,10 @@ const MOPSubmission: React.FC = () => {
                       <div className="col-md-12">
                         <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
                           {isSubmitting ? (
-                            <><i className="fas fa-spinner fa-spin mr-2"></i>Submitting...</>
+                            <><i className="fas fa-spinner fa-spin mr-2"></i>{t('submitting')}</>
                           ) : (
-                            <><i className="fas fa-upload mr-2"></i>Submit MOP</>
+                            <><i className="fas fa-upload mr-2"></i>{t('submitMOP')}</>
                           )}
-                        </button>
-                        <button 
-                          type="button" 
-                          className="btn btn-secondary ml-2" 
-                          onClick={downloadTemplate}
-                        >
-                          <i className="fas fa-download mr-2"></i>Download Template
                         </button>
                       </div>
                     </div>
@@ -335,7 +360,7 @@ const MOPSubmission: React.FC = () => {
           <div className="modal-dialog" role="document">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">Submission Status</h5>
+                <h5 className="modal-title">{t('submissionStatus')}</h5>
                 <button type="button" className="close" onClick={closeModal}>
                   <span aria-hidden="true">&times;</span>
                 </button>
@@ -344,24 +369,33 @@ const MOPSubmission: React.FC = () => {
                 {submissionStatus.type === 'success' ? (
                   <div className="alert alert-success">
                     <i className="fas fa-check-circle mr-2"></i>
-                    <strong>Success!</strong> {submissionStatus.message}
+                    <strong>{t('success')}!</strong> {submissionStatus.message}
                     {submissionStatus.mopId && (
-                      <><br /><small>MOP ID: {submissionStatus.mopId}</small></>
+                      <><br /><small>{t('mopId')}: {submissionStatus.mopId}</small></>
                     )}
                     {submissionStatus.status && (
-                      <><br /><small>Status: {submissionStatus.status}</small></>
+                      <><br /><small>{t('status')}: {submissionStatus.status}</small></>
                     )}
+                    {submissionStatus.commandsCount && (
+                       <><br /><small>{t('commandsProcessed')}: <span className="number-display">{submissionStatus.commandsCount}</span></small></>
+                     )}
+                     {submissionStatus.sanitizedCommands && submissionStatus.sanitizedCommands > 0 && (
+                       <><br /><small className="text-warning"><i className="fas fa-shield-alt mr-1"></i>{t('commandsSanitized')}: <span className="number-display">{submissionStatus.sanitizedCommands}</span></small></>
+                     )}
+                     {submissionStatus.sanitizeWarnings && submissionStatus.sanitizeWarnings > 0 && (
+                       <><br /><small className="text-info"><i className="fas fa-exclamation-triangle mr-1"></i>{t('securityWarnings')}: <span className="number-display">{submissionStatus.sanitizeWarnings}</span></small></>
+                     )}
                   </div>
                 ) : (
                   <div className="alert alert-danger">
                     <i className="fas fa-times-circle mr-2"></i>
-                    <strong>Error!</strong> {submissionStatus.message}
+                    <strong>{t('error')}!</strong> {submissionStatus.message}
                   </div>
                 )}
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={closeModal}>
-                  Close
+                  {t('close')}
                 </button>
               </div>
             </div>

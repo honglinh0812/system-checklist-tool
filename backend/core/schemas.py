@@ -202,3 +202,14 @@ class ExecutionSchema(SQLAlchemyAutoSchema):
     class Meta:
         model = ExecutionHistory
         load_instance = True
+
+# Change Password Schema
+class ChangePasswordSchema(Schema):
+    current_password = fields.Str(required=True, validate=validate.Length(min=1))
+    new_password = fields.Str(required=True, validate=validate.Length(min=6))
+    confirm_password = fields.Str(required=True, validate=validate.Length(min=6))
+    
+    @validates('confirm_password')
+    def validate_confirm_password(self, value):
+        if 'new_password' in self.context and value != self.context['new_password']:
+            raise ValidationError('Passwords do not match')

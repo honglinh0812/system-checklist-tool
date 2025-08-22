@@ -1,7 +1,7 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required
 from sqlalchemy import func, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from models.mop import MOP, MOPReview
 from models.execution import ExecutionHistory
 from models.user import User
@@ -11,6 +11,9 @@ from core.auth import get_current_user
 import logging
 
 logger = logging.getLogger(__name__)
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 
 dashboard_bp = Blueprint('dashboard', __name__, url_prefix='/api/dashboard')
 
@@ -34,7 +37,7 @@ def get_dashboard_stats():
         user_executions = ExecutionHistory.query.filter_by(executed_by=current_user.id).count()
         
         # Recent activity (last 7 days)
-        week_ago = datetime.utcnow() - timedelta(days=7)
+        week_ago = datetime.now(GMT_PLUS_7) - timedelta(days=7)
         recent_mops = MOP.query.filter(MOP.created_at >= week_ago).count()
         recent_executions = ExecutionHistory.query.filter(ExecutionHistory.started_at >= week_ago).count()
         
@@ -123,7 +126,7 @@ def get_recent_activities():
                 'type': 'execution_started',
                 'title': f'Execution of "{mop.name if mop else "Unknown MOP"}" {execution.status or "started"}',
                 'description': f'Executed on {len(execution.server_results) if hasattr(execution, "server_results") else "unknown"} servers',
-                'timestamp': execution.started_at.isoformat() if execution.started_at else execution.created_at.isoformat() if hasattr(execution, "created_at") else datetime.utcnow().isoformat(),
+                'timestamp': execution.started_at.isoformat() if execution.started_at else execution.created_at.isoformat() if hasattr(execution, "created_at") else datetime.now(GMT_PLUS_7).isoformat(),
                 'user': executor.username if executor else 'Unknown',
                 'status': execution.status or 'started',
                 'id': execution.id,
@@ -138,7 +141,7 @@ def get_recent_activities():
                 'type': 'mop_reviewed',
                 'title': f'MOP "{mop.name if mop else "Unknown MOP"}" {review.status or review.action if hasattr(review, "action") else "reviewed"}',
                 'description': (review.comments[:100] + '...' if len(review.comments) > 100 else review.comments) if review.comments else (review.reject_reason[:100] + '...' if review.reject_reason and len(review.reject_reason) > 100 else review.reject_reason or 'No comments'),
-                'timestamp': review.reviewed_at.isoformat() if review.reviewed_at else datetime.utcnow().isoformat(),
+                'timestamp': review.reviewed_at.isoformat() if review.reviewed_at else datetime.now(GMT_PLUS_7).isoformat(),
                 'user': reviewer.username if reviewer else 'Unknown',
                 'action': review.status or (review.action if hasattr(review, "action") else 'reviewed'),
                 'id': review.mop_id,
@@ -243,7 +246,7 @@ def get_dashboard_charts():
         days = request.args.get('days', 30, type=int)
         days = min(days, 365)  # Max 1 year
         
-        end_date = datetime.utcnow()
+        end_date = datetime.now(GMT_PLUS_7)
         start_date = end_date - timedelta(days=days)
         
         # MOPs created over time
@@ -444,7 +447,7 @@ def get_system_health():
             db_status = 'unhealthy'
         
         # Recent error rate
-        hour_ago = datetime.utcnow() - timedelta(hours=1)
+        hour_ago = datetime.now(GMT_PLUS_7) - timedelta(hours=1)
         failed_executions = ExecutionHistory.query.filter(
             ExecutionHistory.created_at >= hour_ago,
             ExecutionHistory.status == 'failed'
@@ -460,7 +463,7 @@ def get_system_health():
         health_metrics = {
             'database': {
                 'status': db_status,
-                'last_check': datetime.utcnow().isoformat()
+                'last_check': datetime.now(GMT_PLUS_7).isoformat()
             },
             'executions': {
                 'error_rate_1h': round(error_rate, 2),

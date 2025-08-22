@@ -4,7 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS, USER_ROLES } from '../../utils/constants';
 import { usePersistedState } from '../../hooks/usePersistedState';
-import { useModalState } from '../../utils/stateUtils';
+import { ErrorMessage } from '../../components/common';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface Execution {
   id: number;
@@ -27,15 +28,17 @@ interface Execution {
 }
 
 const ExecutionHistory: React.FC = () => {
+  const { t } = useTranslation();
   const { user } = useAuth();
   
   // Persisted state management with unique keys for Execution History
   const [executions, setExecutions] = usePersistedState<Execution[]>('history_executions', [], { autoSave: true, autoSaveInterval: 30000 });
   const [selectedExecution, setSelectedExecution] = usePersistedState<Execution | null>('history_selectedExecution', null);
-  const [showDetailModal, setShowDetailModal] = useModalState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   
   // Non-persisted states - loading
   const [loading, setLoading] = useState(true);
+  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Permission checks
   const isAdmin = user?.role === USER_ROLES.ADMIN;
@@ -46,6 +49,11 @@ const ExecutionHistory: React.FC = () => {
   useEffect(() => {
     fetchExecutions();
   }, []);
+
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setAlert({ type, message });
+    setTimeout(() => setAlert(null), 5000);
+  };
 
   const fetchExecutions = async () => {
     try {
@@ -65,32 +73,35 @@ const ExecutionHistory: React.FC = () => {
     if (execution.risk_assessment) {
       badges.push(
         <span key="risk" className="badge badge-warning mr-1">
-          Đánh giá rủi ro
+          {t('riskAssessment')}
         </span>
       );
     }
     if (execution.handover_assessment) {
       badges.push(
         <span key="handover" className="badge badge-info">
-          Đánh giá bàn giao
+          {t('handoverAssessment')}
         </span>
       );
     }
     return badges;
   };
 
-  const getResultBadge = (status: string) => {
+  const getResultBadge = (status: string | undefined) => {
+    if (!status) {
+      return <span className="badge badge-secondary">{t('unknown')}</span>;
+    }
     switch (status.toLowerCase()) {
       case 'completed':
-        return <span className="badge badge-success">Thành công</span>;
+        return <span className="badge badge-success">{t('success')}</span>;
       case 'failed':
-        return <span className="badge badge-danger">Thất bại</span>;
+        return <span className="badge badge-danger">{t('failed')}</span>;
       case 'running':
-        return <span className="badge badge-warning">Đang chạy</span>;
+        return <span className="badge badge-warning">{t('running')}</span>;
       case 'pending':
-        return <span className="badge badge-info">Chờ xử lý</span>;
+        return <span className="badge badge-info">{t('pending')}</span>;
       default:
-        return <span className="badge badge-secondary">Không xác định</span>;
+        return <span className="badge badge-secondary">{t('unknown')}</span>;
     }
   };
 
@@ -120,7 +131,7 @@ const ExecutionHistory: React.FC = () => {
 
   const handleExportAll = () => {
     if (!canExport) {
-      alert('You do not have permission to export data.');
+      showAlert('error', t('noExportPermission'));
       return;
     }
     // Logic để export tất cả kết quả
@@ -129,7 +140,7 @@ const ExecutionHistory: React.FC = () => {
 
   const handleExportSingle = (executionId: number) => {
     if (!canExport) {
-      alert('You do not have permission to export data.');
+      showAlert('error', t('noExportPermission'));
       return;
     }
     // Logic để export một execution
@@ -137,17 +148,14 @@ const ExecutionHistory: React.FC = () => {
   };
 
   const getPageTitle = () => {
-    if (isViewer) {
-      return 'Execution History (View Only)';
-    }
-    return 'Execution History';
+    return canExport ? t('executionHistory') : t('executionHistoryViewOnly');
   };
 
   const getPageDescription = () => {
     if (isViewer) {
       return 'View execution history and results (read-only access)';
     }
-    return 'Execution History (Last 7 Days)';
+    return 'Execution History - Tổng hợp tất cả lịch sử';
   };
 
   return (
@@ -176,10 +184,52 @@ const ExecutionHistory: React.FC = () => {
           </div>
         </div>
       </section>
-
+      {alert && (
+        <ErrorMessage 
+          message={alert.message} 
+          type={alert.type === 'error' ? 'danger' : alert.type === 'success' ? 'info' : 'warning'}
+          dismissible={true}
+          onDismiss={() => setAlert(null)}
+        />
+      )}
       {/* Main content */}
       <section className="content">
         <div className="container-fluid">
+          {/* Navigation Info */}
+          <div className="row mb-3">
+            <div className="col-12">
+              <div className="alert alert-info">
+                <h5><i className="fas fa-info-circle mr-2"></i>{t('executionHistoryDescription')}</h5>
+                <div className="row">
+                  <div className="col-md-6">
+                    <div className="card border-primary">
+                      <div className="card-body text-center">
+                        <i className="fas fa-play-circle fa-2x text-primary mb-2"></i>
+                        <h6>{t('mopExecutionHistory')}</h6>
+                        <p className="text-muted small">{t('assessmentHistoryDesc')}</p>
+                        <a href="/execution-history/mop-executions" className="btn btn-primary btn-sm">
+                          <i className="fas fa-arrow-right mr-1"></i>{t('viewDetails')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-md-6">
+                    <div className="card border-success">
+                      <div className="card-body text-center">
+                        <i className="fas fa-clipboard-list fa-2x text-success mb-2"></i>
+                        <h6>{t('mopActionHistory')}</h6>
+                        <p className="text-muted small">{t('mopActionHistoryFullDesc')}</p>
+                        <a href="/execution-history/mop-actions" className="btn btn-success btn-sm">
+                          <i className="fas fa-arrow-right mr-1"></i>{t('viewDetails')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <div className="row">
             <div className="col-12">
               <div className="card">
@@ -196,7 +246,7 @@ const ExecutionHistory: React.FC = () => {
                         onClick={handleExportAll}
                       >
                         <i className="fas fa-download mr-2"></i>
-                        Export All
+                        {t('exportAll')}
                       </button>
                     </div>
                   )}
@@ -212,13 +262,13 @@ const ExecutionHistory: React.FC = () => {
                       <table className="table table-striped">
                         <thead>
                           <tr>
-                            <th>Thời gian chạy</th>
-                            <th>Loại đánh giá</th>
-                            <th>MOP được sử dụng</th>
-                            <th>Kết quả đánh giá</th>
-                            <th>Người thực thi</th>
-                            <th>Thống kê</th>
-                            <th>Actions</th>
+                            <th>{t('executionTimeColumn')}</th>
+                            <th>{t('assessmentTypeColumn')}</th>
+                            <th>{t('mopUsedColumn')}</th>
+                            <th>{t('assessmentResultColumn')}</th>
+                            <th>{t('executorColumn')}</th>
+                            <th>{t('statisticsColumn')}</th>
+                            <th>{t('actionsColumn')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -300,19 +350,19 @@ const ExecutionHistory: React.FC = () => {
                   ) : (
                     <div className="text-center py-4">
                       <i className="fas fa-info-circle fa-3x text-muted mb-3"></i>
-                      <h5 className="text-muted">No Execution History</h5>
+                      <h5 className="text-muted">{t('noExecutionHistory')}</h5>
                       <p className="text-muted">
-                        No executions have been performed in the last 7 days.
+                        {t('noExecutionsLast7Days')}
                       </p>
                       {(isAdmin || isUser) && (
                         <div className="mt-3">
                           <Link to="/risk-assessment" className="btn btn-primary mr-2">
                             <i className="fas fa-shield-alt mr-2"></i>
-                            Start Risk Assessment
+                            {t('startRiskAssessmentButton')}
                           </Link>
                           <Link to="/handover-assessment" className="btn btn-success">
                             <i className="fas fa-exchange-alt mr-2"></i>
-                            Start Handover Assessment
+                            {t('startHandoverAssessmentButton')}
                           </Link>
                         </div>
                       )}
@@ -335,7 +385,7 @@ const ExecutionHistory: React.FC = () => {
               <div className="modal-header">
                 <h4 className="modal-title">
                   <i className="fas fa-info-circle mr-2"></i>
-                  Execution Details
+                  {t('executionDetailsModal')}
                 </h4>
                 <button 
                   type="button" 
@@ -353,7 +403,7 @@ const ExecutionHistory: React.FC = () => {
                         <i className="fas fa-tasks"></i>
                       </span>
                       <div className="info-box-content">
-                        <span className="info-box-text">MOP Name</span>
+                        <span className="info-box-text">{t('mopNameLabel')}</span>
                         <span className="info-box-number">{selectedExecution.mop_name}</span>
                       </div>
                     </div>
@@ -364,7 +414,7 @@ const ExecutionHistory: React.FC = () => {
                         <i className="fas fa-user"></i>
                       </span>
                       <div className="info-box-content">
-                        <span className="info-box-text">Executed By</span>
+                        <span className="info-box-text">{t('executedByLabel')}</span>
                         <span className="info-box-number">{selectedExecution.user_name}</span>
                       </div>
                     </div>
@@ -378,7 +428,7 @@ const ExecutionHistory: React.FC = () => {
                         <i className="fas fa-clock"></i>
                       </span>
                       <div className="info-box-content">
-                        <span className="info-box-text">Execution Time</span>
+                        <span className="info-box-text">{t('executionTimeLabel')}</span>
                         <span className="info-box-number">{selectedExecution.execution_time_formatted}</span>
                       </div>
                     </div>
@@ -389,7 +439,7 @@ const ExecutionHistory: React.FC = () => {
                         <i className="fas fa-stopwatch"></i>
                       </span>
                       <div className="info-box-content">
-                        <span className="info-box-text">Duration</span>
+                        <span className="info-box-text">{t('duration')}</span>
                         <span className="info-box-number">
                           {selectedExecution.duration ? `${selectedExecution.duration.toFixed(2)}s` : 'N/A'}
                         </span>
@@ -400,7 +450,7 @@ const ExecutionHistory: React.FC = () => {
 
                 <div className="row">
                   <div className="col-md-12">
-                    <h5>Assessment Types</h5>
+                    <h5>{t('assessmentTypesLabel')}</h5>
                     <div className="mb-3">
                       {getAssessmentBadges(selectedExecution)}
                     </div>
@@ -409,7 +459,7 @@ const ExecutionHistory: React.FC = () => {
 
                 <div className="row">
                   <div className="col-md-12">
-                    <h5>Execution Status</h5>
+                    <h5>{t('executionStatusLabel')}</h5>
                     <div className="mb-3">
                       {getResultBadge(selectedExecution.status)}
                     </div>
@@ -419,7 +469,7 @@ const ExecutionHistory: React.FC = () => {
                 {selectedExecution.total_commands > 0 && (
                   <div className="row">
                     <div className="col-md-12">
-                      <h5>Command Statistics</h5>
+                      <h5>{t('commandStatisticsLabel')}</h5>
                       <div className="progress mb-2">
                         <div 
                           className="progress-bar bg-success" 
@@ -431,17 +481,17 @@ const ExecutionHistory: React.FC = () => {
                       <p>
                         <span className="text-success">
                           <i className="fas fa-check mr-1"></i>
-                          Passed: {selectedExecution.passed_commands}
+                          {t('passedLabel')} {selectedExecution.passed_commands}
                         </span>
                         {' | '}
                         <span className="text-danger">
                           <i className="fas fa-times mr-1"></i>
-                          Failed: {selectedExecution.failed_commands}
+                          {t('failedLabel')} {selectedExecution.failed_commands}
                         </span>
                         {' | '}
                         <span className="text-info">
                           <i className="fas fa-list mr-1"></i>
-                          Total: {selectedExecution.total_commands}
+                          {t('totalLabel')} {selectedExecution.total_commands}
                         </span>
                       </p>
                     </div>
@@ -451,7 +501,7 @@ const ExecutionHistory: React.FC = () => {
                 {selectedExecution.details && (
                   <div className="row">
                     <div className="col-md-12">
-                      <h5>Details</h5>
+                      <h5>{t('detailsLabel')}</h5>
                       <pre className="bg-light p-3 rounded" style={{ maxHeight: '200px', overflow: 'auto' }}>
                         {selectedExecution.details}
                       </pre>
@@ -467,7 +517,7 @@ const ExecutionHistory: React.FC = () => {
                     onClick={() => handleExportSingle(selectedExecution.id)}
                   >
                     <i className="fas fa-download mr-2"></i>
-                    Export
+                    {t('exportButton')}
                   </button>
                 )}
                 <button 
@@ -475,7 +525,7 @@ const ExecutionHistory: React.FC = () => {
                   className="btn btn-secondary" 
                   onClick={() => setShowDetailModal(false)}
                 >
-                  Close
+                  {t('close')}
                 </button>
               </div>
             </div>

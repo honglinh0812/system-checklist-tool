@@ -53,12 +53,13 @@ export const executionUtils = {
       }
 
       // Get execution settings
+      const savedSettings = storage.loadExecutionSettings() as Partial<ExecutionSettings> || {};
       const execSettings: ExecutionSettings = {
         timeout: 300,
         retries: 3,
         parallel: false,
         continueOnError: true,
-        ...storage.loadExecutionSettings(),
+        ...savedSettings,
         ...settings
       };
 
@@ -215,7 +216,14 @@ export const executionUtils = {
 
   // Get execution settings
   getExecutionSettings: function(): ExecutionSettings {
-    return storage.loadExecutionSettings();
+    const savedSettings = storage.loadExecutionSettings() as Partial<ExecutionSettings> || {};
+    return {
+      timeout: 300,
+      retries: 3,
+      parallel: false,
+      continueOnError: true,
+      ...savedSettings
+    };
   },
 
   // Save execution settings

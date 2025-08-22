@@ -18,6 +18,26 @@ export interface SystemLogsResponse {
   log_files: LogFile[];
 }
 
+export interface AssessmentLogDirectory {
+  name: string;
+  type: 'Risk' | 'Handover';
+  created_at: string;
+  file_count: number;
+  files: string[];
+}
+
+export interface AssessmentLogsResponse {
+  log_directories: AssessmentLogDirectory[];
+}
+
+export interface AssessmentLogContent {
+  content: string;
+  filename: string;
+  size: number;
+  modified_at: string;
+  lines: number;
+}
+
 class LogService {
   async downloadJobLogs(jobId: string): Promise<Blob> {
     try {
@@ -102,6 +122,66 @@ class LogService {
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
+  }
+
+  // Assessment Logs Methods
+  async getAssessmentLogs(): Promise<AssessmentLogDirectory[]> {
+    try {
+      const response = await apiService.get<AssessmentLogsResponse>(API_ENDPOINTS.LOGS.ASSESSMENTS);
+      return response.log_directories || [];
+    } catch (error) {
+      console.error('Error fetching assessment logs:', error);
+      throw error;
+    }
+  }
+
+  async getAssessmentLogContent(logDir: string, filename: string): Promise<AssessmentLogContent> {
+    try {
+      return await apiService.get<AssessmentLogContent>(API_ENDPOINTS.LOGS.ASSESSMENT_CONTENT(logDir, filename));
+    } catch (error) {
+      console.error('Error fetching assessment log content:', error);
+      throw error;
+    }
+  }
+
+  async downloadAssessmentLog(logDir: string, filename: string): Promise<Blob> {
+    try {
+      const response = await fetch(API_ENDPOINTS.LOGS.ASSESSMENT_DOWNLOAD(logDir, filename), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download assessment log');
+      }
+      
+      return await response.blob();
+    } catch (error) {
+      console.error('Error downloading assessment log:', error);
+      throw error;
+    }
+  }
+
+  async downloadAllAssessmentLogs(logDir: string): Promise<Blob> {
+    try {
+      const response = await fetch(API_ENDPOINTS.LOGS.ASSESSMENT_DOWNLOAD_ALL(logDir), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download assessment logs');
+      }
+      
+      return await response.blob();
+    } catch (error) {
+      console.error('Error downloading assessment logs:', error);
+      throw error;
+    }
   }
 
   // Helper method to format log content for display

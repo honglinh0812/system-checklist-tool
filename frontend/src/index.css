@@ -6,6 +6,7 @@
 
 /* Import custom styles */
 @import './styles/components/custom.css';
+@import './styles/themes/dark-mode.css';
 
 /* Global styles */
 body {

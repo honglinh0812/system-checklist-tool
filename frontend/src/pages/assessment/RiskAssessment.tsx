@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
-import { usePersistedState } from '../../hooks/usePersistedState';
-import { useModalState } from '../../utils/stateUtils';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import { ErrorMessage, ProgressSteps } from '../../components/common';
+import { useAssessmentState, getAssessmentSteps, isStepCompleted, isStepAccessible } from '../../hooks/useAssessmentState';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface MOP {
   id: number;
@@ -22,38 +23,47 @@ interface Command {
 }
 
 const RiskAssessment: React.FC = () => {
-  // Persisted state management with unique keys for Risk Assessment
-  const [selectedMOP, setSelectedMOP] = usePersistedState<string>('risk_selectedMOP', '', { autoSave: true });
-  const [filteredMops, setFilteredMops] = usePersistedState<MOP[]>('risk_filteredMops', []);
-  const [activeTab, setActiveTab] = usePersistedState<'assessment' | 'reports'>('risk_activeTab', 'assessment');
-  const [showExecutionModal, setShowExecutionModal] = useModalState(false);
-  const [showFileUploadModal, setShowFileUploadModal] = useModalState(false);
-  const [showManualInputModal, setShowManualInputModal] = useModalState(false);
-  const [showViewMOPModal, setShowViewMOPModal] = useModalState(false);
-  const [servers, setServers] = usePersistedState<{name?: string, ip?: string, serverIP: string, sshPort: string, sshUser: string, sshPassword: string, sudoUser: string, sudoPassword: string}[]>('risk_servers', [], {
-    excludeKeys: ['sshPassword', 'sudoPassword'],
-    autoSave: true,
-    autoSaveInterval: 10000
-  });
-  const [selectedServers, setSelectedServers] = usePersistedState<boolean[]>('risk_selectedServers', []);
-  const [assessmentResults, setAssessmentResults] = usePersistedState<any>('risk_assessmentResults', null);
-  const [manualServerData, setManualServerData] = usePersistedState<{
+  // Use persistent state management
+  const { state: assessmentState, updateState } = useAssessmentState('risk');
+  
+  // Extract state values for easier access
+  const { selectedMOP, servers, selectedServers, currentStep, assessmentType } = assessmentState;
+
+  const { t } = useTranslation();
+  
+  // Non-persistent UI states
+  const [filteredMops, setFilteredMops] = useState<MOP[]>([]);
+  const [activeTab, setActiveTab] = useState<'assessment' | 'reports'>('assessment');
+  const [showExecutionModal, setShowExecutionModal] = useState(false);
+  const [showFileUploadModal, setShowFileUploadModal] = useState(false);
+  const [showManualInputModal, setShowManualInputModal] = useState(false);
+  const [showViewMOPModal, setShowViewMOPModal] = useState(false);
+  const [assessmentResults, setAssessmentResults] = useState<any>(null);
+  const [manualServerData, setManualServerData] = useState<{
     serverIP: string;
     sshPort: string;
     sshUser: string;
     sshPassword: string;
     sudoUser: string;
     sudoPassword: string;
-  }>('risk_manualServerData', {
+  }>({
     serverIP: '',
     sshPort: '22',
     sshUser: '',
     sshPassword: '',
     sudoUser: '',
     sudoPassword: ''
-  }, { excludeKeys: ['sshPassword', 'sudoPassword'] });
+  });
+  
+  // Progress steps
+  const steps = getAssessmentSteps('risk').map(step => ({
+    ...step,
+    completed: isStepCompleted(step.id, assessmentState),
+    active: step.id === currentStep
+  }));
   
   // Non-persisted states - loading, temporary actions, và volatile data
+  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [serverFile, setServerFile] = useState<File | null>(null);
   const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
@@ -71,6 +81,11 @@ const RiskAssessment: React.FC = () => {
     console.log('Can start assessment updated:', allSuccess, 'Selected results:', selectedResults);
     setCanStartAssessment(allSuccess);
   }, [selectedServers, connectionResults]);
+
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setAlert({ type, message });
+    setTimeout(() => setAlert(null), 5000);
+  };
 
   const fetchMOPs = async () => {
     try {
@@ -101,13 +116,28 @@ const RiskAssessment: React.FC = () => {
   };
 
   useEffect(() => {
+    console.log('RiskAssessment mounted, current states:', {
+      selectedMOP,
+      activeTab,
+      assessmentType,
+      serversLength: servers.length,
+      selectedServersLength: selectedServers.length
+    });
     fetchMOPs();
   }, []);
 
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
-    setSelectedMOP(mopId);
-    // MOP selection logic handled by setSelectedMOP
+    updateState({ 
+      selectedMOP: mopId,
+      currentStep: mopId ? 'configure-servers' : 'select-mop'
+    });
+  };
+  
+  const handleStepClick = (stepId: string) => {
+    if (isStepAccessible(stepId, assessmentState)) {
+      updateState({ currentStep: stepId });
+    }
   };
 
   const handleTestConnection = async () => {
@@ -115,7 +145,7 @@ const RiskAssessment: React.FC = () => {
     console.log('selectedServerList:', selectedServerList);
     
     if (selectedServerList.length === 0) {
-      alert('Vui lòng chọn ít nhất một server (tick vào checkbox) để test connection.');
+      showAlert('error', 'Vui lòng chọn ít nhất một server (tick vào checkbox) để test connection.');
       return;
     }
 
@@ -168,7 +198,7 @@ const RiskAssessment: React.FC = () => {
       setCanStartAssessment(allSuccess);
     } catch (error) {
       console.error('Error testing connection:', error);
-      alert('Có lỗi xảy ra khi test connection.');
+      showAlert('error', 'Có lỗi xảy ra khi test connection.');
     }
   };
 
@@ -218,7 +248,7 @@ const RiskAssessment: React.FC = () => {
       console.log('Start assessment response:', response);
       
       if (response.data && response.data.assessment_id) {
-        alert('Assessment đã được bắt đầu thành công!');
+        showAlert('success', 'Assessment đã được bắt đầu thành công!');
         
         // Polling for results instead of setTimeout
         const pollResults = async () => {
@@ -238,7 +268,7 @@ const RiskAssessment: React.FC = () => {
               console.log('Assessment results set successfully');
               setAssessmentLoading(false);
             } else if (resultsResponse.data && resultsResponse.data.status === 'failed') {
-              alert('Assessment thất bại. Vui lòng kiểm tra logs.');
+              showAlert('error', 'Assessment thất bại. Vui lòng kiểm tra logs.');
               setAssessmentResults({
                 ...resultsResponse.data,
                 mop_name: selectedMOPData.name,
@@ -251,7 +281,7 @@ const RiskAssessment: React.FC = () => {
             }
           } catch (error) {
             console.error('Error fetching assessment results:', error);
-            alert('Có lỗi xảy ra khi lấy kết quả assessment.');
+            showAlert('error', 'Có lỗi xảy ra khi lấy kết quả assessment.');
             setAssessmentLoading(false);
           }
         };
@@ -261,7 +291,7 @@ const RiskAssessment: React.FC = () => {
       }
     } catch (error) {
       console.error('Error starting assessment:', error);
-      alert('Có lỗi xảy ra khi bắt đầu assessment.');
+      showAlert('error', 'Có lỗi xảy ra khi bắt đầu assessment.');
       setAssessmentLoading(false);
     }
   };
@@ -280,13 +310,13 @@ const RiskAssessment: React.FC = () => {
       document.body.removeChild(a);
     } catch (error) {
       console.error('Error downloading template:', error);
-      alert('Có lỗi xảy ra khi tải template.');
+      showAlert('error', 'Có lỗi xảy ra khi tải template.');
     }
   };
 
   const handleAddManualServer = () => {
     if (!manualServerData.serverIP || !manualServerData.sshUser || !manualServerData.sshPassword) {
-      alert('Vui lòng điền đầy đủ thông tin server.');
+      showAlert('error', 'Vui lòng điền đầy đủ thông tin server.');
       return;
     }
 
@@ -299,8 +329,11 @@ const RiskAssessment: React.FC = () => {
       sudoPassword: manualServerData.sudoPassword
     };
 
-    setServers([...servers, newServer]);
-    setSelectedServers([...selectedServers, false]);
+    updateState({ 
+      servers: [...servers, newServer],
+      selectedServers: [...selectedServers, false],
+      currentStep: 'test-connection'
+    });
     setConnectionResults([...connectionResults, null]);
     
     // Reset form
@@ -318,7 +351,7 @@ const RiskAssessment: React.FC = () => {
 
   const handleFileUpload = async () => {
     if (!serverFile) {
-      alert('Vui lòng chọn file trước khi upload.');
+      showAlert('error', 'Vui lòng chọn file trước khi upload.');
       return;
     }
 
@@ -368,19 +401,21 @@ const RiskAssessment: React.FC = () => {
           return mappedServer;
         });
 
-        setServers([...servers, ...newServers]);
-        setSelectedServers([...selectedServers, ...new Array(newServers.length).fill(false)]);
+        updateState({ 
+          servers: [...servers, ...newServers],
+          selectedServers: [...selectedServers, ...new Array(newServers.length).fill(false)]
+        });
         setConnectionResults([...connectionResults, ...new Array(newServers.length).fill(null)]);
         
         setShowFileUploadModal(false);
         setServerFile(null);
-        alert(`Đã thêm thành công ${newServers.length} server từ file.`);
+        showAlert('success', `Đã thêm thành công ${newServers.length} server từ file.`);
       } else {
-        alert(response.message || 'Có lỗi xảy ra khi xử lý file.');
+        showAlert('error', response.message || 'Có lỗi xảy ra khi xử lý file.');
       }
     } catch (error) {
       console.error('Error uploading file:', error);
-      alert('Có lỗi xảy ra khi upload file.');
+      showAlert('error', 'Có lỗi xảy ra khi upload file.');
     }
   };
 
@@ -395,8 +430,10 @@ const RiskAssessment: React.FC = () => {
       const newSelectedServers = selectedServers.filter((_, i) => i !== deleteServerIndex);
       const newConnectionResults = connectionResults.filter((_, i) => i !== deleteServerIndex);
       
-      setServers(newServers);
-      setSelectedServers(newSelectedServers);
+      updateState({ 
+        servers: newServers,
+        selectedServers: newSelectedServers
+      });
       setConnectionResults(newConnectionResults);
     }
     setShowDeleteConfirm(false);
@@ -486,6 +523,15 @@ const RiskAssessment: React.FC = () => {
         </div>
       </section>
 
+      {alert && (
+        <ErrorMessage 
+          message={alert.message} 
+          type={alert.type === 'error' ? 'danger' : alert.type === 'success' ? 'info' : 'warning'}
+          dismissible={true}
+          onDismiss={() => setAlert(null)}
+        />
+      )}
+
       {/* Main content */}
       <section className="content">
         <div className="container-fluid">
@@ -500,7 +546,7 @@ const RiskAssessment: React.FC = () => {
                         onClick={() => setActiveTab('assessment')}
                         type="button"
                       >
-                        <i className="fas fa-exclamation-triangle mr-1"></i> Đánh giá đột xuất
+                        <i className="fas fa-clipboard-check mr-1"></i> Đánh giá
                       </button>
                     </li>
                     <li className="nav-item">
@@ -509,7 +555,7 @@ const RiskAssessment: React.FC = () => {
                         onClick={() => setActiveTab('reports')}
                         type="button"
                       >
-                        <i className="fas fa-calendar-check mr-1"></i> Đánh giá định kỳ
+                        <i className="fas fa-chart-bar mr-1"></i> Báo cáo
                       </button>
                     </li>
                   </ul>
@@ -531,7 +577,7 @@ const RiskAssessment: React.FC = () => {
                             {/* MOP Selection - Always visible */}
                             <div className="form-group">
                               <label htmlFor="mopSelect">
-                                <strong>Chọn MOP:</strong>
+                                <strong>{t('selectMOP')}:</strong>
                               </label>
                               <select 
                                 className="form-control" 
@@ -539,7 +585,7 @@ const RiskAssessment: React.FC = () => {
                                 value={selectedMOP}
                                 onChange={handleMOPSelect}
                               >
-                                <option value="">-- Chọn MOP --</option>
+                                <option value="">-- {t('selectMOP')} --</option>
                                 {Array.isArray(filteredMops) && filteredMops.map(mop => (
                                   <option key={mop.id} value={mop.id}>
                                     {mop.name}
@@ -551,7 +597,17 @@ const RiskAssessment: React.FC = () => {
                               )}
                             </div>
                             
+                            {/* Progress Steps */}
                             {selectedMOP && (
+                              <div className="mt-4 mb-4">
+                                <ProgressSteps 
+                                  steps={steps}
+                                  onStepClick={handleStepClick}
+                                />
+                              </div>
+                            )}
+                            
+                            {selectedMOP && assessmentType && (
                               <div className="mt-3">
                                 <button 
                                   className="btn btn-info mr-2"
@@ -615,7 +671,7 @@ const RiskAssessment: React.FC = () => {
                                                 checked={selectedServers.length > 0 && selectedServers.every(selected => selected)}
                                                 onChange={(e) => {
                                                   const checked = e.target.checked;
-                                                  setSelectedServers(servers.map(() => checked));
+                                                  updateState({ selectedServers: servers.map(() => checked) });
                                                 }}
                                               /> Chọn tất cả
                                             </th>
@@ -635,7 +691,7 @@ const RiskAssessment: React.FC = () => {
                                                   onChange={(e) => {
                                                     const newSelected = [...selectedServers];
                                                     newSelected[index] = e.target.checked;
-                                                    setSelectedServers(newSelected);
+                                                    updateState({ selectedServers: newSelected });
                                                   }}
                                                 />
                                               </td>
@@ -651,7 +707,7 @@ const RiskAssessment: React.FC = () => {
                                                       serverIP: e.target.value,
                                                       ip: e.target.value
                                                     };
-                                                    setServers(newServers);
+                                                    updateState({ servers: newServers });
                                                   }}
                                                   placeholder="192.168.1.100"
                                                 />
@@ -667,7 +723,7 @@ const RiskAssessment: React.FC = () => {
                                                       ...newServers[index],
                                                       sshPort: e.target.value
                                                     };
-                                                    setServers(newServers);
+                                                    updateState({ servers: newServers });
                                                   }}
                                                   placeholder="22"
                                                 />
@@ -906,7 +962,7 @@ const RiskAssessment: React.FC = () => {
                   <span>&times;</span>
                 </button>
               </div>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                 <div className="form-group">
                   <label>Select Servers</label>
                   <div className="border p-3" style={{ maxHeight: '300px', overflowY: 'auto' }}>

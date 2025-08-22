@@ -5,7 +5,7 @@ import threading
 import tempfile
 import shutil
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request, jsonify, session, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -21,6 +21,7 @@ from api.api_mops import mops_bp
 from api.api_commands import commands_bp, executions_bp
 from api.api_assessments import assessments_bp
 from api.api_audit import audit_bp
+from api_validation_test import validation_test_bp
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import pandas as pd
@@ -38,6 +39,9 @@ from services.logging_system import LoggingSystem
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 
 # Initialize logging system
 logging_system = LoggingSystem()
@@ -115,6 +119,7 @@ def create_app(config_name='development'):
     app.register_blueprint(executions_bp)
     app.register_blueprint(assessments_bp)
     app.register_blueprint(audit_bp)
+    app.register_blueprint(validation_test_bp)
     
     return app
 
@@ -187,7 +192,7 @@ current_commands = []
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now(GMT_PLUS_7).isoformat()})
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -456,7 +461,7 @@ def validate_server():
                 'ssh_username': ssh_username,
                 'ssh_password': ssh_password,
                 'validated': True,
-                'validated_at': datetime.utcnow().isoformat()
+                'validated_at': datetime.now(GMT_PLUS_7).isoformat()
             }
             
             return jsonify({
@@ -814,26 +819,140 @@ def export_system_logs(log_type):
         logger.error(f"Error exporting system logs: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+# Assessment Logs API Endpoints
+@app.route('/api/logs/assessments', methods=['GET'])
+@jwt_required()
+def get_assessment_logs():
+    """Get list of assessment log directories"""
+    try:
+        logs_dir = 'logs'
+        if not os.path.exists(logs_dir):
+            return jsonify({'log_directories': []})
+        
+        log_directories = []
+        for item in os.listdir(logs_dir):
+            item_path = os.path.join(logs_dir, item)
+            if os.path.isdir(item_path) and (item.startswith('Risk-') or item.startswith('Handover-')):
+                # Get directory info
+                stat = os.stat(item_path)
+                created_time = datetime.fromtimestamp(stat.st_ctime, GMT_PLUS_7)
+                
+                # Count files in directory
+                files = [f for f in os.listdir(item_path) if os.path.isfile(os.path.join(item_path, f))]
+                
+                log_directories.append({
+                    'name': item,
+                    'type': 'Risk' if item.startswith('Risk-') else 'Handover',
+                    'created_at': created_time.isoformat(),
+                    'file_count': len(files),
+                    'files': files
+                })
+        
+        # Sort by creation time (newest first)
+        log_directories.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        return jsonify({'log_directories': log_directories})
+        
+    except Exception as e:
+        logger.error(f"Error getting assessment logs: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/logs/assessments/<log_dir>/<filename>', methods=['GET'])
+@jwt_required()
+def get_assessment_log_content(log_dir, filename):
+    """Get content of a specific assessment log file"""
+    try:
+        # Validate log directory name
+        if not (log_dir.startswith('Risk-') or log_dir.startswith('Handover-')):
+            return jsonify({'error': 'Invalid log directory'}), 400
+        
+        log_file_path = os.path.join('logs', log_dir, filename)
+        
+        if not os.path.exists(log_file_path):
+            return jsonify({'error': 'Log file not found'}), 404
+        
+        # Read file content
+        with open(log_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Get file stats
+        stat = os.stat(log_file_path)
+        file_size = stat.st_size
+        modified_time = datetime.fromtimestamp(stat.st_mtime, GMT_PLUS_7)
+        
+        return jsonify({
+            'content': content,
+            'filename': filename,
+            'size': file_size,
+            'modified_at': modified_time.isoformat(),
+            'lines': len(content.splitlines())
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting assessment log content: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/logs/assessments/<log_dir>/<filename>/download', methods=['GET'])
+@jwt_required()
+def download_assessment_log(log_dir, filename):
+    """Download a specific assessment log file"""
+    try:
+        # Validate log directory name
+        if not (log_dir.startswith('Risk-') or log_dir.startswith('Handover-')):
+            return jsonify({'error': 'Invalid log directory'}), 400
+        
+        log_file_path = os.path.join('logs', log_dir, filename)
+        
+        if not os.path.exists(log_file_path):
+            return jsonify({'error': 'Log file not found'}), 404
+        
+        return send_file(
+            log_file_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/plain'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading assessment log: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+@app.route('/api/logs/assessments/<log_dir>/download-all', methods=['GET'])
+@jwt_required()
+def download_assessment_logs_zip(log_dir):
+    """Download all log files in an assessment directory as ZIP"""
+    try:
+        # Validate log directory name
+        if not (log_dir.startswith('Risk-') or log_dir.startswith('Handover-')):
+            return jsonify({'error': 'Invalid log directory'}), 400
+        
+        log_dir_path = os.path.join('logs', log_dir)
+        
+        if not os.path.exists(log_dir_path):
+            return jsonify({'error': 'Log directory not found'}), 404
+        
+        # Create temporary ZIP file
+        import zipfile
+        temp_dir = tempfile.mkdtemp()
+        zip_filename = f"{log_dir}.zip"
+        zip_path = os.path.join(temp_dir, zip_filename)
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for filename in os.listdir(log_dir_path):
+                file_path = os.path.join(log_dir_path, filename)
+                if os.path.isfile(file_path):
+                    zipf.write(file_path, filename)
+        
+        return send_file(
+            zip_path,
+            as_attachment=True,
+            download_name=zip_filename,
+            mimetype='application/zip'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading assessment logs ZIP: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 # MOP approval routes (approve, finalize, approve-final) moved to api/api_mops.py blueprint
 

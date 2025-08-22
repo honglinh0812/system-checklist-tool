@@ -13,7 +13,7 @@ export interface Server {
 export const serverUtils = {
   // Load servers from storage
   loadServers: function(): Server[] {
-    return storage.loadServerList();
+    return storage.loadServerList() as Server[];
   },
 
   // Display servers in UI (returns formatted data for React components)

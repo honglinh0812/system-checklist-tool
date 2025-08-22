@@ -1,7 +1,7 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required
 from sqlalchemy import desc, and_
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from models.audit_log import UserActivityLog, ActionType, ResourceType
 from models.user import User
 from models import db
@@ -10,6 +10,9 @@ from .api_utils import (
 )
 from core.auth import get_current_user
 import logging
+
+# GMT+7 timezone
+GMT_PLUS_7 = timezone(timedelta(hours=7))
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,8 @@ def get_audit_logs():
         resource_id = request.args.get('resource_id', type=int)
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
+        mop_name = request.args.get('mop_name')
+        status = request.args.get('status')
         
         # Build query
         query = UserActivityLog.query
@@ -49,20 +54,28 @@ def get_audit_logs():
         
         if action:
             try:
-                action_enum = ActionType(action.lower())
+                action_enum = ActionType(action.upper())
                 query = query.filter(UserActivityLog.action == action_enum)
             except ValueError:
                 return api_error(f'Invalid action type: {action}', 400)
         
         if resource_type:
             try:
-                resource_enum = ResourceType(resource_type.lower())
+                resource_enum = ResourceType(resource_type.upper())
                 query = query.filter(UserActivityLog.resource_type == resource_enum)
             except ValueError:
                 return api_error(f'Invalid resource type: {resource_type}', 400)
         
         if resource_id:
             query = query.filter(UserActivityLog.resource_id == resource_id)
+        
+        # MOP name filtering
+        if mop_name:
+            query = query.filter(UserActivityLog.resource_name.ilike(f'%{mop_name}%'))
+        
+        # Status filtering (check in details JSON field)
+        if status:
+            query = query.filter(UserActivityLog.details.op('->>')('status').ilike(f'%{status}%'))
         
         # Date range filtering
         if start_date:
@@ -133,7 +146,7 @@ def get_audit_stats():
         
         # Get date range (default to last 30 days)
         days = request.args.get('days', 30, type=int)
-        start_date = datetime.utcnow() - timedelta(days=days)
+        start_date = datetime.now(GMT_PLUS_7) - timedelta(days=days)
         
         # Total logs count
         total_logs = UserActivityLog.query.filter(
@@ -212,3 +225,68 @@ def cleanup_old_logs():
     except Exception as e:
         logger.error(f"Error cleaning up audit logs: {str(e)}")
         return api_error('Failed to cleanup audit logs', 500)
+
+@audit_bp.route('/mop-actions', methods=['GET'])
+@jwt_required()
+def get_mop_actions():
+    """Get MOP actions history"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get query parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 100)
+        
+        # Build query for MOP-related actions
+        query = UserActivityLog.query.filter(
+            UserActivityLog.resource_type == ResourceType.MOP
+        )
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            query = query.filter(UserActivityLog.user_id == current_user.id)
+        
+        # Order by creation date (newest first)
+        query = query.order_by(desc(UserActivityLog.created_at))
+        
+        # Paginate
+        pagination = query.paginate(
+            page=page,
+            per_page=per_page,
+            error_out=False
+        )
+        
+        # Format results
+        actions = []
+        for log in pagination.items:
+            actions.append({
+                'id': log.id,
+                'user_id': log.user_id,
+                'username': log.username,
+                'action': log.action.value,
+                'resource_type': log.resource_type.value,
+                'resource_id': log.resource_id,
+                'resource_name': log.resource_name,
+                'details': log.details,
+                'ip_address': log.ip_address,
+                'user_agent': log.user_agent,
+                'created_at': log.created_at.isoformat() if log.created_at else None
+            })
+        
+        return api_response({
+            'actions': actions,
+            'pagination': {
+                'page': pagination.page,
+                'pages': pagination.pages,
+                'per_page': pagination.per_page,
+                'total': pagination.total,
+                'has_next': pagination.has_next,
+                'has_prev': pagination.has_prev
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting MOP actions: {str(e)}")
+        return api_error('Failed to get MOP actions', 500)
