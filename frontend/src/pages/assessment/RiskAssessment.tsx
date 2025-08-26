@@ -27,7 +27,7 @@ const RiskAssessment: React.FC = () => {
   const { state: assessmentState, updateState } = useAssessmentState('risk');
   
   // Extract state values for easier access
-  const { selectedMOP, servers, selectedServers, currentStep, assessmentType } = assessmentState;
+  const { selectedMOP, servers, selectedServers, currentStep, assessmentType, assessmentResults, assessmentProgress } = assessmentState;
 
   const { t } = useTranslation();
   
@@ -38,7 +38,6 @@ const RiskAssessment: React.FC = () => {
   const [showFileUploadModal, setShowFileUploadModal] = useState(false);
   const [showManualInputModal, setShowManualInputModal] = useState(false);
   const [showViewMOPModal, setShowViewMOPModal] = useState(false);
-  const [assessmentResults, setAssessmentResults] = useState<any>(null);
   const [manualServerData, setManualServerData] = useState<{
     serverIP: string;
     sshPort: string;
@@ -128,10 +127,19 @@ const RiskAssessment: React.FC = () => {
 
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
+    
+    // Reset assessment state when selecting new MOP
     updateState({ 
       selectedMOP: mopId,
-      currentStep: mopId ? 'configure-servers' : 'select-mop'
+      currentStep: mopId ? 'configure-servers' : 'select-mop',
+      assessmentStarted: false,
+      assessmentCompleted: false,
+      hasResults: false
     });
+    
+    // Clear assessment results
+    updateState({ assessmentResults: null });
+    setAssessmentLoading(false);
   };
   
   const handleStepClick = (stepId: string) => {
@@ -210,6 +218,15 @@ const RiskAssessment: React.FC = () => {
       return;
     }
 
+    // Reset assessment state when starting new assessment
+    updateState({
+      assessmentStarted: false,
+      assessmentCompleted: false,
+      hasResults: false,
+      currentStep: 'run-assessment'
+    });
+    updateState({ assessmentResults: null });
+
     // Validate MOP type for risk assessment
     const selectedMOPData = Array.isArray(filteredMops) ? filteredMops.find(mop => mop.id.toString() === selectedMOP) : null;
     if (!selectedMOPData || (selectedMOPData as any).assessment_type !== 'risk_assessment') {
@@ -237,57 +254,146 @@ const RiskAssessment: React.FC = () => {
     try {
       console.log('Setting assessment loading to true');
       setAssessmentLoading(true);
+      
+      // Update state to indicate assessment has started
+      updateState({
+        assessmentStarted: true,
+        currentStep: 'run-assessment'
+      });
+      
       console.log('Sending request to start assessment with data:', {
         mop_id: parseInt(selectedMOP),
         servers: mappedServerList
       });
-      const response = await apiService.post<{data: {assessment_id: number, status: string, message: string}, success: boolean}>(API_ENDPOINTS.ASSESSMENTS.RISK_START, {
+      const response = await apiService.post<{data: {assessment_id: number, job_id: string, status: string, message: string}, success: boolean}>(API_ENDPOINTS.ASSESSMENTS.RISK_START, {
         mop_id: parseInt(selectedMOP),
         servers: mappedServerList
       });
       console.log('Start assessment response:', response);
       
-      if (response.data && response.data.assessment_id) {
+      if (response.data && response.data.assessment_id && response.data.job_id) {
         showAlert('success', 'Assessment đã được bắt đầu thành công!');
         
-        // Polling for results instead of setTimeout
-        const pollResults = async () => {
+        // Polling for job status and progress using job_id
+        const pollJobStatus = async () => {
           try {
-            console.log('Fetching results for assessment ID:', response.data.assessment_id);
-            const resultsUrl = API_ENDPOINTS.ASSESSMENTS.RISK_RESULTS(response.data.assessment_id);
-            console.log('Results URL:', resultsUrl);
-            const resultsResponse = await apiService.get<any>(resultsUrl);
-            console.log('Results response:', resultsResponse);
+            console.log('Fetching job status for job ID:', response.data.job_id);
+            const statusResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.RISK_JOB_STATUS(response.data.job_id));
+            console.log('Job status response:', statusResponse);
             
-            if (resultsResponse.data && resultsResponse.data.status === 'completed') {
-              setAssessmentResults({
-                ...resultsResponse.data,
-                mop_name: selectedMOPData.name,
-                commands: selectedMOPData.commands || []
-              });
-              console.log('Assessment results set successfully');
-              setAssessmentLoading(false);
-            } else if (resultsResponse.data && resultsResponse.data.status === 'failed') {
-              showAlert('error', 'Assessment thất bại. Vui lòng kiểm tra logs.');
-              setAssessmentResults({
-                ...resultsResponse.data,
-                mop_name: selectedMOPData.name,
-                commands: selectedMOPData.commands || []
-              });
-              setAssessmentLoading(false);
+            if (statusResponse.data) {
+              const { status, logs } = statusResponse.data;
+              
+              // Update progress information
+              if (status === 'running' || status === 'pending') {
+                const detailedProgress = statusResponse.data.detailed_progress || {};
+                
+                // Calculate estimated time remaining
+                const calculateEstimatedTime = (currentProgress: any, startTime: Date) => {
+                  const now = new Date();
+                  const elapsedMs = now.getTime() - startTime.getTime();
+                  const completedCommands = currentProgress.current_command || 0;
+                  const totalCommands = currentProgress.total_commands || selectedMOPData.commands?.length || 0;
+                  
+                  if (completedCommands === 0 || totalCommands === 0) {
+                    return 'Đang tính toán...';
+                  }
+                  
+                  const progressRatio = completedCommands / totalCommands;
+                  const estimatedTotalMs = elapsedMs / progressRatio;
+                  const remainingMs = estimatedTotalMs - elapsedMs;
+                  
+                  if (remainingMs <= 0) {
+                    return 'Sắp hoàn thành...';
+                  }
+                  
+                  const remainingMinutes = Math.ceil(remainingMs / (1000 * 60));
+                  if (remainingMinutes < 1) {
+                    return 'Dưới 1 phút';
+                  } else if (remainingMinutes < 60) {
+                    return `${remainingMinutes} phút`;
+                  } else {
+                    const hours = Math.floor(remainingMinutes / 60);
+                    const minutes = remainingMinutes % 60;
+                    return `${hours}h ${minutes}m`;
+                  }
+                };
+                
+                const startTime = assessmentProgress?.startTime || new Date();
+                const estimatedTimeRemaining = calculateEstimatedTime(detailedProgress, startTime);
+                
+                updateState({ 
+                  assessmentProgress: {
+                    currentCommand: `Đang thực hiện command ${detailedProgress.current_command || 1}/${detailedProgress.total_commands || selectedMOPData.commands?.length || 0}`,
+                    currentServer: `Đang xử lý server ${detailedProgress.current_server || 1}/${detailedProgress.total_servers || mappedServerList.length}`,
+                    completedCommands: detailedProgress.current_command || 0,
+                    totalCommands: detailedProgress.total_commands || selectedMOPData.commands?.length || 0,
+                    completedServers: detailedProgress.current_server || 0,
+                    totalServers: detailedProgress.total_servers || mappedServerList.length,
+                    logs: logs ? logs.slice(-20) : [],
+                    startTime,
+                    estimatedTimeRemaining
+                  }
+                });
+                
+                console.log('Updated assessment progress:', {
+                  currentCommand: detailedProgress.current_command,
+                  totalCommands: detailedProgress.total_commands,
+                  currentServer: detailedProgress.current_server,
+                  totalServers: detailedProgress.total_servers,
+                  percentage: detailedProgress.percentage
+                });
+                
+                // Continue polling
+                setTimeout(pollJobStatus, 1000);
+              } else if (status === 'completed' || status === 'failed') {
+                // Job finished, get final results
+                updateState({ assessmentProgress: null });
+                
+                try {
+                  console.log('Fetching final results for assessment ID:', response.data.assessment_id);
+                  const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.RISK_RESULTS(response.data.assessment_id));
+                  console.log('Final results response:', resultsResponse);
+                  
+                  updateState({ 
+                    assessmentResults: {
+                      ...resultsResponse.data,
+                      mop_name: selectedMOPData.name,
+                      commands: selectedMOPData.commands || []
+                    },
+                    assessmentProgress: null
+                  });
+                  setAssessmentLoading(false);
+                  
+                  updateState({
+                    assessmentCompleted: true,
+                    hasResults: true,
+                    currentStep: 'view-results'
+                  });
+                  
+                  if (status === 'failed') {
+                    showAlert('error', 'Assessment thất bại. Vui lòng kiểm tra logs.');
+                  }
+                } catch (resultsError) {
+                  console.error('Error fetching final results:', resultsError);
+                  showAlert('error', 'Có lỗi xảy ra khi lấy kết quả assessment.');
+                  setAssessmentLoading(false);
+                  updateState({ assessmentProgress: null });
+                }
+              }
             } else {
-              // Still processing, continue polling
-              setTimeout(pollResults, 2000); // Poll every 2 seconds
+              // No status data, continue polling
+              setTimeout(pollJobStatus, 1000);
             }
           } catch (error) {
-            console.error('Error fetching assessment results:', error);
-            showAlert('error', 'Có lỗi xảy ra khi lấy kết quả assessment.');
-            setAssessmentLoading(false);
+            console.error('Error fetching job status:', error);
+            // Continue polling even on error, might be temporary
+            setTimeout(pollJobStatus, 2000);
           }
         };
         
         // Start polling after 2 seconds
-        setTimeout(pollResults, 2000);
+        setTimeout(pollJobStatus, 2000);
       }
     } catch (error) {
       console.error('Error starting assessment:', error);
@@ -574,7 +680,43 @@ const RiskAssessment: React.FC = () => {
                           </div>
                         ) : (
                           <>
-                            {/* MOP Selection - Always visible */}
+                            {/* Progress Steps - Always visible */}
+                            <div className="mb-4">
+                              <div className="d-flex justify-content-between align-items-center">
+                                <h6>Tiến trình đánh giá</h6>
+                                {(assessmentResults || selectedMOP || servers.length > 0) && (
+                                  <button 
+                                    className="btn btn-outline-secondary btn-sm"
+                                    onClick={() => {
+                                      updateState({
+                                        selectedMOP: '',
+                                        servers: [],
+                                        selectedServers: [],
+                                        currentStep: 'select-mop',
+                                        assessmentStarted: false,
+                                        assessmentCompleted: false,
+                                        hasResults: false
+                                      });
+                                      updateState({ assessmentResults: null, assessmentProgress: null });
+                                      setConnectionResults([]);
+                                      setCanStartAssessment(false);
+                                      setAssessmentLoading(false);
+                                      setNotification(null);
+                                    }}
+                                    title="Reset về trạng thái ban đầu"
+                                  >
+                                    <i className="fas fa-redo mr-1"></i>
+                                    Reset
+                                  </button>
+                                )}
+                              </div>
+                              <ProgressSteps 
+                                steps={steps}
+                                onStepClick={handleStepClick}
+                              />
+                            </div>
+                            
+                            {/* MOP Selection */}
                             <div className="form-group">
                               <label htmlFor="mopSelect">
                                 <strong>{t('selectMOP')}:</strong>
@@ -596,16 +738,6 @@ const RiskAssessment: React.FC = () => {
                                 <small className="text-muted">No approved MOPs for risk assessment are currently available.</small>
                               )}
                             </div>
-                            
-                            {/* Progress Steps */}
-                            {selectedMOP && (
-                              <div className="mt-4 mb-4">
-                                <ProgressSteps 
-                                  steps={steps}
-                                  onStepClick={handleStepClick}
-                                />
-                              </div>
-                            )}
                             
                             {selectedMOP && assessmentType && (
                               <div className="mt-3">
@@ -777,12 +909,99 @@ const RiskAssessment: React.FC = () => {
                                        </button>
                                      </div>
                                      
-                                     {/* Assessment Loading */}
+                                     {/* Assessment Loading with Progress */}
                                      {assessmentLoading && (
                                        <div className="mt-4">
-                                         <div className="alert alert-info">
-                                           <i className="fas fa-spinner fa-spin mr-2"></i>
-                                           Đang thực hiện assessment, vui lòng đợi...
+                                         <div className="card">
+                                           <div className="card-header">
+                                             <h6 className="mb-0">
+                                               <i className="fas fa-spinner fa-spin mr-2"></i>
+                                               Đang thực hiện Risk Assessment
+                                             </h6>
+                                           </div>
+                                           <div className="card-body">
+                                             {assessmentProgress ? (
+                                               <div>
+                                                 {/* Server Progress */}
+                                                 <div className="mb-3">
+                                                   <div className="d-flex justify-content-between align-items-center mb-2">
+                                                     <span><strong>Tiến trình Server:</strong></span>
+                                                     <span className="text-muted">
+                                                       {assessmentProgress.completedServers}/{assessmentProgress.totalServers} servers
+                                                     </span>
+                                                   </div>
+                                                   <div className="progress mb-2">
+                                                     <div 
+                                                       className="progress-bar bg-primary" 
+                                                       style={{
+                                                         width: `${(assessmentProgress.completedServers / assessmentProgress.totalServers) * 100}%`
+                                                       }}
+                                                     ></div>
+                                                   </div>
+                                                   <small className="text-muted">
+                                                     <i className="fas fa-server mr-1"></i>
+                                                     Đang xử lý: {assessmentProgress.currentServer}
+                                                   </small>
+                                                 </div>
+                                                 
+                                                 {/* Command Progress */}
+                                                 <div className="mb-3">
+                                                   <div className="d-flex justify-content-between align-items-center mb-2">
+                                                     <span><strong>Tiến trình Commands:</strong></span>
+                                                     <span className="text-muted">
+                                                       {assessmentProgress.completedCommands}/{assessmentProgress.totalCommands} commands
+                                                     </span>
+                                                   </div>
+                                                   <div className="progress mb-2">
+                                                     <div 
+                                                       className="progress-bar bg-success" 
+                                                       style={{
+                                                         width: `${(assessmentProgress.completedCommands / assessmentProgress.totalCommands) * 100}%`
+                                                       }}
+                                                     ></div>
+                                                   </div>
+                                                   <small className="text-muted">
+                                                     <i className="fas fa-terminal mr-1"></i>
+                                                     Đang thực hiện: {assessmentProgress.currentCommand}
+                                                   </small>
+                                                 </div>
+                                                 
+                                                 {/* Time Estimation */}
+                                                 {assessmentProgress.estimatedTimeRemaining && (
+                                                   <div className="mb-3">
+                                                     <div className="d-flex justify-content-between align-items-center mb-2">
+                                                       <span><strong>Thời gian ước tính:</strong></span>
+                                                       <span className="text-muted">
+                                                         <i className="fas fa-clock mr-1"></i>
+                                                         Còn lại: {assessmentProgress.estimatedTimeRemaining}
+                                                       </span>
+                                                     </div>
+                                                   </div>
+                                                 )}
+                                                 
+                                                 {/* Real-time Logs */}
+                                                 {assessmentProgress.logs && assessmentProgress.logs.length > 0 && (
+                                                   <div className="mt-3">
+                                                     <h6><strong>Logs thời gian thực:</strong></h6>
+                                                     <div className="card">
+                                                       <div className="card-body p-2" style={{backgroundColor: '#f8f9fa', maxHeight: '200px', overflowY: 'auto'}}>
+                                                         <pre style={{fontSize: '11px', margin: 0, whiteSpace: 'pre-wrap'}}>
+                                                           {assessmentProgress.logs.slice(-20).join('\n')}
+                                                         </pre>
+                                                       </div>
+                                                     </div>
+                                                   </div>
+                                                 )}
+                                               </div>
+                                             ) : (
+                                               <div className="text-center">
+                                                 <div className="spinner-border text-primary mb-3" role="status">
+                                                   <span className="sr-only">Loading...</span>
+                                                 </div>
+                                                 <p className="mb-0">Đang khởi tạo assessment...</p>
+                                               </div>
+                                             )}
+                                           </div>
                                          </div>
                                        </div>
                                      )}
@@ -798,7 +1017,7 @@ const RiskAssessment: React.FC = () => {
                                              </h5>
                                              <button 
                                                className="btn btn-secondary btn-sm"
-                                               onClick={() => setAssessmentResults(null)}
+                                               onClick={() => updateState({ assessmentResults: null })}
                                              >
                                                <i className="fas fa-times mr-2"></i>
                                                Clear Results
@@ -809,11 +1028,11 @@ const RiskAssessment: React.FC = () => {
                                                <h6><strong>MOP đã chạy:</strong> {assessmentResults.mop_name}</h6>
                                                <p><strong>Trạng thái:</strong> 
                                                  <span className={`badge ml-2 ${
-                                                   assessmentResults.status === 'completed' ? 'badge-success' : 
-                                                   assessmentResults.status === 'failed' ? 'badge-danger' : 'badge-warning'
+                                                   assessmentResults.status === 'success' ? 'badge-success' : 
+                                                   assessmentResults.status === 'fail' ? 'badge-danger' : 'badge-warning'
                                                  }`}>
-                                                   {assessmentResults.status === 'completed' ? 'Thành công' : 
-                                                    assessmentResults.status === 'failed' ? 'Thất bại' : 'Đang xử lý'}
+                                                   {assessmentResults.status === 'success' ? 'Thành công' : 
+                                                    assessmentResults.status === 'fail' ? 'Thất bại' : 'Đang xử lý'}
                                                  </span>
                                                </p>
                                                
@@ -1167,7 +1386,7 @@ const RiskAssessment: React.FC = () => {
                   <span>&times;</span>
                 </button>
               </div>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                 <div className="table-responsive">
                   <table className="table table-striped">
                     <thead>

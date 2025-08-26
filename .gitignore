@@ -253,3 +253,4 @@ test_appendix.csv
 .trae/
 checklist*
 COMMAND_SANITIZATION.md
+*.txt

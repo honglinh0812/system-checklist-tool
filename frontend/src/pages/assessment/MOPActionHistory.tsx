@@ -58,8 +58,18 @@ const MOPActionHistory: React.FC = () => {
 
   const handleExportAll = async () => {
     try {
+      // Escape CSV values to handle commas and quotes
+      const escapeCSV = (value: any) => {
+        if (value === null || value === undefined) return '';
+        const str = String(value);
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+      
       const csvContent = [
-        [t('actionId'), t('actionType'), t('actionTime'), t('mopName'), t('user'), t('oldStatus'), t('newStatus'), t('details')].join(','),
+        [t('actionId'), t('actionType'), t('actionTime'), t('mopName'), t('user'), t('oldStatus'), t('newStatus'), t('details')].map(escapeCSV).join(','),
         ...actions.map(action => [
           action.id,
           action.action_type,
@@ -69,10 +79,12 @@ const MOPActionHistory: React.FC = () => {
           action.old_status || '',
           action.new_status || '',
           action.details || ''
-        ].join(','))
+        ].map(escapeCSV).join(','))
       ].join('\n');
       
-      const blob = new Blob([csvContent], { type: 'text/csv' });
+      // Add UTF-8 BOM for proper Vietnamese character display
+      const BOM = '\uFEFF';
+      const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

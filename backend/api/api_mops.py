@@ -19,7 +19,7 @@ from core.schemas import (
     MOPSchema, CommandSchema
 )
 from core.auth import get_current_user
-from utils.audit_logger import log_mop_action
+from utils.audit_helpers import log_mop_action
 import logging
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def get_mops():
             query = MOP.query.filter(MOP.status == MOPStatus.APPROVED.value)
         else:
             # For management context, apply role-based filtering
-            query = MOP.query.filter(MOP.status.in_([MOPStatus.APPROVED.value, MOPStatus.PENDING.value]))
+            query = MOP.query.filter(MOP.status.in_([MOPStatus.APPROVED.value, MOPStatus.PENDING.value, MOPStatus.CREATED.value, MOPStatus.EDITED.value]))
             if current_user.role == 'user':
                 # Users can only see their own MOPs
                 query = query.filter(MOP.created_by == current_user.id)
@@ -248,13 +248,11 @@ def update_mop(mop_id):
         if current_user.role == 'user' and mop.created_by != current_user.id:
             return api_error('Insufficient permissions', 403)
         
-        # Check if MOP can be edited
-        if mop.status in ['approved']:
-            return api_error('Cannot edit MOP in current status', 400)
-        
         json_data = request.get_json()
         if not json_data:
             return api_error('No JSON data provided', 400)
+        
+        logger.info(f"Updating MOP {mop_id} with data: {json_data}")
         
         data = json_data
         
@@ -265,10 +263,16 @@ def update_mop(mop_id):
         # Update MOP fields - only allow schema-supported fields
         allowed_fields = ['name', 'description', 'type']
         for field in allowed_fields:
-            if field in data and getattr(mop, field) != data[field]:
-                old_values[field] = getattr(mop, field)
-                changes[field] = data[field]
-                setattr(mop, field, data[field])
+            if field in data:
+                new_value = data[field]
+                # Handle type field specially - convert array to comma-separated string
+                if field == 'type' and isinstance(new_value, list):
+                    new_value = ','.join(new_value)
+                
+                if getattr(mop, field) != new_value:
+                    old_values[field] = getattr(mop, field)
+                    changes[field] = new_value
+                    setattr(mop, field, new_value)
         
         # Update timestamp
         mop.updated_at = datetime.now(GMT_PLUS_7)

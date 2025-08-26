@@ -15,6 +15,22 @@ interface AssessmentState {
   selectedServers: boolean[];
   currentStep: string;
   assessmentType: 'emergency' | 'periodic';
+  assessmentStarted: boolean;
+  assessmentCompleted: boolean;
+  hasResults: boolean;
+  assessmentResults?: any;
+  assessmentProgress?: {
+    currentCommand: string;
+    currentServer: string;
+    completedCommands: number;
+    totalCommands: number;
+    completedServers: number;
+    totalServers: number;
+    logs: string[];
+    startTime?: Date;
+    estimatedTimeRemaining?: string;
+  } | null;
+  assessmentJobId?: string;
 }
 
 interface UseAssessmentStateReturn {
@@ -33,7 +49,13 @@ const defaultState: AssessmentState = {
   servers: [],
   selectedServers: [],
   currentStep: 'select-mop',
-  assessmentType: 'emergency'
+  assessmentType: 'emergency',
+  assessmentStarted: false,
+  assessmentCompleted: false,
+  hasResults: false,
+  assessmentResults: null,
+  assessmentProgress: null,
+  assessmentJobId: undefined
 };
 
 export const useAssessmentState = (type: 'risk' | 'handover'): UseAssessmentStateReturn => {
@@ -146,8 +168,9 @@ export const isStepCompleted = (stepId: string, state: AssessmentState): boolean
     case 'test-connection':
       return state.selectedServers.some(selected => selected);
     case 'run-assessment':
+      return state.assessmentStarted;
     case 'view-results':
-      return false; // These are determined by actual assessment status
+      return state.hasResults;
     default:
       return false;
   }

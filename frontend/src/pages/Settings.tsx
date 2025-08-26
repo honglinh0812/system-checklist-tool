@@ -7,7 +7,6 @@ import ErrorMessage from '../components/common/ErrorMessage';
 interface PasswordForm {
   currentPassword: string;
   newPassword: string;
-  confirmPassword: string;
 }
 
 const Settings: React.FC = () => {
@@ -16,10 +15,13 @@ const Settings: React.FC = () => {
   const [darkMode, setDarkMode] = useState(false);
   const [passwordForm, setPasswordForm] = useState<PasswordForm>({
     currentPassword: '',
-    newPassword: '',
-    confirmPassword: ''
+    newPassword: ''
   });
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [showThemeConfirm, setShowThemeConfirm] = useState(false);
+  const [showLanguageConfirm, setShowLanguageConfirm] = useState(false);
+  const [pendingTheme, setPendingTheme] = useState<boolean>(false);
+  const [pendingLanguage, setPendingLanguage] = useState<'vi' | 'en'>('vi');
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Load saved preferences from localStorage
@@ -42,6 +44,12 @@ const Settings: React.FC = () => {
   // Handle dark mode toggle
   const handleDarkModeToggle = () => {
     const newDarkMode = !darkMode;
+    setPendingTheme(newDarkMode);
+    setShowThemeConfirm(true);
+  };
+  
+  const confirmThemeChange = () => {
+    const newDarkMode = pendingTheme;
     setDarkMode(newDarkMode);
     localStorage.setItem('darkMode', newDarkMode.toString());
     
@@ -52,13 +60,28 @@ const Settings: React.FC = () => {
     }
     const mode = newDarkMode ? t('darkMode') : t('lightMode');
     showAlert('success', `${t('themeChanged')}: ${mode.toLowerCase()}`);
+    setShowThemeConfirm(false);
+    // Redirect to dashboard
+    setTimeout(() => {
+      window.location.href = '/dashboard';
+    }, 1000);
   };
 
   // Handle language change
   const handleLanguageChange = (newLanguage: 'vi' | 'en') => {
-    changeLanguage(newLanguage);
-    const languageName = newLanguage === 'vi' ? t('vietnamese') : t('english');
+    setPendingLanguage(newLanguage);
+    setShowLanguageConfirm(true);
+  };
+  
+  const confirmLanguageChange = () => {
+    changeLanguage(pendingLanguage);
+    const languageName = pendingLanguage === 'vi' ? t('vietnamese') : t('english');
     showAlert('success', `${t('languageChanged')}: ${languageName}`);
+    setShowLanguageConfirm(false);
+    // Redirect to dashboard
+    setTimeout(() => {
+      window.location.href = '/dashboard';
+    }, 1000);
   };
 
   // Handle password form change
@@ -71,13 +94,7 @@ const Settings: React.FC = () => {
 
   // Validate password
   const validatePassword = (password: string): boolean => {
-    const minLength = 8;
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumbers = /\d/.test(password);
-    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-    
-    return password.length >= minLength && hasUpperCase && hasLowerCase && hasNumbers && hasSpecialChar;
+    return password.length >= 1;
   };
 
   // Handle password change
@@ -100,10 +117,7 @@ const Settings: React.FC = () => {
       return;
     }
     
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      showAlert('error', t('passwordMismatch'));
-      return;
-    }
+
     
     setIsChangingPassword(true);
     
@@ -124,8 +138,7 @@ const Settings: React.FC = () => {
         showAlert('success', t('passwordChanged'));
         setPasswordForm({
           currentPassword: '',
-          newPassword: '',
-          confirmPassword: ''
+          newPassword: ''
         });
       } else {
         const errorData = await response.json();
@@ -268,17 +281,7 @@ const Settings: React.FC = () => {
                       </small>
                     </div>
                     
-                    <div className="form-group">
-                      <label htmlFor="confirmPassword">{t('confirmPassword')}</label>
-                      <input
-                        type="password"
-                        className="form-control"
-                        id="confirmPassword"
-                        value={passwordForm.confirmPassword}
-                        onChange={(e) => handlePasswordFormChange('confirmPassword', e.target.value)}
-                        required
-                      />
-                    </div>
+
                     
                     <button
                       type="submit" 
@@ -345,6 +348,56 @@ const Settings: React.FC = () => {
           </div>
         </div>
       </section>
+      
+      {/* Theme Change Confirmation Modal */}
+      {showThemeConfirm && (
+        <div className="modal fade show" style={{ display: 'block' }} tabIndex={-1}>
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">{t('confirmThemeChange')}</h5>
+                <button type="button" className="btn-close" onClick={() => setShowThemeConfirm(false)}></button>
+              </div>
+              <div className="modal-body">
+                <p>{t('confirmThemeChangeMessage')} {pendingTheme ? t('darkMode') : t('lightMode')}?</p>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowThemeConfirm(false)}>
+                  {t('cancel')}
+                </button>
+                <button type="button" className="btn btn-primary" onClick={confirmThemeChange}>
+                  {t('confirm')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Language Change Confirmation Modal */}
+      {showLanguageConfirm && (
+        <div className="modal fade show" style={{ display: 'block' }} tabIndex={-1}>
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">{t('confirmLanguageChange')}</h5>
+                <button type="button" className="btn-close" onClick={() => setShowLanguageConfirm(false)}></button>
+              </div>
+              <div className="modal-body">
+                <p>{t('confirmLanguageChangeMessage')} {pendingLanguage === 'vi' ? t('vietnamese') : t('english')}?</p>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowLanguageConfirm(false)}>
+                  {t('cancel')}
+                </button>
+                <button type="button" className="btn btn-primary" onClick={confirmLanguageChange}>
+                  {t('confirm')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

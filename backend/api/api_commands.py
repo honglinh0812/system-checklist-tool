@@ -1070,3 +1070,162 @@ def execute_mop(mop_id):
         db.session.rollback()
         logger.error(f"Error executing MOP: {str(e)}")
         return api_error('Failed to start execution', 500)
+
+@executions_bp.route('/export', methods=['GET'])
+@jwt_required()
+def export_all_executions():
+    """Export all executions to Excel"""
+    try:
+        from services.excel_exporter import ExcelExporter
+        from models.execution import ExecutionHistory
+        from models.assessment import AssessmentResult
+        from datetime import timedelta
+        
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get date range from query params (default to last 30 days)
+        days = request.args.get('days', 30, type=int)
+        start_date = datetime.now(GMT_PLUS_7) - timedelta(days=days)
+        
+        # Get ExecutionHistory records
+        execution_query = ExecutionHistory.query.filter(
+            ExecutionHistory.started_at >= start_date
+        )
+        
+        # Get AssessmentResult records
+        assessment_query = AssessmentResult.query.filter(
+            AssessmentResult.created_at >= start_date
+        )
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            execution_query = execution_query.filter(ExecutionHistory.executed_by == current_user.id)
+            assessment_query = assessment_query.filter(AssessmentResult.executed_by == current_user.id)
+        
+        executions = execution_query.order_by(ExecutionHistory.started_at.desc()).all()
+        assessments = assessment_query.order_by(AssessmentResult.created_at.desc()).all()
+        
+        # Prepare data for export
+        export_data = []
+        
+        # Process ExecutionHistory records
+        for exec in executions:
+            total_commands = exec.total_commands or len(exec.results) if exec.results else 0
+            passed_commands = exec.completed_commands or (sum(1 for r in exec.results if r.is_valid) if exec.results else 0)
+            failed_commands = total_commands - passed_commands
+            success_rate = (passed_commands / total_commands * 100) if total_commands > 0 else 0
+            
+            assessment_type = "Đánh giá rủi ro" if exec.risk_assessment else "Đánh giá bàn giao"
+            user_name = exec.executed_by_user.username if exec.executed_by_user else 'Unknown'
+            
+            export_data.append({
+                'ID': exec.id,
+                'Loại': assessment_type,
+                'Tên MOP': exec.mop.name if exec.mop else 'Unknown',
+                'Người thực hiện': user_name,
+                'Thời gian thực hiện': exec.started_at.strftime('%Y-%m-%d %H:%M:%S') if exec.started_at else 'N/A',
+                'Số server': len(exec.target_servers.split(',')) if exec.target_servers else 0,
+                'Tổng số lệnh': total_commands,
+                'Lệnh thành công': passed_commands,
+                'Lệnh thất bại': failed_commands,
+                'Tỷ lệ thành công (%)': round(success_rate, 2),
+                'Trạng thái': exec.status.title() if exec.status else 'Unknown',
+                'Thời gian hoàn thành': exec.completed_at.strftime('%Y-%m-%d %H:%M:%S') if exec.completed_at else 'N/A'
+            })
+        
+        # Process AssessmentResult records
+        for assessment in assessments:
+            # Calculate test statistics from test_results
+            total_tests = 0
+            passed_tests = 0
+            
+            if assessment.test_results:
+                if isinstance(assessment.test_results, list):
+                    total_tests = len(assessment.test_results)
+                    passed_tests = sum(1 for result in assessment.test_results if result.get('result') == 'success')
+                elif isinstance(assessment.test_results, dict):
+                    for server_ip, results in assessment.test_results.items():
+                        if isinstance(results, dict):
+                            for cmd_result in results.values():
+                                if isinstance(cmd_result, dict) and 'status' in cmd_result:
+                                    total_tests += 1
+                                    if cmd_result['status'] == 'OK':
+                                        passed_tests += 1
+            
+            success_rate = (passed_tests / total_tests * 100) if total_tests > 0 else 0
+            
+            assessment_type = "Đánh giá rủi ro" if assessment.assessment_type == 'risk' else "Đánh giá bàn giao"
+            user_name = assessment.executor.username if assessment.executor else 'Unknown'
+            
+            # Calculate server count from server_info
+            server_count = len(assessment.server_info) if assessment.server_info else 0
+            
+            export_data.append({
+                'ID': f"A{assessment.id}",
+                'Loại': assessment_type,
+                'Tên MOP': assessment.mop.name if assessment.mop else 'Unknown',
+                'Người thực hiện': user_name,
+                'Thời gian thực hiện': assessment.created_at.strftime('%Y-%m-%d %H:%M:%S') if assessment.created_at else 'N/A',
+                'Số server': server_count,
+                'Tổng số lệnh': total_tests,
+                'Lệnh thành công': passed_tests,
+                'Lệnh thất bại': total_tests - passed_tests,
+                'Tỷ lệ thành công (%)': round(success_rate, 2),
+                'Trạng thái': assessment.status.title() if assessment.status else 'Unknown',
+                'Thời gian hoàn thành': assessment.completed_at.strftime('%Y-%m-%d %H:%M:%S') if assessment.completed_at else 'N/A'
+            })
+        
+        # Create Excel file
+        excel_exporter = ExcelExporter()
+        timestamp = datetime.now(GMT_PLUS_7).strftime('%Y%m%d_%H%M%S')
+        filename = f"execution_history_{timestamp}.xlsx"
+        
+        # Use a simple export method for tabular data
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill
+        from flask import send_file
+        import os
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Lịch sử thực hiện"
+        
+        # Headers
+        headers = list(export_data[0].keys()) if export_data else []
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        
+        # Data rows
+        for row, data in enumerate(export_data, 2):
+            for col, value in enumerate(data.values(), 1):
+                ws.cell(row=row, column=col, value=value)
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save file
+        export_dir = os.path.join(os.getcwd(), 'config', 'reports')
+        os.makedirs(export_dir, exist_ok=True)
+        filepath = os.path.join(export_dir, filename)
+        wb.save(filepath)
+        
+        return send_file(filepath, as_attachment=True, download_name=filename)
+        
+    except Exception as e:
+        logger.error(f"Error exporting executions: {str(e)}")
+        return api_error('Internal server error', 500)

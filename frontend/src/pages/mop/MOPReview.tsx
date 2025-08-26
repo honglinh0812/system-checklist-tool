@@ -74,6 +74,7 @@ const MOPReview: React.FC = () => {
   const [showSingleApproveModal, setShowSingleApproveModal] = useState(false);
   const [currentMopId, setCurrentMopId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<string>('');
+  const [rejectReasonError, setRejectReasonError] = useState<string>('');
   const [fileViewerTitle, setFileViewerTitle] = useState<string>('');
   const [fileViewerContent, setFileViewerContent] = useState<string>('');
   
@@ -333,17 +334,21 @@ const MOPReview: React.FC = () => {
         setSelectedMops(new Set());
         fetchPendingMOPs();
         
-        if (result.data.failed_mops && result.data.failed_mops.length > 0) {
+        if (result.data && result.data.failed_mops && result.data.failed_mops.length > 0) {
           showNotification('success', t('bulkApproveCompleteWithFailures', { approved: result.data.approved_mops.length, failed: result.data.failed_mops.length }));
-        } else {
+        } else if (result.data && result.data.approved_mops) {
           showNotification('success', t('bulkApproveSuccess', { count: result.data.approved_mops.length }));
+        } else {
+          showNotification('success', t('mopApprovedSuccessfully'));
         }
       } else {
-        throw new Error(result.message || t('errorApprovingMOPs'));
+        const errorMessage = typeof result.message === 'string' ? result.message : t('errorApprovingMOPs');
+        throw new Error(errorMessage);
       }
     } catch (error) {
       console.error('Error bulk approving MOPs:', error);
-      showNotification('error', t('errorApprovingMOPs'));
+      const errorMessage = error instanceof Error ? error.message : t('errorApprovingMOPs');
+      showNotification('error', errorMessage);
     } finally {
       setShowApproveModal(false);
     }
@@ -363,11 +368,13 @@ const MOPReview: React.FC = () => {
         showNotification('success', t('mopApprovedSuccessfully'));
         fetchPendingMOPs();
       } else {
-        showNotification('error', data.error || t('cannotApproveMOP'));
+        const errorMessage = typeof data.error === 'string' ? data.error : t('cannotApproveMOP');
+        showNotification('error', errorMessage);
       }
     } catch (error) {
       console.error('Error approving MOP:', error);
-      showNotification('error', t('errorApprovingMOP'));
+      const errorMessage = error instanceof Error ? error.message : t('errorApprovingMOP');
+      showNotification('error', errorMessage);
     } finally {
       setShowSingleApproveModal(false);
       setCurrentMopId(null);
@@ -393,9 +400,11 @@ const MOPReview: React.FC = () => {
 
   const confirmReject = async () => {
     if (!rejectReason.trim()) {
-      showNotification('error', t('pleaseEnterRejectReason'));
+      setRejectReasonError(t('pleaseEnterRejectReason'));
       return;
     }
+    
+    setRejectReasonError('');
     
     try {
       const mopsToReject = selectedMops.size > 0 ? Array.from(selectedMops) : (currentMopId ? [currentMopId] : []);
@@ -428,6 +437,7 @@ const MOPReview: React.FC = () => {
     } finally {
       setShowRejectModal(false);
       setRejectReason('');
+      setRejectReasonError('');
       setCurrentMopId(null);
     }
   };
@@ -985,13 +995,21 @@ const MOPReview: React.FC = () => {
                 <div className="form-group">
                   <label htmlFor="rejectReason"><strong>{t('rejectionReason')}:</strong></label>
                   <textarea 
-                    className="form-control" 
+                    className={`form-control ${rejectReasonError ? 'is-invalid' : ''}`}
                     id="rejectReason" 
                     rows={4} 
                     placeholder={t('pleaseProvideRejectReason')}
                     value={rejectReason}
-                    onChange={(e) => setRejectReason(e.target.value)}
+                    onChange={(e) => {
+                      setRejectReason(e.target.value);
+                      if (rejectReasonError) setRejectReasonError('');
+                    }}
                   />
+                  {rejectReasonError && (
+                    <div className="invalid-feedback">
+                      {rejectReasonError}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="modal-footer">

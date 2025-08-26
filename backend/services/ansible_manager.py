@@ -20,6 +20,7 @@ class AnsibleRunner:
         self.running_jobs = {}
         self.job_results = {}
         self.job_logs = {}
+        self.job_progress = {}
     
     def _safe_yaml_string(self, command: str) -> str:
         """
@@ -94,8 +95,9 @@ class AnsibleRunner:
         tasks = []
         for i, cmd in enumerate(commands):
             safe_command = self._safe_yaml_string(cmd['command'])
+            task_name = cmd.get('title', f"{i+1}. Check {cmd.get('command', 'command')[:50]}...")
             task = {
-                "name": cmd.get('title', f"Command {i+1}"),
+                "name": task_name,
                 "shell": safe_command,
                 "register": f"result_{i}",
                 "ignore_errors": True
@@ -133,7 +135,224 @@ class AnsibleRunner:
                 'progress': 0
             }
             
+            # Initialize progress tracking
+            self.job_progress[job_id] = {
+                'current_command': 1,  # Start from 1 instead of 0
+                'total_commands': len(commands),
+                'current_server': 1,   # Start from 1 instead of 0
+                'total_servers': len(servers),
+                'percentage': 5        # Start with 5% to show initial progress
+            }
+            logger.info(f"Initialized job progress for {job_id}: {self.job_progress[job_id]}")
+            
             temp_dir = self.create_dynamic_playbook(commands, servers)
+            
+            # Run with event handler for real-time progress
+            import threading
+            import time
+            
+            def monitor_progress():
+                """Monitor ansible runner progress in background with real-time event streaming"""
+                logger.info(f"Starting real-time progress monitoring for job {job_id}")
+                start_time = time.time()
+                total_tasks = len(commands) * len(servers)
+                completed_tasks = 0
+                last_event_count = 0
+                current_command = 1
+                current_server = 1
+                
+                # Debug: List all directories in temp_dir to understand structure
+                logger.info(f"Debug: temp_dir = {temp_dir}")
+                try:
+                    if os.path.exists(temp_dir):
+                        logger.info(f"Debug: Contents of temp_dir: {os.listdir(temp_dir)}")
+                        for item in os.listdir(temp_dir):
+                            item_path = os.path.join(temp_dir, item)
+                            if os.path.isdir(item_path):
+                                logger.info(f"Debug: Directory {item}: {os.listdir(item_path)}")
+                except Exception as e:
+                    logger.error(f"Debug: Error listing temp_dir contents: {e}")
+                
+                while job_id in self.running_jobs and self.running_jobs[job_id]['status'] == 'running':
+                    try:
+                        # Check multiple possible event directories including UUID subdirectories
+                        possible_event_dirs = [
+                            os.path.join(temp_dir, 'artifacts', 'job_events'),
+                            os.path.join(temp_dir, 'artifacts'),
+                            os.path.join(temp_dir, 'job_events'),
+                            temp_dir
+                        ]
+                        
+                        # Also check UUID subdirectories in artifacts
+                        artifacts_dir = os.path.join(temp_dir, 'artifacts')
+                        if os.path.exists(artifacts_dir):
+                            try:
+                                for item in os.listdir(artifacts_dir):
+                                    uuid_dir = os.path.join(artifacts_dir, item)
+                                    if os.path.isdir(uuid_dir):
+                                        # Check for job_events in UUID directory
+                                        possible_event_dirs.extend([
+                                            os.path.join(uuid_dir, 'job_events'),
+                                            uuid_dir
+                                        ])
+                            except Exception as e:
+                                logger.debug(f"Error scanning artifacts subdirectories: {e}")
+                        
+                        events_found = False
+                        events_dir = None
+                        
+                        for possible_dir in possible_event_dirs:
+                            if os.path.exists(possible_dir):
+                                # Check if this directory contains event files
+                                try:
+                                    files = os.listdir(possible_dir)
+                                    json_files = [f for f in files if f.endswith('.json')]
+                                    if json_files:
+                                        events_dir = possible_dir
+                                        events_found = True
+                                        logger.info(f"Found event files in: {events_dir} ({len(json_files)} files)")
+                                        break
+                                except Exception as e:
+                                    logger.debug(f"Error checking directory {possible_dir}: {e}")
+                                    continue
+                        
+                        if events_found and events_dir:
+                            # Get all event files and sort by creation time for chronological order
+                            event_files = []
+                            for f in os.listdir(events_dir):
+                                if f.endswith('.json'):
+                                    file_path = os.path.join(events_dir, f)
+                                    event_files.append((file_path, os.path.getctime(file_path)))
+                            
+                            # Sort by creation time
+                            event_files.sort(key=lambda x: x[1])
+                            
+                            # Process new events since last check
+                            if len(event_files) > last_event_count:
+                                new_events = event_files[last_event_count:]
+                                logger.info(f"Processing {len(new_events)} new event files")
+                                
+                                for event_file_path, _ in new_events:
+                                    try:
+                                        with open(event_file_path, 'r') as f:
+                                            event_data = json.loads(f.read())
+                                            event_type = event_data.get('event', '')
+                                            
+                                            # Track task start events for real-time progress
+                                            if event_type == 'runner_on_start':
+                                                task_name = event_data.get('event_data', {}).get('task', '')
+                                                host = event_data.get('event_data', {}).get('host', '')
+                                                
+                                                logger.info(f"Task started: '{task_name}' on host '{host}'")
+                                                
+                                                # Extract command number from task name - look for patterns like "1. Check", "Command 1", etc.
+                                                import re
+                                                task_index = None
+                                                
+                                                # Try different patterns to extract task number
+                                                patterns = [
+                                                    r'^(\d+)\.',  # "1. Check something"
+                                                    r'Command (\d+)',  # "Command 1"
+                                                    r'result_(\d+)',  # "result_1"
+                                                    r'(\d+)'  # Any number
+                                                ]
+                                                
+                                                for pattern in patterns:
+                                                    match = re.search(pattern, task_name)
+                                                    if match:
+                                                        task_index = int(match.group(1))
+                                                        break
+                                                
+                                                if task_index is not None:
+                                                    # Calculate current command and server
+                                                    if len(servers) == 1:
+                                                        current_command = task_index
+                                                        current_server = 1
+                                                    else:
+                                                        # Find server index
+                                                        server_index = 1
+                                                        for i, server in enumerate(servers):
+                                                            if server['ip'] == host:
+                                                                server_index = i + 1
+                                                                break
+                                                        current_command = task_index
+                                                        current_server = server_index
+                                                    
+                                                    # Calculate progress percentage
+                                                    progress_percentage = min(95, int((current_command / len(commands)) * 100))
+                                                    
+                                                    logger.info(f"Real-time Task Start: '{task_name}' -> Command {current_command}/{len(commands)}, Server {current_server}/{len(servers)}, Progress: {progress_percentage}%")
+                                                    
+                                                    # Update progress immediately
+                                                    if job_id in self.running_jobs:
+                                                        self.running_jobs[job_id]['progress'] = progress_percentage
+                                                        
+                                                    if job_id in self.job_progress:
+                                                        self.job_progress[job_id].update({
+                                                            'percentage': progress_percentage,
+                                                            'current_command': current_command,
+                                                            'current_server': current_server
+                                                        })
+                                                        logger.info(f"Real-time update job_progress for {job_id}: {self.job_progress[job_id]}")
+                                                else:
+                                                    logger.debug(f"Could not extract task index from task name: '{task_name}'")
+                                            
+                                            # Also track completion events
+                                            elif event_type in ['runner_on_ok', 'runner_on_failed']:
+                                                task_name = event_data.get('event_data', {}).get('task', '')
+                                                logger.info(f"Task completed: '{task_name}' with status '{event_type}'")
+                                                if 'Command' in task_name or 'result_' in task_name or any(str(i) in task_name for i in range(1, len(commands)+1)):
+                                                    completed_tasks += 1
+                                                    
+                                    except Exception as e:
+                                        logger.debug(f"Error parsing event file {event_file_path}: {e}")
+                                        continue
+                                
+                                last_event_count = len(event_files)
+                        else:
+                            # No events directory found, use improved time-based simulation
+                            elapsed_time = time.time() - start_time
+                            
+                            # More aggressive time-based simulation to match actual execution speed
+                            # Ansible typically executes faster than 2.5s per command
+                            estimated_time_per_command = 1.5  # Reduced from 2.5 to 1.5 seconds
+                            estimated_current_command = min(int(elapsed_time / estimated_time_per_command) + 1, len(commands))
+                            
+                            if estimated_current_command > current_command:
+                                current_command = estimated_current_command
+                                progress_percentage = min(95, int((current_command / len(commands)) * 100))
+                                
+                                logger.info(f"Time-based progress simulation: Command {current_command}/{len(commands)}, Progress: {progress_percentage}% (elapsed: {elapsed_time:.1f}s)")
+                                
+                                # Update progress
+                                if job_id in self.running_jobs:
+                                    self.running_jobs[job_id]['progress'] = progress_percentage
+                                    
+                                if job_id in self.job_progress:
+                                    self.job_progress[job_id].update({
+                                        'percentage': progress_percentage,
+                                        'current_command': current_command,
+                                        'current_server': current_server
+                                    })
+                            
+                            # Debug logging every 5 seconds with more details
+                            if int(elapsed_time) % 5 == 0 and elapsed_time > 2:
+                                logger.info(f"No event files found after {elapsed_time:.1f}s. Using time-based simulation. Checked directories: {len(possible_event_dirs)}")
+                                # Log which directories were checked
+                                for i, dir_path in enumerate(possible_event_dirs[:5]):  # Log first 5 directories
+                                    exists = "EXISTS" if os.path.exists(dir_path) else "NOT FOUND"
+                                    logger.debug(f"  {i+1}. {dir_path} - {exists}")
+                    
+                    except Exception as e:
+                        logger.error(f"Progress monitoring error for job {job_id}: {e}")
+                    
+                    time.sleep(0.5)  # Check every 0.5 seconds for real-time updates
+                
+                logger.info(f"Real-time progress monitoring ended for job {job_id}")
+            
+            # Start progress monitoring thread
+            progress_thread = threading.Thread(target=monitor_progress, daemon=True)
+            progress_thread.start()
             
             result = run(
                 playbook=os.path.join(temp_dir, "dynamic_commands.yml"),
@@ -148,11 +367,25 @@ class AnsibleRunner:
             # Get return code safely
             return_code = getattr(result, 'rc', -1) if result else -1
             
+            # Update progress to 100% on completion
+            if job_id in self.job_progress:
+                self.job_progress[job_id]['percentage'] = 100
+                self.job_progress[job_id]['current_command'] = len(commands)
+            
             self.running_jobs[job_id].update({
                 'status': 'completed',
                 'end_time': datetime.now(GMT_PLUS_7).isoformat(),
-                'success': return_code == 0
+                'success': return_code == 0,
+                'progress': 100
             })
+            
+            # Update final progress
+            if job_id in self.job_progress:
+                self.job_progress[job_id].update({
+                    'current_command': len(commands),
+                    'current_server': len(servers),
+                    'percentage': 100
+                })
             
             self.job_results[job_id] = results
             
@@ -210,6 +443,12 @@ class AnsibleRunner:
                     'end_time': datetime.now(GMT_PLUS_7).isoformat(),
                     'error': str(e)
                 })
+                
+                # Update progress for failed job
+                if job_id in self.job_progress:
+                    self.job_progress[job_id].update({
+                        'percentage': 0
+                    })
             
             if 'temp_dir' in locals():
                 import shutil
@@ -241,10 +480,18 @@ class AnsibleRunner:
         log_content.append(f"Timestamp: {timestamp}")
         log_content.append(f"Commands: {len(commands)}")
         log_content.append(f"Servers: {len(servers)}")
+        log_content.append("")
+        log_content.append("=== EXECUTION PROGRESS ===")
         
-        # Get return code safely
-        return_code = getattr(result, 'rc', -1) if result else -1
-        log_content.append(f"Return Code: {return_code}")
+        # Store initial logs for real-time access
+        self.job_logs[job_id] = {
+            'log_content': '\n'.join(log_content),
+            'last_updated': datetime.now(GMT_PLUS_7).isoformat()
+        }
+        
+        # Update progress and logs during processing
+        total_operations = len(commands) * len(servers)
+        current_operation = 0
         
         # Log execution details per server
         localhost_servers = [s for s in servers if s['ip'] in ['localhost', '127.0.0.1']]
@@ -304,6 +551,24 @@ class AnsibleRunner:
                         logger.warning(f"Error processing command {i} for {ip}: {str(e)}")
                         cmd_result['error'] = f"Error processing result: {str(e)}"
                     
+                    # Update progress and logs in real-time
+                    current_operation += 1
+                    progress_percentage = int((current_operation / total_operations) * 100)
+                    
+                    # Calculate current server index (0-based to 1-based)
+                    server_index = servers.index(next(s for s in servers if s['ip'] == ip)) + 1
+                    
+                    # Update progress tracking with correct command and server numbers
+                    if job_id in self.job_progress:
+                        self.job_progress[job_id]['current_command'] = i + 1  # Current command being processed (1-based)
+                        self.job_progress[job_id]['current_server'] = server_index  # Current server being processed (1-based)
+                        self.job_progress[job_id]['percentage'] = progress_percentage
+                        logger.info(f"Processing results - Command: {i + 1}/{len(commands)}, Server: {server_index}/{len(servers)}, Progress: {progress_percentage}%")
+                    
+                    # Update running job progress
+                    if job_id in self.running_jobs:
+                        self.running_jobs[job_id]['progress'] = progress_percentage
+                    
                     # Perform validation against reference value using AdvancedValidator
                     try:
                         from .advanced_validator import AdvancedValidator
@@ -337,26 +602,28 @@ class AnsibleRunner:
                     
                     log_content.append(f"\nCommand {i+1}: {cmd_result['title']}")
                     log_content.append(f"Command: {cmd_result['command']}")
-                    log_content.append(f"Return Code: {cmd_result['return_code']}")
-                    log_content.append(f"Success: {cmd_result['success']}")
-                    if cmd_result['output']:
-                        log_content.append(f"Output:\n{cmd_result['output']}")
-                    if cmd_result['error']:
-                        log_content.append(f"Error:\n{cmd_result['error']}")
-                    
-                    # Add Enhanced Validation Information
                     log_content.append(f"Expected value: {cmd_result.get('expected_value', '')}")
-                    log_content.append(f"Validation Result: {cmd_result.get('validation_result', 'N/A')}")
-                    log_content.append(f"Validation Type: {cmd_result.get('validation_type', 'N/A')}")
-                    log_content.append(f"Validation Method: {cmd_result.get('validation_method', 'N/A')}")
-                    log_content.append(f"Decision: {cmd_result.get('decision', 'N/A')}")
                     
-                    # Add validation details if available
-                    validation_details = cmd_result.get('validation_details', {})
-                    if validation_details.get('score') is not None:
-                        log_content.append(f"Validation Score: {validation_details.get('score', 0):.2f}")
+                    # Add Result field - the direct output from command execution
+                    result_output = cmd_result.get('output', '').strip()
+                    log_content.append(f"Result: {result_output}")
                     
+                    # Convert decision from APPROVED/REJECTED to OK/Not OK
+                    decision = cmd_result.get('decision', 'N/A')
+                    if decision == 'APPROVED':
+                        decision_display = 'OK'
+                    elif decision == 'REJECTED':
+                        decision_display = 'Not OK'
+                    else:
+                        decision_display = 'Not OK'
+                    
+                    log_content.append(f"Decision: {decision_display}")
                     log_content.append("-" * 20)
+                    
+                    # Update logs in real-time
+                    if job_id in self.job_logs:
+                        self.job_logs[job_id]['log_content'] = '\n'.join(log_content)
+                        self.job_logs[job_id]['last_updated'] = datetime.now(GMT_PLUS_7).isoformat()
                     
             else:
                 server_results[ip]['status'] = 'failed'
@@ -443,16 +710,14 @@ class AnsibleRunner:
                 for idx, cmd_res in enumerate(result['commands']):
                     lines.append(f"Command {idx+1}: {cmd_res.get('title','')}")
                     lines.append(f"Command: {cmd_res.get('command','')}")
-                    lines.append(f"Return Code: {cmd_res.get('return_code')}")
-                    lines.append(f"Success: {cmd_res.get('success')}")
-                    if cmd_res.get('output'):
-                        lines.append(f"Output: {cmd_res.get('output')}")
-                    if cmd_res.get('error'):
-                        lines.append(f"Error: {cmd_res.get('error')}")
                     
-                    # Add Expected value and Decision
+                    # Add Expected value
                     expected_value = cmd_res.get('expected', '')
                     lines.append(f"Expected value: {expected_value}")
+                    
+                    # Add Result field - the direct output from command execution
+                    result_output = cmd_res.get('output', '').strip()
+                    lines.append(f"Result: {result_output}")
                     
                     # Decision: OK if output matches exactly with expected value, Not OK otherwise
                     actual_output = cmd_res.get('output', '').strip()
@@ -469,9 +734,12 @@ class AnsibleRunner:
         # Convert log_content from list to string before saving
         log_content_str = '\n'.join(log_content) if isinstance(log_content, list) else log_content
         
+        # Final update to logs
         self.job_logs[job_id] = {
             'log_file': log_path,
-            'log_content': log_content_str
+            'log_content': log_content_str,
+            'last_updated': datetime.now(GMT_PLUS_7).isoformat(),
+            'status': 'completed'
         }
         
         # Get return code safely
@@ -501,9 +769,24 @@ class AnsibleRunner:
         return self.job_results.get(job_id)
 
     def get_job_status(self, job_id: str) -> Optional[Dict]:
-        """Get status of a job"""
+        """Get status of a job with detailed progress"""
         if job_id in self.running_jobs:
-            return self.running_jobs[job_id]
+            status = self.running_jobs[job_id].copy()
+            
+            # Add detailed progress information
+            if job_id in self.job_progress:
+                progress_info = self.job_progress[job_id]
+                status.update({
+                    'detailed_progress': {
+                        'current_command': progress_info.get('current_command', 0),
+                        'total_commands': progress_info.get('total_commands', 0),
+                        'current_server': progress_info.get('current_server', 0),
+                        'total_servers': progress_info.get('total_servers', 0),
+                        'percentage': progress_info.get('percentage', 0)
+                    }
+                })
+            
+            return status
         return None
     
     def get_job_results(self, job_id: str) -> Optional[Dict]:

@@ -26,6 +26,7 @@ const AuditLogs: React.FC = () => {
   const [showStats, setShowStats] = useState(false);
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [retentionDays, setRetentionDays] = usePersistedState<number>('audit_retentionDays', 365);
+  const [activeTab, setActiveTab] = usePersistedState<'all' | 'user_management'>('audit_active_tab', 'all');
   
   // Non-persisted states - loading và error
   const [loading, setLoading] = useState(true);
@@ -47,11 +48,16 @@ const AuditLogs: React.FC = () => {
 
   useEffect(() => {
     fetchLogs();
-  }, [filters]);
+  }, [filters, activeTab]);
 
   useEffect(() => {
     fetchStats();
   }, []);
+
+  const handleTabChange = (tab: 'all' | 'user_management') => {
+    setActiveTab(tab);
+    setFilters({ page: 1, per_page: 20 }); // Reset filters when switching tabs
+  };
 
   const showAlert = (type: 'success' | 'error', message: string) => {
     setAlert({ type, message });
@@ -62,7 +68,9 @@ const AuditLogs: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await auditService.getAuditLogs(filters);
+      const response = activeTab === 'user_management' 
+        ? await auditService.getUserActions(filters)
+        : await auditService.getAuditLogs(filters);
       setLogs(response.logs);
       setPagination(response.pagination);
     } catch (err: any) {
@@ -149,27 +157,51 @@ const AuditLogs: React.FC = () => {
                   onDismiss={() => setAlert(null)}
                 />
             )}
-            <div className="card-header d-flex justify-content-between align-items-center">
-              <h3 className="card-title mb-0">
-                <i className="fas fa-history me-2"></i>
-                {t('auditLogsTitle')}
-              </h3>
-              <div className="btn-group">
-                <button 
-                  className="btn btn-outline-info btn-sm"
-                  onClick={() => setShowStats(!showStats)}
-                >
-                  <i className="fas fa-chart-bar me-1"></i>
-                  {showStats ? t('hideStats') : t('showStats')}
-                </button>
-                <button 
-                  className="btn btn-outline-danger btn-sm"
-                  onClick={() => setShowCleanupModal(true)}
-                >
-                  <i className="fas fa-trash me-1"></i>
-                  {t('cleanupOldLogs')}
-                </button>
+            <div className="card-header">
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <h3 className="card-title mb-0">
+                  <i className="fas fa-history me-2"></i>
+                  {t('auditLogsTitle')}
+                </h3>
+                <div className="btn-group">
+                  <button 
+                    className="btn btn-outline-info btn-sm"
+                    onClick={() => setShowStats(!showStats)}
+                  >
+                    <i className="fas fa-chart-bar me-1"></i>
+                    {showStats ? t('hideStats') : t('showStats')}
+                  </button>
+                  <button 
+                    className="btn btn-outline-danger btn-sm"
+                    onClick={() => setShowCleanupModal(true)}
+                  >
+                    <i className="fas fa-trash me-1"></i>
+                    {t('cleanupOldLogs')}
+                  </button>
+                </div>
               </div>
+              
+              {/* Tabs */}
+              <ul className="nav nav-tabs card-header-tabs">
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'all' ? 'active' : ''}`}
+                    onClick={() => handleTabChange('all')}
+                  >
+                    <i className="fas fa-list me-1"></i>
+                    Tất cả Logs
+                  </button>
+                </li>
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'user_management' ? 'active' : ''}`}
+                    onClick={() => handleTabChange('user_management')}
+                  >
+                    <i className="fas fa-users me-1"></i>
+                    Quản lý Người dùng
+                  </button>
+                </li>
+              </ul>
             </div>
 
             {/* Stats Section */}
@@ -227,11 +259,13 @@ const AuditLogs: React.FC = () => {
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">{t('mopNameFilter')}</label>
+                  <label className="form-label">
+                    {activeTab === 'user_management' ? 'Người dùng đích' : t('mopNameFilter')}
+                  </label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
-                    placeholder={t('searchByMopName')}
+                    placeholder={activeTab === 'user_management' ? 'Tìm theo tên người dùng đích' : t('searchByMopName')}
                     value={filters.mop_name || ''}
                     onChange={(e) => handleFilterChange('mop_name', e.target.value || undefined)}
                   />
@@ -269,21 +303,23 @@ const AuditLogs: React.FC = () => {
                     <option value="running">{t('runningStatus')}</option>
                   </select>
                 </div>
-                <div className="col-md-2">
-                  <label className="form-label">{t('resourceTypeFilter')}</label>
-                  <select
-                    className="form-select form-select-sm"
-                    value={filters.resource_type || ''}
-                    onChange={(e) => handleFilterChange('resource_type', e.target.value || undefined)}
-                  >
-                    <option value="">{t('allResourceTypes')}</option>
-                    <option value="MOP">{t('mopResourceType')}</option>
-                    <option value="USER">{t('userResourceType')}</option>
-                    <option value="EXECUTION">{t('executionResourceType')}</option>
-                    <option value="FILE">{t('fileResourceType')}</option>
-                    <option value="AUTH">{t('authResourceType')}</option>
-                  </select>
-                </div>
+                {activeTab !== 'user_management' && (
+                  <div className="col-md-2">
+                    <label className="form-label">{t('resourceTypeFilter')}</label>
+                    <select
+                      className="form-select form-select-sm"
+                      value={filters.resource_type || ''}
+                      onChange={(e) => handleFilterChange('resource_type', e.target.value || undefined)}
+                    >
+                      <option value="">{t('allResourceTypes')}</option>
+                      <option value="MOP">{t('mopResourceType')}</option>
+                      <option value="USER">{t('userResourceType')}</option>
+                      <option value="EXECUTION">{t('executionResourceType')}</option>
+                      <option value="FILE">{t('fileResourceType')}</option>
+                      <option value="AUTH">{t('authResourceType')}</option>
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="row g-3 mt-2">
                 <div className="col-md-2">
@@ -352,7 +388,11 @@ const AuditLogs: React.FC = () => {
                           <th>{t('timeColumn')}</th>
                           <th>{t('userColumn')}</th>
                           <th>{t('actionColumn')}</th>
-                          <th>{t('resourceColumn')}</th>
+                          {activeTab === 'user_management' ? (
+                            <th>Người dùng đích</th>
+                          ) : (
+                            <th>{t('resourceColumn')}</th>
+                          )}
                           <th>{t('detailsColumn')}</th>
                           <th>{t('ipAddressColumn')}</th>
                         </tr>
@@ -382,19 +422,33 @@ const AuditLogs: React.FC = () => {
                                 </span>
                               </td>
                               <td>
-                                <span className={getResourceTypeBadgeClass(log.resource_type)}>
-                                  {log.resource_type}
-                                </span>
-                                {log.resource_name && (
+                                {activeTab === 'user_management' ? (
                                   <>
-                                    <br />
-                                    <small className="text-muted">{log.resource_name}</small>
+                                    <strong>{log.resource_name || 'N/A'}</strong>
+                                    {log.resource_id && (
+                                      <>
+                                        <br />
+                                        <small className="text-muted">ID: {log.resource_id}</small>
+                                      </>
+                                    )}
                                   </>
-                                )}
-                                {log.resource_id && (
+                                ) : (
                                   <>
-                                    <br />
-                                    <small className="text-muted">ID: {log.resource_id}</small>
+                                    <span className={getResourceTypeBadgeClass(log.resource_type)}>
+                                      {log.resource_type}
+                                    </span>
+                                    {log.resource_name && (
+                                      <>
+                                        <br />
+                                        <small className="text-muted">{log.resource_name}</small>
+                                      </>
+                                    )}
+                                    {log.resource_id && (
+                                      <>
+                                        <br />
+                                        <small className="text-muted">ID: {log.resource_id}</small>
+                                      </>
+                                    )}
                                   </>
                                 )}
                               </td>

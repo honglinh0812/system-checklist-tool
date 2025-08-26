@@ -17,18 +17,22 @@ from .api_utils import (
 )
 from core.auth import get_current_user
 from services.ansible_manager import AnsibleRunner
-from utils.audit_logger import log_user_activity
+from utils.audit_helpers import log_user_management_action, log_mop_action, log_user_activity
 from models.audit_log import ActionType, ResourceType
 import logging
 import os
 import tempfile
 import threading
 import time
+import paramiko
+import socket
 
 logger = logging.getLogger(__name__)
 
 assessments_bp = Blueprint('assessments', __name__, url_prefix='/api/assessments')
 ansible_runner = AnsibleRunner()
+
+# Note: Rate limiting exemption is handled in app.py via limiter.exempt()
 
 @assessments_bp.route('/risk', methods=['GET'])
 @jwt_required()
@@ -327,10 +331,49 @@ def download_assessment_report(report_id):
 
 # New Assessment Endpoints
 
+def test_ssh_connection(server_ip, username, password, port=22, timeout=10):
+    """Simple SSH connection test"""
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # Test connection
+        ssh.connect(
+            hostname=server_ip,
+            username=username,
+            password=password,
+            port=port,
+            timeout=timeout,
+            allow_agent=False,
+            look_for_keys=False
+        )
+        
+        # Execute simple test command
+        stdin, stdout, stderr = ssh.exec_command('echo "SSH test successful"')
+        output = stdout.read().decode().strip()
+        
+        ssh.close()
+        
+        if 'SSH test successful' in output:
+            return True, 'SSH connection successful'
+        else:
+            return False, 'SSH command execution failed'
+            
+    except paramiko.AuthenticationException:
+        return False, 'Authentication failed - invalid credentials'
+    except paramiko.SSHException as e:
+        return False, f'SSH connection error: {str(e)}'
+    except socket.timeout:
+        return False, 'Connection timeout - server unreachable'
+    except socket.error as e:
+        return False, f'Network error: {str(e)}'
+    except Exception as e:
+        return False, f'Connection failed: {str(e)}'
+
 @assessments_bp.route('/risk/test-connection', methods=['POST'])
 @jwt_required()
 def test_risk_connection():
-    """Test connection to servers for risk assessment"""
+    """Test SSH connection to servers for risk assessment"""
     try:
         current_user = get_current_user()
         if not current_user:
@@ -346,7 +389,7 @@ def test_risk_connection():
         for index, server in enumerate(servers):
             server_ip = server.get('ip') or server.get('serverIP')
             
-            # Skip test for localhost/127.0.0.1 if no credentials provided
+            # Skip test for localhost/127.0.0.1
             if server_ip in ['localhost', '127.0.0.1']:
                 result = {
                     'ip': server_ip,
@@ -357,79 +400,30 @@ def test_risk_connection():
                 connection_results.append(result)
                 continue
             
-            # For remote servers, we need credentials to test
+            # Get credentials
             admin_username = server.get('admin_username')
             admin_password = server.get('admin_password')
-            root_username = server.get('root_username', 'root')
-            root_password = server.get('root_password')
             ssh_port = server.get('sshPort', 22)
             
-            if not all([admin_username, admin_password, root_password]):
+            if not admin_username or not admin_password:
                 result = {
                     'ip': server_ip,
                     'success': False,
-                    'message': 'Missing credentials for SSH connection test',
+                    'message': 'Missing SSH credentials (admin_username/admin_password)',
                     'serverIndex': index
                 }
                 connection_results.append(result)
                 continue
             
-            # Create test server object for ansible
-            test_server = {
+            # Test SSH connection
+            success, message = test_ssh_connection(server_ip, admin_username, admin_password, ssh_port)
+            
+            result = {
                 'ip': server_ip,
-                'admin_username': admin_username,
-                'admin_password': admin_password,
-                'root_username': root_username,
-                'root_password': root_password
+                'success': success,
+                'message': message,
+                'serverIndex': index
             }
-            
-            # Test with simple command
-            test_commands = [{
-                'title': 'Connection Test',
-                'command': 'echo "Connection test successful"'
-            }]
-            
-            timestamp = datetime.now(GMT_PLUS_7).strftime("%H%M%S_%d%m%Y")
-            job_id = f"risk_test_{timestamp}_{index}"
-            
-            try:
-                # Run test in background
-                thread = threading.Thread(
-                    target=ansible_runner.run_playbook,
-                    args=(job_id, test_commands, [test_server], timestamp)
-                )
-                thread.daemon = True
-                thread.start()
-                
-                # Wait for the test to complete
-                time.sleep(8)  # Increased wait time for more reliable results
-                
-                # Check results
-                results = ansible_runner.get_job_results(job_id)
-                if results and results.get('summary', {}).get('successful_servers', 0) > 0:
-                    result = {
-                        'ip': server_ip,
-                        'success': True,
-                        'message': 'SSH connection successful',
-                        'serverIndex': index
-                    }
-                else:
-                    result = {
-                        'ip': server_ip,
-                        'success': False,
-                        'message': 'SSH connection failed. Please check credentials and network connectivity.',
-                        'serverIndex': index
-                    }
-                    
-            except Exception as conn_error:
-                logger.error(f"Connection test error for {server_ip}: {str(conn_error)}")
-                result = {
-                    'ip': server_ip,
-                    'success': False,
-                    'message': f'Connection test failed: {str(conn_error)}',
-                    'serverIndex': index
-                }
-            
             connection_results.append(result)
         
         return api_response({
@@ -515,8 +509,7 @@ def start_risk_assessment():
                         })
                     
                     # Run ansible playbook
-                    ansible_runner = AnsibleRunner()
-                    timestamp = dt.now().strftime('%H%M%S_%d%m%Y')
+                    timestamp = datetime.now().strftime('%H%M%S_%d%m%Y')
                     job_id = f'risk_assessment_{assessment.id}_{timestamp}'
                     
                     logger.info(f"Starting real assessment with job_id: {job_id}")
@@ -629,6 +622,7 @@ def start_risk_assessment():
         
         return api_response({
             'assessment_id': assessment.id,
+            'job_id': f'risk_assessment_{assessment.id}_{datetime.now().strftime("%H%M%S_%d%m%Y")}',
             'status': 'started',
             'message': 'Risk assessment started successfully'
         })
@@ -652,7 +646,25 @@ def get_risk_assessment_results(assessment_id):
         if current_user.role == 'user' and assessment.executed_by != current_user.id:
             return api_error('Access denied', 403)
         
-        return api_response(assessment.to_dict())
+        # Get real-time logs if assessment is still pending
+        result_data = assessment.to_dict()
+        if assessment.status == 'pending':
+            # Try to get real-time logs from ansible runner
+            job_id = f'risk_assessment_{assessment.id}_*'
+            # Find the actual job_id by checking running jobs
+            for running_job_id in ansible_runner.running_jobs.keys():
+                if f'risk_assessment_{assessment.id}_' in running_job_id:
+                    job_status = ansible_runner.get_job_status(running_job_id)
+                    job_logs = ansible_runner.get_job_logs(running_job_id)
+                    
+                    if job_logs and job_logs.get('log_content'):
+                        result_data['execution_logs'] = job_logs['log_content']
+                    
+                    if job_status:
+                        result_data['job_status'] = job_status
+                    break
+        
+        return api_response(result_data)
         
     except Exception as e:
         logger.error(f"Error fetching assessment results: {str(e)}")
@@ -661,7 +673,7 @@ def get_risk_assessment_results(assessment_id):
 @assessments_bp.route('/handover/test-connection', methods=['POST'])
 @jwt_required()
 def test_handover_connection():
-    """Test connection to servers for handover assessment"""
+    """Test SSH connection to servers for handover assessment"""
     try:
         current_user = get_current_user()
         if not current_user:
@@ -677,7 +689,7 @@ def test_handover_connection():
         for index, server in enumerate(servers):
             server_ip = server.get('ip') or server.get('serverIP')
             
-            # Skip test for localhost/127.0.0.1 if no credentials provided
+            # Skip test for localhost/127.0.0.1
             if server_ip in ['localhost', '127.0.0.1']:
                 result = {
                     'ip': server_ip,
@@ -688,79 +700,30 @@ def test_handover_connection():
                 connection_results.append(result)
                 continue
             
-            # For remote servers, we need credentials to test
+            # Get credentials
             admin_username = server.get('admin_username')
             admin_password = server.get('admin_password')
-            root_username = server.get('root_username', 'root')
-            root_password = server.get('root_password')
             ssh_port = server.get('sshPort', 22)
             
-            if not all([admin_username, admin_password, root_password]):
+            if not admin_username or not admin_password:
                 result = {
                     'ip': server_ip,
                     'success': False,
-                    'message': 'Missing credentials for SSH connection test',
+                    'message': 'Missing SSH credentials (admin_username/admin_password)',
                     'serverIndex': index
                 }
                 connection_results.append(result)
                 continue
             
-            # Create test server object for ansible
-            test_server = {
+            # Test SSH connection
+            success, message = test_ssh_connection(server_ip, admin_username, admin_password, ssh_port)
+            
+            result = {
                 'ip': server_ip,
-                'admin_username': admin_username,
-                'admin_password': admin_password,
-                'root_username': root_username,
-                'root_password': root_password
+                'success': success,
+                'message': message,
+                'serverIndex': index
             }
-            
-            # Test with simple command
-            test_commands = [{
-                'title': 'Connection Test',
-                'command': 'echo "Connection test successful"'
-            }]
-            
-            timestamp = datetime.now(GMT_PLUS_7).strftime("%H%M%S_%d%m%Y")
-            job_id = f"handover_test_{timestamp}_{index}"
-            
-            try:
-                # Run test in background
-                thread = threading.Thread(
-                    target=ansible_runner.run_playbook,
-                    args=(job_id, test_commands, [test_server], timestamp)
-                )
-                thread.daemon = True
-                thread.start()
-                
-                # Wait for the test to complete
-                time.sleep(8)  # Increased wait time for more reliable results
-                
-                # Check results
-                results = ansible_runner.get_job_results(job_id)
-                if results and results.get('summary', {}).get('successful_servers', 0) > 0:
-                    result = {
-                        'ip': server_ip,
-                        'success': True,
-                        'message': 'SSH connection successful',
-                        'serverIndex': index
-                    }
-                else:
-                    result = {
-                        'ip': server_ip,
-                        'success': False,
-                        'message': 'SSH connection failed. Please check credentials and network connectivity.',
-                        'serverIndex': index
-                    }
-                    
-            except Exception as conn_error:
-                logger.error(f"Connection test error for {server_ip}: {str(conn_error)}")
-                result = {
-                    'ip': server_ip,
-                    'success': False,
-                    'message': f'Connection test failed: {str(conn_error)}',
-                    'serverIndex': index
-                }
-            
             connection_results.append(result)
         
         return api_response({
@@ -841,7 +804,6 @@ def start_handover_assessment():
                         })
                     
                     # Run ansible playbook
-                    ansible_runner = AnsibleRunner()
                     timestamp = dt.now().strftime('%H%M%S_%d%m%Y')
                     job_id = f'handover_assessment_{assessment.id}_{timestamp}'
                     
@@ -955,6 +917,7 @@ def start_handover_assessment():
         
         return api_response({
             'assessment_id': assessment.id,
+            'job_id': f'handover_assessment_{assessment.id}_{dt.now().strftime("%H%M%S_%d%m%Y")}',
             'status': 'started',
             'message': 'Handover assessment started successfully'
         })
@@ -962,6 +925,97 @@ def start_handover_assessment():
     except Exception as e:
         logger.error(f"Error starting handover assessment: {str(e)}")
         return api_error('Failed to start handover assessment', 500)
+
+@assessments_bp.route('/handover/job-status/<job_id>', methods=['GET'])
+@jwt_required()
+def get_handover_job_status(job_id):
+    """Get handover assessment job status and progress"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get job status and logs from ansible runner
+        job_status = ansible_runner.get_job_status(job_id)
+        job_logs = ansible_runner.get_job_logs(job_id)
+        
+        response_data = {
+            'job_id': job_id,
+            'status': 'pending',
+            'progress': None,
+            'logs': [],
+            'detailed_progress': {
+                'current_command': 0,
+                'total_commands': 0,
+                'current_server': 0,
+                'total_servers': 0,
+                'percentage': 0
+            }
+        }
+        
+        if job_status:
+            response_data['status'] = job_status.get('status', 'pending')
+            response_data['progress'] = job_status.get('progress')
+            
+            # Add detailed progress information
+            if 'detailed_progress' in job_status:
+                response_data['detailed_progress'] = job_status['detailed_progress']
+            
+            # Log detailed progress for debugging
+            logger.info(f"Handover Job {job_id} status: {job_status.get('status')}, detailed_progress: {job_status.get('detailed_progress')}")
+        
+        if job_logs and job_logs.get('log_content'):
+            # Split logs into lines and get recent ones
+            log_lines = job_logs['log_content'].split('\n')
+            response_data['logs'] = [line for line in log_lines if line.strip()][-20:]  # Last 20 lines
+            response_data['last_updated'] = job_logs.get('last_updated')
+        
+        return api_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching job status: {str(e)}")
+        return api_error('Failed to fetch job status', 500)
+
+@assessments_bp.route('/risk/job-status/<job_id>', methods=['GET'])
+@jwt_required()
+def get_risk_job_status(job_id):
+    """Get risk assessment job status and progress"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get job status and logs from ansible runner
+        job_status = ansible_runner.get_job_status(job_id)
+        job_logs = ansible_runner.get_job_logs(job_id)
+        
+        response_data = {
+            'job_id': job_id,
+            'status': 'pending',
+            'progress': None,
+            'detailed_progress': None,
+            'logs': []
+        }
+        
+        if job_status:
+            response_data['status'] = job_status.get('status', 'pending')
+            response_data['progress'] = job_status.get('progress')
+            response_data['detailed_progress'] = job_status.get('detailed_progress')
+            
+            # Log detailed progress for debugging
+            logger.info(f"Job {job_id} status: {job_status.get('status')}, detailed_progress: {job_status.get('detailed_progress')}")
+        
+        if job_logs and job_logs.get('log_content'):
+            # Split logs into lines and get recent ones
+            log_lines = job_logs['log_content'].split('\n')
+            response_data['logs'] = [line for line in log_lines if line.strip()][-20:]  # Last 20 lines
+            response_data['last_updated'] = job_logs.get('last_updated')
+        
+        return api_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching risk job status: {str(e)}")
+        return api_error('Failed to fetch job status', 500)
 
 @assessments_bp.route('/handover/results/<int:assessment_id>', methods=['GET'])
 @jwt_required()
@@ -978,7 +1032,25 @@ def get_handover_assessment_results(assessment_id):
         if current_user.role == 'user' and assessment.executed_by != current_user.id:
             return api_error('Access denied', 403)
         
-        return api_response(assessment.to_dict())
+        # Get real-time logs if assessment is still pending
+        result_data = assessment.to_dict()
+        if assessment.status == 'pending':
+            # Try to get real-time logs from ansible runner
+            job_id = f'handover_assessment_{assessment.id}_*'
+            # Find the actual job_id by checking running jobs
+            for running_job_id in ansible_runner.running_jobs.keys():
+                if f'handover_assessment_{assessment.id}_' in running_job_id:
+                    job_status = ansible_runner.get_job_status(running_job_id)
+                    job_logs = ansible_runner.get_job_logs(running_job_id)
+                    
+                    if job_logs and job_logs.get('log_content'):
+                        result_data['execution_logs'] = job_logs['log_content']
+                    
+                    if job_status:
+                        result_data['job_status'] = job_status
+                    break
+        
+        return api_response(result_data)
         
     except Exception as e:
         logger.error(f"Error fetching assessment results: {str(e)}")

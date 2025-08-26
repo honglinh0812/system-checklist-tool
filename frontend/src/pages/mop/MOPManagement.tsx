@@ -134,8 +134,11 @@ const MOPManagement: React.FC = () => {
 
   const fetchMOPs = async () => {
     try {
+      console.log('Fetching MOPs...');
       const data = await apiService.get<any>(API_ENDPOINTS.MOPS.LIST);
+      console.log('Fetch MOPs response:', data);
       if (data.success) {
+        console.log('MOPs data:', data.data.mops);
         setMops(data.data.mops || []);
       }
     } catch (error) {
@@ -384,9 +387,15 @@ const MOPManagement: React.FC = () => {
           ]
         };
         
+        console.log('Updating MOP with data:', mopUpdateData);
+        console.log('MOP ID:', currentMop.id);
+        
         const updateResponse = await apiService.put<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}`, mopUpdateData);
         
+        console.log('Update response:', updateResponse);
+        
         if (!updateResponse.success) {
+          console.error('Update failed:', updateResponse.error);
           setNotification({type: 'error', message: updateResponse.error || t('errorUpdatingMOP')});
           return;
         }

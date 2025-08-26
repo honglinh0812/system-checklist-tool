@@ -75,6 +75,22 @@ export const auditService = {
     return response.data;
   },
 
+  async getUserActions(filters: AuditLogFilters = {}): Promise<AuditLogResponse> {
+    const params = new URLSearchParams();
+    
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        params.append(key, value.toString());
+      }
+    });
+    
+    const queryString = params.toString();
+    const url = `${API_ENDPOINTS.AUDIT.USER_ACTIONS}${queryString ? `?${queryString}` : ''}`;
+    
+    const response = await apiService.get<{data: AuditLogResponse, success: boolean}>(url);
+    return response.data;
+  },
+
   async getAuditStats(days: number = 30): Promise<AuditStats> {
     const response = await apiService.get<{data: AuditStats, success: boolean}>(`${API_ENDPOINTS.AUDIT.STATS}?days=${days}`);
     return response.data;

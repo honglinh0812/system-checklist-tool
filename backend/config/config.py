@@ -40,7 +40,7 @@ class Config:
     
     # Rate Limiting
     RATELIMIT_STORAGE_URL = 'memory://'
-    RATELIMIT_DEFAULT = '100 per hour'
+    RATELIMIT_DEFAULT = '10000 per hour'  # Increased for frequent polling
     
     # Pagination
     DEFAULT_PAGE_SIZE = 20

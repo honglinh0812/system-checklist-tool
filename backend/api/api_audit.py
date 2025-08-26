@@ -258,21 +258,25 @@ def get_mop_actions():
             error_out=False
         )
         
-        # Format results
+        # Format results to match frontend expectations
         actions = []
         for log in pagination.items:
+            # Format datetime for display
+            action_time_formatted = log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else 'N/A'
+            
             actions.append({
                 'id': log.id,
                 'user_id': log.user_id,
-                'username': log.username,
-                'action': log.action.value,
-                'resource_type': log.resource_type.value,
-                'resource_id': log.resource_id,
-                'resource_name': log.resource_name,
+                'user_name': log.username,  # Frontend expects user_name
+                'action_type': log.action.value,  # Frontend expects action_type
+                'action_time': log.created_at.isoformat() if log.created_at else None,
+                'action_time_formatted': action_time_formatted,
+                'mop_id': log.resource_id,  # Frontend expects mop_id
+                'mop_name': log.resource_name,  # Frontend expects mop_name
                 'details': log.details,
-                'ip_address': log.ip_address,
-                'user_agent': log.user_agent,
-                'created_at': log.created_at.isoformat() if log.created_at else None
+                'old_status': log.details.get('old_status') if isinstance(log.details, dict) else None,
+                'new_status': log.details.get('new_status') if isinstance(log.details, dict) else None,
+                'reason': log.details.get('reason') if isinstance(log.details, dict) else None
             })
         
         return api_response({
@@ -290,3 +294,72 @@ def get_mop_actions():
     except Exception as e:
         logger.error(f"Error getting MOP actions: {str(e)}")
         return api_error('Failed to get MOP actions', 500)
+
+@audit_bp.route('/user-actions', methods=['GET'])
+@require_role('admin')
+def get_user_actions():
+    """Get user management actions history (admin only)"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get query parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 100)
+        
+        # Build query for USER-related actions
+        query = UserActivityLog.query.filter(
+            UserActivityLog.resource_type == ResourceType.USER
+        )
+        
+        # Order by creation date (newest first)
+        query = query.order_by(desc(UserActivityLog.created_at))
+        
+        # Paginate
+        pagination = query.paginate(
+            page=page,
+            per_page=per_page,
+            error_out=False
+        )
+        
+        # Format results to match frontend expectations
+        actions = []
+        for log in pagination.items:
+            # Format datetime for display
+            action_time_formatted = log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else 'N/A'
+            
+            # Extract target user info from details
+            target_user_id = log.details.get('target_user_id') if isinstance(log.details, dict) else None
+            target_username = log.details.get('target_username') if isinstance(log.details, dict) else log.resource_name
+            action_details = log.details.get('details') if isinstance(log.details, dict) else None
+            
+            actions.append({
+                'id': log.id,
+                'admin_id': log.user_id,
+                'admin_name': log.username,
+                'action_type': log.action.value,
+                'action_time': log.created_at.isoformat() if log.created_at else None,
+                'action_time_formatted': action_time_formatted,
+                'target_user_id': target_user_id,
+                'target_username': target_username,
+                'details': action_details,
+                'ip_address': log.ip_address,
+                'user_agent': log.user_agent
+            })
+        
+        return api_response({
+            'actions': actions,
+            'pagination': {
+                'page': pagination.page,
+                'pages': pagination.pages,
+                'per_page': pagination.per_page,
+                'total': pagination.total,
+                'has_next': pagination.has_next,
+                'has_prev': pagination.has_prev
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting user actions: {str(e)}")
+        return api_error('Failed to get user actions', 500)

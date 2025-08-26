@@ -10,7 +10,7 @@ from .api_utils import (
 )
 from core.schemas import UserCreateSchema, UserSchema, DefaultUserCreateSchema, PublicRegisterSchema, UserApprovalSchema, ChangePasswordSchema
 from core.auth import get_current_user
-from utils.audit_logger import log_user_management_action
+from utils.audit_helpers import log_user_management_action
 import logging
 
 logger = logging.getLogger(__name__)
@@ -90,13 +90,12 @@ def create_user():
         # Log user management action
         current_user = get_current_user()
         log_user_management_action(
-            user_id=current_user.id,
-            username=current_user.username,
+            admin_id=current_user.id,
+            admin_username=current_user.username,
             action='create',
             target_user_id=user.id,
             target_username=user.username,
-            details=f"Created user {user.username} with role {user.role}",
-            ip_address=request.remote_addr
+            details=f"Created user {user.username} with role {user.role}"
         )
         
         user_schema = UserSchema()
@@ -144,10 +143,21 @@ def create_default_user():
         db.session.add(user)
         db.session.commit()
         
+        # Log user management action
+        current_user = get_current_user()
+        log_user_management_action(
+            admin_id=current_user.id,
+            admin_username=current_user.username,
+            action='create_default',
+            target_user_id=user.id,
+            target_username=user.username,
+            details=f"Created default user {user.username} with role {user.role}"
+        )
+        
         user_schema = UserSchema()
         user_data = user_schema.dump(user)
         
-        logger.info(f"Default user created: {user.username} by admin {get_current_user().username}")
+        logger.info(f"Default user created: {user.username} by admin {current_user.username}")
         
         return api_response(user_data, 'Default user created successfully', 201)
         
@@ -196,13 +206,12 @@ def update_user(user_id):
         
         # Log user management action
         log_user_management_action(
-            user_id=current_user.id,
-            username=current_user.username,
+            admin_id=current_user.id,
+            admin_username=current_user.username,
             action='update',
             target_user_id=user.id,
             target_username=user.username,
-            details=f"Updated user {user.username}",
-            ip_address=request.remote_addr
+            details=f"Updated user {user.username}"
         )
         
         user_schema = UserSchema()
@@ -252,13 +261,12 @@ def delete_user(user_id):
             
             # Log user management action
             log_user_management_action(
-                user_id=current_user.id,
-                username=current_user.username,
+                admin_id=current_user.id,
+                admin_username=current_user.username,
                 action='deactivate',
                 target_user_id=user.id,
                 target_username=user.username,
-                details=f"Deactivated user {user.username} due to existing data associations",
-                ip_address=request.remote_addr
+                details=f"Deactivated user {user.username} due to existing data associations"
             )
             
             logger.info(f"User deactivated: {user.username} by admin {current_user.username}")
@@ -269,13 +277,12 @@ def delete_user(user_id):
             
             # Log user management action before deletion
             log_user_management_action(
-                user_id=current_user.id,
-                username=current_user.username,
+                admin_id=current_user.id,
+                admin_username=current_user.username,
                 action='delete',
                 target_user_id=user.id,
                 target_username=user.username,
-                details=f"Deleted user {username}",
-                ip_address=request.remote_addr
+                details=f"Deleted user {username}"
             )
             
             db.session.delete(user)
@@ -471,10 +478,6 @@ def change_my_password():
         except Exception as e:
             return api_error(f'Validation error: {str(e)}', 400)
         
-        # Check if new password matches confirm password
-        if data['new_password'] != data['confirm_password']:
-            return api_error('New password and confirm password do not match', 400)
-        
         # verify current password
         if not current_user.check_password(data['current_password']):
             return api_error('Current password is incorrect', 400)
@@ -529,14 +532,9 @@ def public_register():
 
 @users_bp.route('/<int:user_id>/approve', methods=['POST'])
 @admin_required
-@validate_json(UserApprovalSchema())
 def approve_user(user_id):
-    """Approve or reject pending user (admin only)"""
+    """Approve pending user (admin only)"""
     try:
-        json_data = request.get_json()
-        if not json_data:
-            return api_error('No JSON data provided', 400)
-        
         user = User.query.get(user_id)
         if not user:
             return api_error('User not found', 404)
@@ -544,29 +542,67 @@ def approve_user(user_id):
         if user.status != 'pending':
             return api_error('User is not in pending status', 400)
         
-        action = json_data['action']
-        
-        if action == 'approve':
-            user.approve_user()
-            message = f"User {user.username} approved and upgraded to user role"
-        else:  # reject
-            user.reject_user()
-            message = f"User {user.username} rejected, remains as viewer"
-        
+        user.approve_user()
         db.session.commit()
         
         current_admin = get_current_user()
-        logger.info(f"User {user.username} {action}ed by admin {current_admin.username}")
+        log_user_management_action(
+            admin_id=current_admin.id,
+            admin_username=current_admin.username,
+            action='approve',
+            target_user_id=user.id,
+            target_username=user.username,
+            details=f"Approved user {user.username}"
+        )
+        
+        logger.info(f"User {user.username} approved by admin {current_admin.username}")
         
         user_schema = UserSchema()
         user_data = user_schema.dump(user)
         
-        return api_response(user_data, message)
+        return api_response(user_data, f"User {user.username} approved successfully")
         
     except Exception as e:
         db.session.rollback()
         logger.error(f"User approval error: {str(e)}")
-        return api_error('Failed to process user approval', 500)
+        return api_error('Failed to approve user', 500)
+
+@users_bp.route('/<int:user_id>/reject', methods=['POST'])
+@admin_required
+def reject_user(user_id):
+    """Reject pending user (admin only)"""
+    try:
+        user = User.query.get(user_id)
+        if not user:
+            return api_error('User not found', 404)
+        
+        if user.status != 'pending':
+            return api_error('User is not in pending status', 400)
+        
+        user.reject_user()
+        db.session.commit()
+        
+        current_admin = get_current_user()
+        log_user_management_action(
+            admin_id=current_admin.id,
+            admin_username=current_admin.username,
+            action='reject',
+            target_user_id=user.id,
+            target_username=user.username,
+            details=f"Rejected user {user.username}"
+        )
+        
+        logger.info(f"User {user.username} rejected by admin {current_admin.username}")
+        
+        user_schema = UserSchema()
+        user_data = user_schema.dump(user)
+        
+        return api_response(user_data, f"User {user.username} rejected successfully")
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"User rejection error: {str(e)}")
+        return api_error('Failed to reject user', 500)
 
 @users_bp.route('/pending', methods=['GET'])
 @admin_required

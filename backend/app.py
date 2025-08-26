@@ -21,7 +21,6 @@ from api.api_mops import mops_bp
 from api.api_commands import commands_bp, executions_bp
 from api.api_assessments import assessments_bp
 from api.api_audit import audit_bp
-from api_validation_test import validation_test_bp
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import pandas as pd
@@ -63,7 +62,11 @@ def create_app(config_name='development'):
     logger.info(f"[BOOT] Using DB URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
     
     # Initialize extensions
-    CORS(app, origins=app.config.get('CORS_ORIGINS', ['*']))
+    CORS(app, 
+         origins=app.config.get('CORS_ORIGINS', ['*']),
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+         supports_credentials=True)
     init_db(app)
     
     # Initialize JWT
@@ -72,7 +75,7 @@ def create_app(config_name='development'):
     # Initialize rate limiting
     limiter = Limiter(
         key_func=get_remote_address,
-        default_limits=[app.config.get('RATELIMIT_DEFAULT', '100 per hour')]
+        default_limits=[app.config.get('RATELIMIT_DEFAULT', '10000 per hour')]  # Increased for polling
     )
     limiter.init_app(app)
     
@@ -119,7 +122,10 @@ def create_app(config_name='development'):
     app.register_blueprint(executions_bp)
     app.register_blueprint(assessments_bp)
     app.register_blueprint(audit_bp)
-    app.register_blueprint(validation_test_bp)
+    
+    # Exempt specific endpoints from rate limiting for polling
+    from api.api_assessments import get_risk_assessment_results
+    limiter.exempt(get_risk_assessment_results)
     
     return app
 
@@ -713,6 +719,17 @@ def download_job_logs(job_id):
     except Exception as e:
         logger.error(f"Error downloading job logs: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/export', methods=['GET'])
+@jwt_required()
+def export_all_executions():
+    """Export all execution history to Excel"""
+    try:
+        from api.api_commands import export_all_executions as export_func
+        return export_func()
+    except Exception as e:
+        logger.error(f"Export all executions error: {str(e)}")
+        return jsonify({'error': 'Failed to export executions'}), 500
 
 @app.route('/api/export/execution/<int:execution_id>', methods=['GET'])
 @jwt_required()
