@@ -11,7 +11,8 @@ class AppendixParser:
     """Service to parse MOP appendix files and extract commands"""
     
     def __init__(self):
-        self.required_columns = ['Command Name', 'Command', 'Reference Value']
+        self.required_columns = ['ID', 'Name', 'Command', 'Extract', 'Comparator', 'Reference Value']
+        self.legacy_columns = ['Command Name', 'Command', 'Reference Value']  # For backward compatibility
         self.allowed_extensions = ['xlsx', 'xls', 'csv', 'txt']
         self.sanitizer = CommandSanitizer()
     
@@ -93,6 +94,7 @@ class AppendixParser:
     def _validate_columns(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
         Validate that the DataFrame has required columns
+        Supports both 6-column format and legacy 3-column format
         
         Args:
             df: DataFrame to validate
@@ -105,8 +107,9 @@ class AppendixParser:
         
         # Check if required columns exist (case-insensitive)
         df_columns = [col.strip() for col in df.columns]
-        missing_columns = []
         
+        # Check for 6-column format first
+        missing_6col = []
         for required_col in self.required_columns:
             found = False
             for df_col in df_columns:
@@ -114,22 +117,31 @@ class AppendixParser:
                     found = True
                     break
             if not found:
-                missing_columns.append(required_col)
+                missing_6col.append(required_col)
         
-        if missing_columns:
-            return False, f"Missing required columns: {', '.join(missing_columns)}. Required columns are: {', '.join(self.required_columns)}"
+        # If 6-column format is complete, use it
+        if not missing_6col:
+            logger.info("Detected 6-column format")
+            return True, ""
         
-        # Check for extra unexpected columns
-        expected_columns = [col.lower() for col in self.required_columns]
-        extra_columns = []
-        for col in df_columns:
-            if col.lower() not in expected_columns:
-                extra_columns.append(col)
+        # Check for legacy 3-column format
+        missing_3col = []
+        for required_col in self.legacy_columns:
+            found = False
+            for df_col in df_columns:
+                if df_col.lower() == required_col.lower():
+                    found = True
+                    break
+            if not found:
+                missing_3col.append(required_col)
         
-        if extra_columns:
-            logger.warning(f"Found unexpected columns: {', '.join(extra_columns)}. These will be ignored.")
+        # If 3-column format is complete, use it
+        if not missing_3col:
+            logger.info("Detected legacy 3-column format")
+            return True, ""
         
-        return True, ""
+        # Neither format is complete
+        return False, f"File must have either 6-column format {self.required_columns} or legacy 3-column format {self.legacy_columns}. Missing columns: 6-col: {missing_6col}, 3-col: {missing_3col}"
     
     def _validate_content(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
@@ -145,12 +157,19 @@ class AppendixParser:
         column_mapping = {}
         for col in df.columns:
             col_lower = col.strip().lower()
-            if col_lower == 'command name':
+            # Handle both 6-column and 3-column formats
+            if col_lower in ['command name', 'name']:
                 column_mapping['title'] = col
             elif col_lower == 'command':
                 column_mapping['command'] = col
             elif col_lower == 'reference value':
                 column_mapping['reference_value'] = col
+            elif col_lower == 'id':
+                column_mapping['id'] = col
+            elif col_lower == 'extract':
+                column_mapping['extract'] = col
+            elif col_lower == 'comparator':
+                column_mapping['comparator'] = col
         
         errors = []
         valid_rows = 0
@@ -159,42 +178,46 @@ class AppendixParser:
             row_num = index + 1
             row_errors = []
             
-            # Check Command Name
-            title = row[column_mapping['title']] if pd.notna(row[column_mapping['title']]) else ""
-            if isinstance(title, str):
-                title = title.strip()
-                # Check for invalid characters in title
-                if any(char in title for char in ['<', '>', '"', "'", '&', ';', '|', '`']):
-                    row_errors.append(f"Command Name contains invalid characters: {title}")
+            # Check Command Name (if exists) - validation removed per user request
+            if 'title' in column_mapping:
+                title = row[column_mapping['title']] if pd.notna(row[column_mapping['title']]) else ""
+                if isinstance(title, str):
+                    title = title.strip()
+                    # Validation for invalid characters removed
             
             # Check Command
-            command = row[column_mapping['command']] if pd.notna(row[column_mapping['command']]) else ""
-            if isinstance(command, str):
-                command = command.strip()
-                if not command:
-                    row_errors.append("Command is empty")
+            command = ""
+            if 'command' in column_mapping:
+                command = row[column_mapping['command']] if pd.notna(row[column_mapping['command']]) else ""
+                if isinstance(command, str):
+                    command = command.strip()
+                    if not command:
+                        row_errors.append("Command is empty")
+                    else:
+                        # Note: Dangerous commands will be sanitized during processing
+                        # We don't reject them here, just log for awareness
+                        dangerous_patterns = ['rm -rf', 'format', 'del /f', 'shutdown', 'reboot', 'halt']
+                        if any(pattern in command.lower() for pattern in dangerous_patterns):
+                            logger.warning(f"Row {row_num}: Command contains potentially dangerous operations that will be sanitized: {command}")
+                        
+                        # Check command length
+                        if len(command) > 1000:
+                            row_errors.append("Command is too long (max 1000 characters)")
                 else:
-                    # Note: Dangerous commands will be sanitized during processing
-                    # We don't reject them here, just log for awareness
-                    dangerous_patterns = ['rm -rf', 'format', 'del /f', 'shutdown', 'reboot', 'halt']
-                    if any(pattern in command.lower() for pattern in dangerous_patterns):
-                        logger.warning(f"Row {row_num}: Command contains potentially dangerous operations that will be sanitized: {command}")
-                    
-                    # Check command length
-                    if len(command) > 1000:
-                        row_errors.append("Command is too long (max 1000 characters)")
-            else:
-                row_errors.append("Command must be text")
+                    row_errors.append("Command must be text")
             
             # Check Reference Value
-            ref_value = row[column_mapping['reference_value']] if pd.notna(row[column_mapping['reference_value']]) else ""
-            if isinstance(ref_value, str):
-                ref_value = ref_value.strip()
-                # Check reference value length
-                if len(ref_value) > 500:
-                    row_errors.append("Reference Value is too long (max 500 characters)")
+            ref_value = ""
+            if 'reference_value' in column_mapping:
+                ref_value = row[column_mapping['reference_value']] if pd.notna(row[column_mapping['reference_value']]) else ""
+                if isinstance(ref_value, str):
+                    ref_value = ref_value.strip()
+                    # Check reference value length
+                    if len(ref_value) > 500:
+                        row_errors.append("Reference Value is too long (max 500 characters)")
             
             # Skip completely empty rows
+            title = row[column_mapping['title']] if 'title' in column_mapping and pd.notna(row[column_mapping['title']]) else ""
             if not title and not command and not ref_value:
                 continue
             
@@ -218,6 +241,7 @@ class AppendixParser:
     def _extract_commands(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """
         Extract commands from DataFrame
+        Supports both 6-column format and legacy 3-column format
         
         Args:
             df: DataFrame containing command data
@@ -227,26 +251,51 @@ class AppendixParser:
         """
         commands = []
         
-        # Normalize column names (case-insensitive mapping)
+        # Detect format and normalize column names (case-insensitive mapping)
         column_mapping = {}
+        is_6_column_format = False
+        
         for col in df.columns:
             col_lower = col.strip().lower()
-            if col_lower == 'command name':
+            # 6-column format mapping
+            if col_lower == 'id':
+                column_mapping['command_id_ref'] = col
+                is_6_column_format = True
+            elif col_lower == 'name':
                 column_mapping['title'] = col
+                is_6_column_format = True
+            elif col_lower == 'extract':
+                column_mapping['extract_method'] = col
+                is_6_column_format = True
+            elif col_lower == 'comparator':
+                column_mapping['comparator_method'] = col
+                is_6_column_format = True
+            # Common columns
             elif col_lower == 'command':
                 column_mapping['command'] = col
             elif col_lower == 'reference value':
                 column_mapping['reference_value'] = col
+            # Legacy 3-column format mapping
+            elif col_lower == 'command name':
+                column_mapping['title'] = col
         
         for index, row in df.iterrows():
             try:
-                # Skip empty rows
-                if pd.isna(row[column_mapping['title']]) and pd.isna(row[column_mapping['command']]):
+                # Skip empty rows - check if columns exist first
+                title_empty = True
+                command_empty = True
+                
+                if 'title' in column_mapping:
+                    title_empty = pd.isna(row[column_mapping['title']])
+                if 'command' in column_mapping:
+                    command_empty = pd.isna(row[column_mapping['command']])
+                    
+                if title_empty and command_empty:
                     continue
                 
-                title = str(row[column_mapping['title']]).strip() if pd.notna(row[column_mapping['title']]) else f"Command_{index + 1}"
-                command = str(row[column_mapping['command']]).strip() if pd.notna(row[column_mapping['command']]) else ""
-                reference_value = str(row[column_mapping['reference_value']]).strip() if pd.notna(row[column_mapping['reference_value']]) else ""
+                title = str(row[column_mapping['title']]).strip() if 'title' in column_mapping and pd.notna(row[column_mapping['title']]) else f"Command_{index + 1}"
+                command = str(row[column_mapping['command']]).strip() if 'command' in column_mapping and pd.notna(row[column_mapping['command']]) else ""
+                reference_value = str(row[column_mapping['reference_value']]).strip() if 'reference_value' in column_mapping and pd.notna(row[column_mapping['reference_value']]) else ""
                 
                 # Skip rows with empty command
                 if not command:
@@ -263,13 +312,24 @@ class AppendixParser:
                     'command': sanitized_command,
                     'original_command': command,
                     'reference_value': reference_value,
-                    'validation_type': self._determine_validation_type(reference_value),
+                    'validation_type': self._determine_validation_type(reference_value) if not is_6_column_format else 'extract_compare',
                     'order_index': len(commands) + 1,
                     'is_critical': False,  # Default to non-critical
                     'timeout_seconds': 30,  # Default timeout
                     'sanitized': sanitize_result['is_modified'],
                     'sanitize_warnings': sanitize_warnings
                 }
+                
+                # Add 6-column format specific fields
+                if is_6_column_format:
+                    command_dict['command_id_ref'] = str(row[column_mapping['command_id_ref']]).strip() if 'command_id_ref' in column_mapping and pd.notna(row[column_mapping['command_id_ref']]) else f"cmd_{index + 1}"
+                    command_dict['extract_method'] = str(row[column_mapping['extract_method']]).strip() if 'extract_method' in column_mapping and pd.notna(row[column_mapping['extract_method']]) else 'raw'
+                    command_dict['comparator_method'] = str(row[column_mapping['comparator_method']]).strip() if 'comparator_method' in column_mapping and pd.notna(row[column_mapping['comparator_method']]) else 'eq'
+                else:
+                    # Default values for legacy format
+                    command_dict['command_id_ref'] = f"cmd_{index + 1}"
+                    command_dict['extract_method'] = 'raw'
+                    command_dict['comparator_method'] = 'eq'
                 
                 commands.append(command_dict)
                 

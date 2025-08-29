@@ -54,6 +54,11 @@ class Command(db.Model):
     command = db.Column(db.Text, nullable=True)  # Map to command_text
     reference_value = db.Column(db.Text, nullable=True)  # Map to expected_output
     
+    # New fields for 6-column format
+    extract_method = db.Column(db.String(100), nullable=True)  # Cột Extract
+    comparator_method = db.Column(db.String(100), nullable=True)  # Cột Comparator
+    command_id_ref = db.Column(db.String(50), nullable=True)  # Cột ID
+    
     # Relationships
     results = db.relationship('ServerResult', backref='command')
 

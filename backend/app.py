@@ -21,6 +21,7 @@ from api.api_mops import mops_bp
 from api.api_commands import commands_bp, executions_bp
 from api.api_assessments import assessments_bp
 from api.api_audit import audit_bp
+from api_docs import init_api_docs
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import pandas as pd
@@ -72,6 +73,9 @@ def create_app(config_name='development'):
     # Initialize JWT
     init_jwt(app)
     
+    # Initialize API documentation
+    api = init_api_docs(app)
+    
     # Initialize rate limiting
     limiter = Limiter(
         key_func=get_remote_address,
@@ -101,9 +105,9 @@ def create_app(config_name='development'):
                 response.headers['Cache-Control'] = 'public, max-age=31536000'
             return response
     
-    # Start APScheduler for periodic risk assessments
-    from services.scheduler import init_scheduler
-    init_scheduler(app)
+    # Start periodic assessment scheduler
+    from services.periodic_scheduler import init_periodic_scheduler
+    init_periodic_scheduler(app)
     
     try:
         with app.app_context():

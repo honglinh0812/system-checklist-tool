@@ -6,6 +6,8 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { ErrorMessage, ProgressSteps } from '../../components/common';
 import { useAssessmentState, getAssessmentSteps, isStepCompleted, isStepAccessible } from '../../hooks/useAssessmentState';
 import { useTranslation } from '../../i18n/useTranslation';
+import { periodicAssessmentService } from '../../services/periodicAssessmentService';
+import type { PeriodicAssessment, PeriodicAssessmentExecution } from '../../services/periodicAssessmentService';
 
 interface MOP {
   id: number;
@@ -33,7 +35,7 @@ const RiskAssessment: React.FC = () => {
   
   // Non-persistent UI states
   const [filteredMops, setFilteredMops] = useState<MOP[]>([]);
-  const [activeTab, setActiveTab] = useState<'assessment' | 'reports'>('assessment');
+  const [activeTab, setActiveTab] = useState<'assessment' | 'periodic' | 'reports'>('assessment');
   const [showExecutionModal, setShowExecutionModal] = useState(false);
   const [showFileUploadModal, setShowFileUploadModal] = useState(false);
   const [showManualInputModal, setShowManualInputModal] = useState(false);
@@ -71,6 +73,13 @@ const RiskAssessment: React.FC = () => {
   const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
   const [assessmentLoading, setAssessmentLoading] = useState(false);
   const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
+  
+  // Periodic assessment states
+  const [periodicAssessments, setPeriodicAssessments] = useState<PeriodicAssessment[]>([]);
+  const [recentExecutions, setRecentExecutions] = useState<PeriodicAssessmentExecution[]>([]);
+  const [periodicFrequency, setPeriodicFrequency] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
+  const [periodicTime, setPeriodicTime] = useState<string>('09:00');
+  const [periodicLoading, setPeriodicLoading] = useState(false);
 
   // Add useEffect to monitor selectedServers and connectionResults changes
   useEffect(() => {
@@ -124,6 +133,106 @@ const RiskAssessment: React.FC = () => {
     });
     fetchMOPs();
   }, []);
+
+  // Load periodic assessment data when tab changes
+  useEffect(() => {
+    if (activeTab === 'periodic') {
+      loadPeriodicAssessmentData();
+    }
+  }, [activeTab]);
+
+  const loadPeriodicAssessmentData = async () => {
+    try {
+      setPeriodicLoading(true);
+      
+      // Load periodic assessments
+      const assessments = await periodicAssessmentService.getPeriodicAssessments();
+      setPeriodicAssessments(assessments);
+      
+      // Load recent executions (last 5)
+      const allExecutions: PeriodicAssessmentExecution[] = [];
+      for (const assessment of assessments) {
+        const response = await periodicAssessmentService.getPeriodicAssessmentExecutions(assessment.id);
+        allExecutions.push(...response.executions);
+      }
+      
+      // Sort by execution time and take last 5
+      const sortedExecutions = allExecutions
+        .sort((a, b) => new Date(b.completed_at || b.started_at || b.created_at).getTime() - new Date(a.completed_at || a.started_at || a.created_at).getTime())
+        .slice(0, 5);
+      
+      setRecentExecutions(sortedExecutions);
+    } catch (error) {
+      console.error('Error loading periodic assessment data:', error);
+      showAlert('error', 'Không thể tải dữ liệu đánh giá định kỳ');
+    } finally {
+      setPeriodicLoading(false);
+    }
+  };
+
+  const handleCreatePeriodicAssessment = async () => {
+    if (!selectedMOP || servers.length === 0) {
+      showAlert('error', 'Vui lòng chọn MOP và thêm ít nhất một server');
+      return;
+    }
+
+    try {
+      setPeriodicLoading(true);
+      
+      const data = {
+        mop_id: parseInt(selectedMOP),
+        assessment_type: 'risk' as const,
+        frequency: periodicFrequency,
+        execution_time: periodicTime,
+        servers: servers.map((server, index) => ({
+          ...server,
+          selected: selectedServers[index] || false
+        }))
+      };
+
+      await periodicAssessmentService.createPeriodicAssessment(data);
+      showAlert('success', 'Đã tạo đánh giá định kỳ thành công');
+      await loadPeriodicAssessmentData();
+    } catch (error) {
+      console.error('Error creating periodic assessment:', error);
+      showAlert('error', 'Không thể tạo đánh giá định kỳ');
+    } finally {
+      setPeriodicLoading(false);
+    }
+  };
+
+  const handleStartPeriodicAssessment = async (periodicId: number) => {
+    try {
+      await periodicAssessmentService.startPeriodicAssessment(periodicId);
+      showAlert('success', 'Đã bắt đầu đánh giá định kỳ');
+      await loadPeriodicAssessmentData();
+    } catch (error) {
+      console.error('Error starting periodic assessment:', error);
+      showAlert('error', 'Không thể bắt đầu đánh giá định kỳ');
+    }
+  };
+
+  const handlePausePeriodicAssessment = async (periodicId: number) => {
+    try {
+      await periodicAssessmentService.pausePeriodicAssessment(periodicId);
+      showAlert('success', 'Đã tạm dừng đánh giá định kỳ');
+      await loadPeriodicAssessmentData();
+    } catch (error) {
+      console.error('Error pausing periodic assessment:', error);
+      showAlert('error', 'Không thể tạm dừng đánh giá định kỳ');
+    }
+  };
+
+  const handleStopPeriodicAssessment = async (periodicId: number) => {
+    try {
+      await periodicAssessmentService.stopPeriodicAssessment(periodicId);
+      showAlert('success', 'Đã dừng đánh giá định kỳ');
+      await loadPeriodicAssessmentData();
+    } catch (error) {
+      console.error('Error stopping periodic assessment:', error);
+      showAlert('error', 'Không thể dừng đánh giá định kỳ');
+    }
+  };
 
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
@@ -657,6 +766,15 @@ const RiskAssessment: React.FC = () => {
                     </li>
                     <li className="nav-item">
                       <button 
+                        className={`nav-link ${activeTab === 'periodic' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('periodic')}
+                        type="button"
+                      >
+                        <i className="fas fa-clock mr-1"></i> Đánh giá định kỳ
+                      </button>
+                    </li>
+                    <li className="nav-item">
+                      <button 
                         className={`nav-link ${activeTab === 'reports' ? 'active' : ''}`}
                         onClick={() => setActiveTab('reports')}
                         type="button"
@@ -1083,7 +1201,7 @@ const RiskAssessment: React.FC = () => {
                                                            </div>
                                                          </td>
                                                          <td>
-                                                           <code>{result.reference_value || 'N/A'}</code>
+                                                           <code>{result.reference_value || ' '}</code>
                                                          </td>
                                                        </tr>
                                                      ))}
@@ -1156,6 +1274,205 @@ const RiskAssessment: React.FC = () => {
                                   <i className="fas fa-download mr-2"></i>
                                   Tải báo cáo tháng
                                 </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Periodic Assessment Tab */}
+                    {activeTab === 'periodic' && (
+                      <div className="tab-pane fade show active">
+                        <div className="row">
+                          <div className="col-md-12">
+                            <div className="card">
+                              <div className="card-header">
+                                <h3 className="card-title">
+                                  <i className="fas fa-clock mr-2"></i>
+                                  Đánh giá định kỳ
+                                </h3>
+                              </div>
+                              <div className="card-body">
+                                <div className="row">
+                                  <div className="col-md-6">
+                                    <div className="form-group">
+                                      <label>Tần suất đánh giá</label>
+                                      <select 
+                                        className="form-control" 
+                                        value={periodicFrequency} 
+                                        onChange={(e) => setPeriodicFrequency(e.target.value as 'daily' | 'weekly' | 'monthly')}
+                                      >
+                                        <option value="daily">Hàng ngày</option>
+                                        <option value="weekly">Hàng tuần</option>
+                                        <option value="monthly">Hàng tháng</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="col-md-6">
+                                    <div className="form-group">
+                                      <label>Thời gian thực hiện</label>
+                                      <input 
+                                        type="time" 
+                                        className="form-control" 
+                                        value={periodicTime} 
+                                        onChange={(e) => setPeriodicTime(e.target.value)} 
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                                
+                                <div className="form-group">
+                                   <label>MOP được chọn</label>
+                                   <div className="border p-3 bg-light">
+                                     {selectedMOP ? (
+                                       <div>
+                                         <strong>{filteredMops.find(mop => mop.id.toString() === selectedMOP)?.name || selectedMOP}</strong>
+                                         <p className="text-muted mb-0">Loại: {filteredMops.find(mop => mop.id.toString() === selectedMOP)?.type.join(', ') || 'N/A'}</p>
+                                       </div>
+                                     ) : (
+                                       <p className="text-muted mb-0">Chưa chọn MOP. Vui lòng chọn MOP ở tab Đánh giá.</p>
+                                     )}
+                                   </div>
+                                 </div>
+                                
+                                <div className="form-group">
+                                  <label>Danh sách server</label>
+                                  <div className="border p-3" style={{maxHeight: '200px', overflowY: 'auto'}}>
+                                    {servers.length > 0 ? (
+                                      servers.map((server, index) => (
+                                        <div key={index} className="form-check">
+                                          <input className="form-check-input" type="checkbox" id={`periodic-server-${index}`} defaultChecked />
+                                          <label className="form-check-label" htmlFor={`periodic-server-${index}`}>
+                                            {server.name} ({server.ip})
+                                          </label>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <p className="text-muted mb-0">Chưa có server nào. Vui lòng thêm server ở tab Đánh giá.</p>
+                                    )}
+                                  </div>
+                                </div>
+                                
+                                <div className="mt-3">
+                                  <button 
+                                    className="btn btn-primary mr-2" 
+                                    disabled={!selectedMOP || servers.length === 0 || periodicLoading}
+                                    onClick={handleCreatePeriodicAssessment}
+                                  >
+                                    {periodicLoading ? (
+                                      <>
+                                        <i className="fas fa-spinner fa-spin mr-2"></i>
+                                        Đang tạo...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <i className="fas fa-plus mr-2"></i>
+                                        Tạo đánh giá định kỳ
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Recent Periodic Assessments */}
+                        <div className="row mt-4">
+                          <div className="col-md-12">
+                            <div className="card">
+                              <div className="card-header">
+                                <h3 className="card-title">
+                                  <i className="fas fa-history mr-2"></i>
+                                  5 lần đánh giá định kỳ gần nhất
+                                </h3>
+                              </div>
+                              <div className="card-body">
+                                <div className="table-responsive">
+                                  <table className="table table-striped">
+                                    <thead>
+                                      <tr>
+                                        <th>Thời gian</th>
+                                        <th>MOP</th>
+                                        <th>Số server</th>
+                                        <th>Trạng thái</th>
+                                        <th>Kết quả</th>
+                                        <th>Hành động</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {periodicLoading ? (
+                                        <tr>
+                                          <td colSpan={6} className="text-center">
+                                            <i className="fas fa-spinner fa-spin mr-2"></i>
+                                            Đang tải dữ liệu...
+                                          </td>
+                                        </tr>
+                                      ) : recentExecutions.length === 0 ? (
+                                        <tr>
+                                          <td colSpan={6} className="text-center text-muted">
+                                            Chưa có đánh giá định kỳ nào được thực hiện
+                                          </td>
+                                        </tr>
+                                      ) : (
+                                        recentExecutions.map((execution) => {
+                                          const periodicAssessment = periodicAssessments.find(p => p.id === execution.periodic_assessment_id);
+                                          const mop = filteredMops.find(m => m.id === periodicAssessment?.mop_id);
+                                          
+                                          return (
+                                            <tr key={execution.id}>
+                                              <td>
+                                                {new Date(execution.completed_at || execution.started_at || execution.created_at).toLocaleString('vi-VN')}
+                                              </td>
+                                              <td>{mop?.name || 'N/A'}</td>
+                                              <td>{periodicAssessment?.server_info?.length || 0}</td>
+                                              <td>
+                                                <span className={`badge ${
+                                                  execution.status === 'success' ? 'badge-success' :
+                                                  execution.status === 'fail' ? 'badge-danger' :
+                                                  execution.status === 'running' ? 'badge-warning' :
+                                                  'badge-secondary'
+                                                }`}>
+                                                  {execution.status === 'success' ? 'Thành công' :
+                                                   execution.status === 'fail' ? 'Thất bại' :
+                                                   execution.status === 'running' ? 'Đang chạy' :
+                                                   'Chờ xử lý'}
+                                                </span>
+                                              </td>
+                                              <td>
+                                                {execution.status === 'success' ? (
+                                                  <span className="text-success">
+                                                    <i className="fas fa-check-circle mr-1"></i>
+                                                    Hoàn thành
+                                                  </span>
+                                                ) : execution.status === 'fail' ? (
+                                                  <span className="text-danger">
+                                                    <i className="fas fa-times-circle mr-1"></i>
+                                                    {execution.error_message || 'Có lỗi xảy ra'}
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-muted">
+                                                    <i className="fas fa-clock mr-1"></i>
+                                                    {execution.duration ? `${execution.duration}s` : 'N/A'}
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td>
+                                                {execution.assessment_result_id && (
+                                                  <button className="btn btn-sm btn-outline-primary">
+                                                    <i className="fas fa-eye mr-1"></i>
+                                                    Xem chi tiết
+                                                  </button>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
                             </div>
                           </div>

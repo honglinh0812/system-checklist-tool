@@ -6,9 +6,20 @@ import { API_ENDPOINTS } from '../../utils/constants';
 import { useTranslation } from '../../i18n/useTranslation'
 
 interface Command {
-  title: string;
-  command: string;
-  reference_value?: string;
+  id?: number;
+  command_id_ref?: string; // ID column
+  title: string; // Name column
+  command: string; // Command column
+  command_text?: string;
+  description?: string;
+  extract_method?: string; // Extract column
+  comparator_method?: string; // Comparator column
+  reference_value?: string; // Reference Value column
+  expected_output?: string;
+  is_critical?: boolean;
+  order_index?: number;
+  rollback_command?: string | null;
+  timeout_seconds?: number;
 }
 
 interface MOP {
@@ -889,19 +900,25 @@ const MOPReview: React.FC = () => {
                         <table className="table table-sm">
                           <thead className="thead-dark">
                             <tr>
-                              <th style={{ width: '8%' }}>STT</th>
-                              <th style={{ width: '25%' }}>Tên Command</th>
-                              <th style={{ width: '35%' }}>Câu lệnh</th>
-                              <th style={{ width: '32%' }}>Giá trị đối chiếu</th>
+                              <th style={{ width: '5%' }}>STT</th>
+                              <th style={{ width: '10%' }}>ID Ref</th>
+                              <th style={{ width: '20%' }}>Tên Command</th>
+                              <th style={{ width: '25%' }}>Câu lệnh</th>
+                              <th style={{ width: '12%' }}>Extract</th>
+                              <th style={{ width: '12%' }}>Comparator</th>
+                              <th style={{ width: '16%' }}>Reference Value</th>
                             </tr>
                           </thead>
                           <tbody>
                             {currentMop.commands.map((cmd, index) => (
                               <tr key={index}>
                                 <td className="text-center">{index + 1}</td>
+                                <td><small className="text-muted">{cmd.command_id_ref || '-'}</small></td>
                                 <td><strong>{cmd.title}</strong></td>
                                 <td><code className="text-wrap">{cmd.command}</code></td>
-                                <td><small className="text-muted">{cmd.reference_value || 'N/A'}</small></td>
+                                <td><small className="text-muted">{cmd.extract_method || '-'}</small></td>
+                                <td><small className="text-muted">{cmd.comparator_method || '-'}</small></td>
+                                <td><small className="text-muted">{cmd.reference_value || '-'}</small></td>
                               </tr>
                             ))}
                           </tbody>

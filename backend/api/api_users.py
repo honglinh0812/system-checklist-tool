@@ -97,6 +97,7 @@ def create_user():
             target_username=user.username,
             details=f"Created user {user.username} with role {user.role}"
         )
+        db.session.commit()  # Commit audit log
         
         user_schema = UserSchema()
         user_data = user_schema.dump(user)
@@ -268,6 +269,7 @@ def delete_user(user_id):
                 target_username=user.username,
                 details=f"Deactivated user {user.username} due to existing data associations"
             )
+            db.session.commit()  # Commit audit log
             
             logger.info(f"User deactivated: {user.username} by admin {current_user.username}")
             return api_response(None, 'User deactivated due to existing data associations')
@@ -309,10 +311,23 @@ def activate_user(user_id):
         user.is_active = is_active
         db.session.commit()
         
-        action = 'activated' if is_active else 'deactivated'
-        logger.info(f"User {action}: {user.username} by admin {get_current_user().username}")
+        # Log user management action
+        current_user = get_current_user()
+        action = 'activate' if is_active else 'deactivate'
+        log_user_management_action(
+            admin_id=current_user.id,
+            admin_username=current_user.username,
+            action=action,
+            target_user_id=user.id,
+            target_username=user.username,
+            details=f"{action.capitalize()}d user {user.username}"
+        )
+        db.session.commit()  # Commit audit log
         
-        return api_response(None, f'User {action} successfully')
+        action_past = 'activated' if is_active else 'deactivated'
+        logger.info(f"User {action_past}: {user.username} by admin {current_user.username}")
+        
+        return api_response(None, f'User {action_past} successfully')
         
     except Exception as e:
         db.session.rollback()
@@ -554,6 +569,7 @@ def approve_user(user_id):
             target_username=user.username,
             details=f"Approved user {user.username}"
         )
+        db.session.commit()  # Commit audit log
         
         logger.info(f"User {user.username} approved by admin {current_admin.username}")
         
@@ -591,6 +607,7 @@ def reject_user(user_id):
             target_username=user.username,
             details=f"Rejected user {user.username}"
         )
+        db.session.commit()  # Commit audit log
         
         logger.info(f"User {user.username} rejected by admin {current_admin.username}")
         

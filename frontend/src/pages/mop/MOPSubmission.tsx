@@ -141,9 +141,9 @@ const MOPSubmission: React.FC = () => {
     }
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = (type: '6_column' | '3_column' = '6_column') => {
     const token = localStorage.getItem('token');
-    const templateUrl = `/api/template/mop-appendix?token=${encodeURIComponent(token || '')}`;
+    const templateUrl = `/api/mops/template/download?type=${type}&token=${encodeURIComponent(token || '')}`;
     window.open(templateUrl, '_blank');
   };
 
@@ -185,12 +185,16 @@ const MOPSubmission: React.FC = () => {
                     <h5><i className="fas fa-info-circle mr-2"></i>{t('fileRequirements')}:</h5>
                     <ul className="mb-0">
                       <li><strong>{t('pdfFile')}:</strong> {t('pdfFileRequirement')}</li>
-                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')}:
+                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')} (6 cột mới):
                         <ul>
-                          <li>{t('columnCommandName')}</li>
-                          <li>{t('columnCommand')}</li>
-                          <li>{t('columnReferenceValue')}</li>
+                          <li><strong>ID:</strong> Mã định danh duy nhất</li>
+                          <li><strong>Name:</strong> Mô tả ngắn gọn có thể chèn biến hiển thị</li>
+                          <li><strong>Command:</strong> Lệnh thuần pipeline, không dùng if/then/||/&&</li>
+                          <li><strong>Extract:</strong> Cách lấy giá trị từ stdout (raw, first_line, lines_count, regex:(...), field:N, per_line:&lt;sub-extract&gt;)</li>
+                          <li><strong>Comparator:</strong> Kiểu so sánh (eq, neq, contains, int_eq, int_ge, empty, non_empty, v.v.)</li>
+                          <li><strong>Reference Value:</strong> Giá trị chuẩn để so sánh</li>
                         </ul>
+                        <small className="text-muted">Hỗ trợ tương thích ngược với định dạng 3 cột cũ</small>
                       </li>
                     </ul>
                   </div>
@@ -310,13 +314,15 @@ const MOPSubmission: React.FC = () => {
                           </small>
                         </div>
                       </div>
-                      <button 
-                        type="button" 
-                        className="btn btn-secondary ml-2" 
-                        onClick={downloadTemplate}
-                      >
-                        <i className="fas fa-download mr-2"></i>{t('download')} Template
-                      </button>
+                      <div className="btn-group ml-2">
+                        <button 
+                          type="button" 
+                          className="btn btn-secondary" 
+                          onClick={() => downloadTemplate('6_column')}
+                        >
+                          <i className="fas fa-download mr-2"></i>{t('download')} 
+                        </button>
+                      </div>
                     </div>
                     
                     <div className="row">

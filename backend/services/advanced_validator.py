@@ -3,6 +3,8 @@ import json
 import logging
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime, timezone, timedelta
+from .extract_processor import ExtractProcessor
+from .variable_expander import VariableExpander
 
 # GMT+7 timezone
 GMT_PLUS_7 = timezone(timedelta(hours=7))
@@ -22,8 +24,11 @@ class AdvancedValidator:
             'regex': self._validate_regex,
             'comparison': self._validate_comparison,
             'json': self._validate_json,
-            'custom': self._validate_custom
+            'custom': self._validate_custom,
+            'extract_compare': self._validate_extract_compare  # New for 6-column format
         }
+        self.extract_processor = ExtractProcessor()
+        self.variable_expander = VariableExpander()
         
     def validate_output(self, output: str, expected: str, validation_type: str = 'exact_match', 
                        options: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -320,6 +325,81 @@ class AdvancedValidator:
             else:
                 return output_json == expected_json
 
+    def _validate_extract_compare(self, output: str, expected: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        New validation method for 6-column format using ExtractProcessor
+        
+        Args:
+            output: The actual command output
+            expected: The expected value (reference value)
+            options: Must contain 'extract_method' and 'comparator_method'
+            
+        Returns:
+            Dict containing validation results
+        """
+        try:
+            extract_method = options.get('extract_method', 'raw')
+            comparator_method = options.get('comparator_method', 'eq')
+            
+            # Extract data using ExtractProcessor
+            extracted_data = self.extract_processor.process_extract(output, extract_method)
+            
+            # Apply comparator
+            comparison_result = self.extract_processor.apply_comparator(
+                extracted_data, comparator_method, expected
+            )
+            
+            # Format result based on comparison_result structure
+            if isinstance(comparison_result, dict) and 'results' in comparison_result:
+                # Multi-line result (per_line processing)
+                is_valid = comparison_result.get('overall_result', False)
+                details = {
+                    'extracted_data': extracted_data,
+                    'expected': expected,
+                    'extract_method': extract_method,
+                    'comparator_method': comparator_method,
+                    'line_results': comparison_result.get('results', []),
+                    'overall_result': is_valid
+                }
+                # Create formatted result string for display
+                result_lines = []
+                for line_result in comparison_result.get('results', []):
+                    status = "OK" if line_result.get('result', False) else "Not OK"
+                    result_lines.append(f"{line_result.get('variable', '')} - {status}")
+                details['formatted_result'] = '\n'.join(result_lines) if result_lines else ("OK" if is_valid else "Not OK")
+            else:
+                # Single result
+                is_valid = bool(comparison_result)
+                details = {
+                    'extracted_data': extracted_data,
+                    'expected': expected,
+                    'extract_method': extract_method,
+                    'comparator_method': comparator_method,
+                    'comparison_result': comparison_result,
+                    'formatted_result': "OK" if is_valid else "Not OK"
+                }
+            
+            return {
+                'is_valid': is_valid,
+                'score': 1.0 if is_valid else 0.0,
+                'details': details,
+                'message': f"Extract method '{extract_method}' with comparator '{comparator_method}' {'passed' if is_valid else 'failed'}"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in extract_compare validation: {str(e)}")
+            return {
+                'is_valid': False,
+                'score': 0.0,
+                'details': {
+                    'error': str(e),
+                    'extract_method': options.get('extract_method', 'unknown'),
+                    'comparator_method': options.get('comparator_method', 'unknown'),
+                    'formatted_result': "Not OK"
+                },
+                'message': f"Validation error: {str(e)}"
+            }
+
     # Backward compatibility methods
     def validate_command(self, command: str) -> Dict[str, Any]:
         """
@@ -336,3 +416,74 @@ class AdvancedValidator:
         from .command_validator import CommandValidator
         validator = CommandValidator()
         return validator.is_command_allowed(command)
+    
+    def validate_with_variables(self, output: str, expected: str, validation_type: str = 'exact_match',
+                               options: Dict[str, Any] = None, server_context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Validate output with template variable expansion support
+        
+        Args:
+            output: The actual command output
+            expected: The expected value (may contain variables)
+            validation_type: Type of validation to perform
+            options: Additional validation options
+            server_context: Server context for variable expansion
+            
+        Returns:
+            Dict containing validation results
+        """
+        if options is None:
+            options = {}
+        
+        # Expand variables in expected value
+        if server_context:
+            expanded_expected = self.variable_expander.expand_variables(expected, server_context)
+            logger.debug(f"Expanded expected value from '{expected}' to '{expanded_expected}'")
+        else:
+            expanded_expected = expected
+        
+        # Perform validation with expanded expected value
+        return self.validate_output(output, expanded_expected, validation_type, options)
+    
+    def expand_command_variables(self, command: str, server_context: Dict[str, Any] = None) -> str:
+        """
+        Expand template variables in command
+        
+        Args:
+            command: Command text with potential variables
+            server_context: Server context for variable expansion
+            
+        Returns:
+            Command with variables expanded
+        """
+        if server_context:
+            return self.variable_expander.expand_variables(command, server_context)
+        return command
+    
+    def get_available_variables(self, server_ip: str = None) -> Dict[str, Any]:
+        """
+        Get available variables for template expansion
+        
+        Args:
+            server_ip: Server IP to get context for
+            
+        Returns:
+            Dictionary of available variables
+        """
+        return self.variable_expander.get_available_variables(server_ip)
+    
+    def validate_template_variables(self, text: str, server_context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Validate that template variables in text are available
+        
+        Args:
+            text: Text to validate
+            server_context: Available context variables
+            
+        Returns:
+            Validation result
+        """
+        if server_context is None:
+            server_context = self.variable_expander.get_available_variables()
+        
+        return self.variable_expander.validate_variables(text, server_context)

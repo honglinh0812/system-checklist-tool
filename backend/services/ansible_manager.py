@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone, timedelta
 import logging
 from typing import Dict, List, Any, Optional
+from .variable_expander import VariableExpander
 
 # GMT+7 timezone
 GMT_PLUS_7 = timezone(timedelta(hours=7))
@@ -21,25 +22,18 @@ class AnsibleRunner:
         self.job_results = {}
         self.job_logs = {}
         self.job_progress = {}
+        self.variable_expander = VariableExpander()
     
     def _safe_yaml_string(self, command: str) -> str:
         """
         Safely format command string for YAML to prevent parsing errors
+        For shell module, we need minimal quoting to preserve shell operators
         """
         if not command:
             return ""
         
-        # Check for special characters that need escaping
-        special_chars = ['"', '\\', '\n', '\r', '\t']
-        needs_quoting = any(char in command for char in special_chars) or \
-                       command.strip() != command or \
-                       re.search(r'[{}\[\]:,&*#?|><!%@`]', command)
-        
-        if needs_quoting:
-            # Escape quotes and backslashes
-            escaped = command.replace('\\', '\\\\').replace('"', '\\"')
-            return f'"{escaped}"'
-        
+        # For shell commands, we should avoid complex quoting that breaks shell parsing
+        # Just return the command as-is for shell module, YAML will handle basic escaping
         return command
         
     def create_dynamic_playbook(self, commands: List[Dict], servers: List[Dict]) -> str:
@@ -127,10 +121,13 @@ class AnsibleRunner:
         try:
             logger.info(f"Starting job {job_id} with {len(commands)} commands on {len(servers)} servers")
             
+            # Expand template variables in commands
+            expanded_commands = self._expand_command_variables(commands, servers)
+            
             self.running_jobs[job_id] = {
                 'status': 'running',
                 'start_time': datetime.now(GMT_PLUS_7).isoformat(),
-                'commands_count': len(commands),
+                'commands_count': len(expanded_commands),
                 'servers_count': len(servers),
                 'progress': 0
             }
@@ -138,40 +135,27 @@ class AnsibleRunner:
             # Initialize progress tracking
             self.job_progress[job_id] = {
                 'current_command': 1,  # Start from 1 instead of 0
-                'total_commands': len(commands),
+                'total_commands': len(expanded_commands),
                 'current_server': 1,   # Start from 1 instead of 0
                 'total_servers': len(servers),
                 'percentage': 5        # Start with 5% to show initial progress
             }
             logger.info(f"Initialized job progress for {job_id}: {self.job_progress[job_id]}")
             
-            temp_dir = self.create_dynamic_playbook(commands, servers)
+            temp_dir = self.create_dynamic_playbook(expanded_commands, servers)
             
             # Run with event handler for real-time progress
             import threading
             import time
             
             def monitor_progress():
-                """Monitor ansible runner progress in background with real-time event streaming"""
-                logger.info(f"Starting real-time progress monitoring for job {job_id}")
                 start_time = time.time()
                 total_tasks = len(commands) * len(servers)
                 completed_tasks = 0
                 last_event_count = 0
                 current_command = 1
                 current_server = 1
-                
-                # Debug: List all directories in temp_dir to understand structure
-                logger.info(f"Debug: temp_dir = {temp_dir}")
-                try:
-                    if os.path.exists(temp_dir):
-                        logger.info(f"Debug: Contents of temp_dir: {os.listdir(temp_dir)}")
-                        for item in os.listdir(temp_dir):
-                            item_path = os.path.join(temp_dir, item)
-                            if os.path.isdir(item_path):
-                                logger.info(f"Debug: Directory {item}: {os.listdir(item_path)}")
-                except Exception as e:
-                    logger.error(f"Debug: Error listing temp_dir contents: {e}")
+                last_progress_update = 0
                 
                 while job_id in self.running_jobs and self.running_jobs[job_id]['status'] == 'running':
                     try:
@@ -263,39 +247,41 @@ class AnsibleRunner:
                                                         task_index = int(match.group(1))
                                                         break
                                                 
-                                                if task_index is not None:
-                                                    # Calculate current command and server
-                                                    if len(servers) == 1:
-                                                        current_command = task_index
-                                                        current_server = 1
-                                                    else:
-                                                        # Find server index
-                                                        server_index = 1
-                                                        for i, server in enumerate(servers):
-                                                            if server['ip'] == host:
-                                                                server_index = i + 1
-                                                                break
+                                                if task_index is not None and task_index <= len(commands):
+                                                    # Find server index
+                                                    server_index = 1
+                                                    for i, server in enumerate(servers):
+                                                        if server['ip'] == host:
+                                                            server_index = i + 1
+                                                            break
+                                                    
+                                                    # Update current command and server only if valid
+                                                    if task_index > current_command or (task_index == current_command and server_index > current_server):
                                                         current_command = task_index
                                                         current_server = server_index
-                                                    
-                                                    # Calculate progress percentage
-                                                    progress_percentage = min(95, int((current_command / len(commands)) * 100))
-                                                    
-                                                    logger.info(f"Real-time Task Start: '{task_name}' -> Command {current_command}/{len(commands)}, Server {current_server}/{len(servers)}, Progress: {progress_percentage}%")
-                                                    
-                                                    # Update progress immediately
-                                                    if job_id in self.running_jobs:
-                                                        self.running_jobs[job_id]['progress'] = progress_percentage
                                                         
-                                                    if job_id in self.job_progress:
-                                                        self.job_progress[job_id].update({
-                                                            'percentage': progress_percentage,
-                                                            'current_command': current_command,
-                                                            'current_server': current_server
-                                                        })
-                                                        logger.info(f"Real-time update job_progress for {job_id}: {self.job_progress[job_id]}")
+                                                        # Calculate progress based on total tasks completed
+                                                        completed_tasks = ((current_command - 1) * len(servers)) + (current_server - 1)
+                                                        progress_percentage = min(95, int((completed_tasks / total_tasks) * 100))
+                                                        
+                                                        # Only update if progress actually increased
+                                                        if progress_percentage > last_progress_update:
+                                                            last_progress_update = progress_percentage
+                                                            
+                                                            logger.info(f"Real-time Task Start: '{task_name}' -> Command {current_command}/{len(commands)}, Server {current_server}/{len(servers)}, Progress: {progress_percentage}%")
+                                                            
+                                                            # Update progress immediately
+                                                            if job_id in self.running_jobs:
+                                                                self.running_jobs[job_id]['progress'] = progress_percentage
+                                                                
+                                                            if job_id in self.job_progress:
+                                                                self.job_progress[job_id].update({
+                                                                    'percentage': progress_percentage,
+                                                                    'current_command': current_command,
+                                                                    'current_server': current_server
+                                                                })
                                                 else:
-                                                    logger.debug(f"Could not extract task index from task name: '{task_name}'")
+                                                    logger.debug(f"Could not extract valid task index from task name: '{task_name}' (extracted: {task_index})")
                                             
                                             # Also track completion events
                                             elif event_type in ['runner_on_ok', 'runner_on_failed']:
@@ -313,27 +299,38 @@ class AnsibleRunner:
                             # No events directory found, use improved time-based simulation
                             elapsed_time = time.time() - start_time
                             
-                            # More aggressive time-based simulation to match actual execution speed
-                            # Ansible typically executes faster than 2.5s per command
-                            estimated_time_per_command = 1.5  # Reduced from 2.5 to 1.5 seconds
-                            estimated_current_command = min(int(elapsed_time / estimated_time_per_command) + 1, len(commands))
+                            # More accurate time-based simulation considering both commands and servers
+                            estimated_time_per_task = 2.0  # seconds per task (command * server)
+                            estimated_completed_tasks = min(total_tasks, int(elapsed_time / estimated_time_per_task))
                             
-                            if estimated_current_command > current_command:
-                                current_command = estimated_current_command
-                                progress_percentage = min(95, int((current_command / len(commands)) * 100))
+                            # Calculate estimated current command and server
+                            if estimated_completed_tasks > ((current_command - 1) * len(servers) + (current_server - 1)):
+                                estimated_current_command = (estimated_completed_tasks // len(servers)) + 1
+                                estimated_current_server = (estimated_completed_tasks % len(servers)) + 1
                                 
-                                logger.info(f"Time-based progress simulation: Command {current_command}/{len(commands)}, Progress: {progress_percentage}% (elapsed: {elapsed_time:.1f}s)")
-                                
-                                # Update progress
-                                if job_id in self.running_jobs:
-                                    self.running_jobs[job_id]['progress'] = progress_percentage
+                                # Only update if it's a valid progression
+                                if estimated_current_command <= len(commands):
+                                    current_command = estimated_current_command
+                                    current_server = estimated_current_server
                                     
-                                if job_id in self.job_progress:
-                                    self.job_progress[job_id].update({
-                                        'percentage': progress_percentage,
-                                        'current_command': current_command,
-                                        'current_server': current_server
-                                    })
+                                    progress_percentage = min(95, int((estimated_completed_tasks / total_tasks) * 100))
+                                    
+                                    # Only update if progress actually increased
+                                    if progress_percentage > last_progress_update:
+                                        last_progress_update = progress_percentage
+                                        
+                                        logger.info(f"Time-based progress simulation: Command {current_command}/{len(commands)}, Server {current_server}/{len(servers)}, Progress: {progress_percentage}% (elapsed: {elapsed_time:.1f}s)")
+                                        
+                                        # Update progress
+                                        if job_id in self.running_jobs:
+                                            self.running_jobs[job_id]['progress'] = progress_percentage
+                                            
+                                        if job_id in self.job_progress:
+                                            self.job_progress[job_id].update({
+                                                'percentage': progress_percentage,
+                                                'current_command': current_command,
+                                                'current_server': current_server
+                                            })
                             
                             # Debug logging every 5 seconds with more details
                             if int(elapsed_time) % 5 == 0 and elapsed_time > 2:
@@ -358,6 +355,7 @@ class AnsibleRunner:
                 playbook=os.path.join(temp_dir, "dynamic_commands.yml"),
                 inventory=os.path.join(temp_dir, "inventory.yml"),
                 private_data_dir=temp_dir,
+                forks=50,
                 quiet=False
             )
             
@@ -553,49 +551,82 @@ class AnsibleRunner:
                     
                     # Update progress and logs in real-time
                     current_operation += 1
-                    progress_percentage = int((current_operation / total_operations) * 100)
+                    progress_percentage = min(100, int((current_operation / total_operations) * 100))
                     
                     # Calculate current server index (0-based to 1-based)
                     server_index = servers.index(next(s for s in servers if s['ip'] == ip)) + 1
                     
-                    # Update progress tracking with correct command and server numbers
-                    if job_id in self.job_progress:
-                        self.job_progress[job_id]['current_command'] = i + 1  # Current command being processed (1-based)
-                        self.job_progress[job_id]['current_server'] = server_index  # Current server being processed (1-based)
-                        self.job_progress[job_id]['percentage'] = progress_percentage
-                        logger.info(f"Processing results - Command: {i + 1}/{len(commands)}, Server: {server_index}/{len(servers)}, Progress: {progress_percentage}%")
-                    
-                    # Update running job progress
-                    if job_id in self.running_jobs:
-                        self.running_jobs[job_id]['progress'] = progress_percentage
+                    # Only update progress if it's higher than current progress to avoid conflicts with monitor_progress
+                    current_progress = self.job_progress.get(job_id, {}).get('percentage', 0)
+                    if progress_percentage > current_progress:
+                        # Update progress tracking with correct command and server numbers
+                        if job_id in self.job_progress:
+                            self.job_progress[job_id]['current_command'] = i + 1  # Current command being processed (1-based)
+                            self.job_progress[job_id]['current_server'] = server_index  # Current server being processed (1-based)
+                            self.job_progress[job_id]['percentage'] = progress_percentage
+                            logger.info(f"Processing results - Command: {i + 1}/{len(commands)}, Server: {server_index}/{len(servers)}, Progress: {progress_percentage}%")
+                        
+                        # Update running job progress
+                        if job_id in self.running_jobs:
+                            self.running_jobs[job_id]['progress'] = progress_percentage
                     
                     # Perform validation against reference value using AdvancedValidator
                     try:
                         from .advanced_validator import AdvancedValidator
                         validator = AdvancedValidator()
                         
-                        # Get expected value and validation logic from command
-                        expected_value = cmd.get('expected_value', cmd.get('reference_value', ''))
-                        validation_logic = cmd.get('logic', cmd.get('validation_type', 'exact_match'))
-                        
-                        validation = validator.validate_output(
-                            cmd_result.get('output', ''),
-                            expected_value,
-                            validation_logic
-                        )
+                        # Check if this is 6-column format (has extract_method and comparator_method)
+                        if cmd.get('extract_method') and cmd.get('comparator_method'):
+                            # New 6-column format validation
+                            expected_value = cmd.get('reference_value', '')
+                            validation_options = {
+                                'extract_method': cmd.get('extract_method'),
+                                'comparator_method': cmd.get('comparator_method')
+                            }
+                            
+                            validation = validator.validate_output(
+                                cmd_result.get('output', ''),
+                                expected_value,
+                                'extract_compare',
+                                validation_options
+                            )
+                            
+                            # Use formatted_result from validation details for display
+                            formatted_result = validation.get('details', {}).get('formatted_result', 'Not OK')
+                            cmd_result['validation_result'] = formatted_result
+                            
+                        else:
+                            # Legacy 3-column format validation
+                            expected_value = cmd.get('expected_value', cmd.get('reference_value', ''))
+                            validation_logic = cmd.get('logic', cmd.get('validation_type', 'exact_match'))
+                            
+                            validation = validator.validate_output(
+                                cmd_result.get('output', ''),
+                                expected_value,
+                                validation_logic
+                            )
+                            
+                            # Convert legacy PASS/FAIL to OK/Not OK format
+                            is_valid = validation.get('is_valid', False)
+                            cmd_result['validation_result'] = 'OK' if is_valid else 'Not OK'
                         
                         cmd_result['is_valid'] = validation.get('is_valid', False)
                         cmd_result['validation_details'] = validation
                         cmd_result['expected_value'] = expected_value
-                        cmd_result['validation_result'] = 'PASS' if validation.get('is_valid', False) else 'FAIL'
-                        cmd_result['validation_type'] = validation.get('validation_type', validation_logic)
-                        cmd_result['validation_method'] = validation_logic
+                        cmd_result['validation_type'] = validation.get('validation_type', validation_logic if 'validation_logic' in locals() else 'extract_compare')
+                        cmd_result['validation_method'] = cmd.get('extract_method', validation_logic if 'validation_logic' in locals() else 'unknown')
                         cmd_result['decision'] = 'APPROVED' if validation.get('is_valid', False) else 'REJECTED'
+                        
+                        # Add 6-column specific fields
+                        if cmd.get('extract_method'):
+                            cmd_result['extract_method'] = cmd.get('extract_method')
+                            cmd_result['comparator_method'] = cmd.get('comparator_method')
+                            cmd_result['command_id_ref'] = cmd.get('command_id_ref', '')
                         
                     except Exception as e:
                         logger.warning(f"Validation error for {ip} cmd {i}: {str(e)}")
                         cmd_result['is_valid'] = False
-                        cmd_result['validation_result'] = 'ERROR'
+                        cmd_result['validation_result'] = 'Not OK'
                         cmd_result['decision'] = 'REJECTED'
                     
                     server_results[ip]['commands'].append(cmd_result)
@@ -651,7 +682,7 @@ class AnsibleRunner:
                     
                     # Update assessment status based on results
                     all_success = all(s['status'] == 'success' for s in server_results.values())
-                    assessment.status = 'COMPLETED' if all_success else 'FAILED'
+                    assessment.status = 'success' if all_success else 'fail'
                     
                     from models import db
                     db.session.commit()
@@ -765,7 +796,11 @@ class AnsibleRunner:
     def run_playbook_sync(self, commands: List[Dict], servers: List[Dict], timestamp: str, assessment_type: str = "Risk") -> Optional[Dict]:
         """Synchronous helper used by scheduler; returns results dict or None."""
         job_id = f"sync_{timestamp}"
-        self.run_playbook(job_id, commands, servers, timestamp, assessment_type=assessment_type)
+        
+        # Expand variables in commands before execution
+        expanded_commands = self._expand_command_variables(commands, servers)
+        
+        self.run_playbook(job_id, expanded_commands, servers, timestamp, assessment_type=assessment_type)
         return self.job_results.get(job_id)
 
     def get_job_status(self, job_id: str) -> Optional[Dict]:
@@ -817,3 +852,37 @@ class AnsibleRunner:
                 job_info['error'] = status['error']
             jobs.append(job_info)
         return jobs
+    
+    def _expand_command_variables(self, commands: List[Dict], servers: List[Dict]) -> List[Dict]:
+        """Expand template variables in commands using VariableExpander"""
+        try:
+            expanded_commands = []
+            for cmd in commands:
+                expanded_cmd = cmd.copy()
+                
+                # Expand variables in command field
+                if 'command' in expanded_cmd:
+                    expanded_cmd['command'] = self.variable_expander.expand_variables(
+                        expanded_cmd['command'], servers
+                    )
+                
+                # Expand variables in reference_value field for 6-column format
+                if 'reference_value' in expanded_cmd:
+                    expanded_cmd['reference_value'] = self.variable_expander.expand_variables(
+                        expanded_cmd['reference_value'], servers
+                    )
+                
+                # Expand variables in expected_value field for legacy format
+                if 'expected_value' in expanded_cmd:
+                    expanded_cmd['expected_value'] = self.variable_expander.expand_variables(
+                        expanded_cmd['expected_value'], servers
+                    )
+                
+                expanded_commands.append(expanded_cmd)
+            
+            logger.info(f"Expanded template variables in {len(commands)} commands")
+            return expanded_commands
+            
+        except Exception as e:
+            logger.warning(f"Error expanding template variables: {str(e)}")
+            return commands  # Return original commands if expansion fails

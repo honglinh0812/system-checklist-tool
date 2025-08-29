@@ -10,6 +10,7 @@ from models.execution import ExecutionHistory
 from models.report import RiskReport
 from models.user import User
 from models.assessment import AssessmentResult
+from models.periodic_assessment import PeriodicAssessment, PeriodicAssessmentExecution, PeriodicFrequency, PeriodicStatus
 from models import db
 from .api_utils import (
     api_response, api_error, paginate_query, validate_json,
@@ -1106,7 +1107,7 @@ def download_handover_assessment_report(assessment_id):
         if current_user.role == 'user' and assessment.executed_by != current_user.id:
             return api_error('Access denied', 403)
         
-        if assessment.status != 'completed':
+        if assessment.status != 'success':
             return api_error('Assessment not completed yet', 400)
         
         # Import excel exporter
@@ -1177,7 +1178,7 @@ def download_risk_assessment_report(assessment_id):
         if current_user.role == 'user' and assessment.executed_by != current_user.id:
             return api_error('Access denied', 403)
         
-        if assessment.status != 'completed':
+        if assessment.status != 'success':
             return api_error('Assessment not completed yet', 400)
         
         # Import excel exporter
@@ -1232,3 +1233,371 @@ def download_risk_assessment_report(assessment_id):
     except Exception as e:
         logger.error(f"Error downloading risk assessment report {assessment_id}: {str(e)}")
         return api_error('Failed to download report', 500)
+
+# Periodic Assessment Endpoints
+
+@assessments_bp.route('/periodic', methods=['GET'])
+@jwt_required()
+def get_periodic_assessments():
+    """Get list of periodic assessments"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Build query
+        query = PeriodicAssessment.query
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            query = query.filter(PeriodicAssessment.created_by == current_user.id)
+        
+        # Apply filters
+        assessment_type = request.args.get('assessment_type')
+        if assessment_type:
+            query = query.filter(PeriodicAssessment.assessment_type == assessment_type)
+        
+        status = request.args.get('status')
+        if status:
+            query = query.filter(PeriodicAssessment.status == status)
+        
+        # Order by created_at (most recent first)
+        periodic_assessments = query.order_by(desc(PeriodicAssessment.created_at)).all()
+        
+        return api_response({
+            'periodic_assessments': [pa.to_dict() for pa in periodic_assessments]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching periodic assessments: {str(e)}")
+        return api_error('Failed to fetch periodic assessments', 500)
+
+@assessments_bp.route('/periodic', methods=['POST'])
+@jwt_required()
+def create_periodic_assessment():
+    """Create a new periodic assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        data = request.get_json()
+        if not data:
+            return api_error('No data provided', 400)
+        
+        # Validate required fields
+        required_fields = ['mop_id', 'assessment_type', 'frequency', 'execution_time', 'servers']
+        for field in required_fields:
+            if field not in data:
+                return api_error(f'Missing required field: {field}', 400)
+        
+        # Validate MOP exists
+        mop = MOP.query.get(data['mop_id'])
+        if not mop:
+            return api_error('MOP not found', 404)
+        
+        # Validate frequency
+        try:
+            frequency = PeriodicFrequency(data['frequency'])
+        except ValueError:
+            return api_error('Invalid frequency', 400)
+        
+        # Create periodic assessment
+        periodic_assessment = PeriodicAssessment(
+            mop_id=data['mop_id'],
+            assessment_type=data['assessment_type'],
+            frequency=frequency,
+            execution_time=data['execution_time'],
+            server_info=data['servers'],
+            created_by=current_user.id
+        )
+        
+        db.session.add(periodic_assessment)
+        db.session.commit()
+        
+        # Log activity
+        log_user_activity(
+            current_user.id,
+            ActionType.CREATE,
+            ResourceType.ASSESSMENT,
+            periodic_assessment.id,
+            f"Created periodic {data['assessment_type']} assessment for MOP {mop.name}"
+        )
+        
+        return api_response({
+            'periodic_assessment': periodic_assessment.to_dict(),
+            'message': 'Periodic assessment created successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error creating periodic assessment: {str(e)}")
+        return api_error('Failed to create periodic assessment', 500)
+
+@assessments_bp.route('/periodic/<int:periodic_id>', methods=['PUT'])
+@jwt_required()
+def update_periodic_assessment(periodic_id):
+    """Update periodic assessment status"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        periodic_assessment = PeriodicAssessment.query.get_or_404(periodic_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and periodic_assessment.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        data = request.get_json()
+        if not data:
+            return api_error('No data provided', 400)
+        
+        # Update status if provided
+        if 'status' in data:
+            try:
+                new_status = PeriodicStatus(data['status'])
+                periodic_assessment.status = new_status
+                periodic_assessment.updated_at = datetime.now(GMT_PLUS_7)
+            except ValueError:
+                return api_error('Invalid status', 400)
+        
+        db.session.commit()
+        
+        # Log activity
+        log_user_activity(
+            current_user.id,
+            ActionType.UPDATE,
+            ResourceType.ASSESSMENT,
+            periodic_assessment.id,
+            f"Updated periodic assessment status to {periodic_assessment.status.value}"
+        )
+        
+        return api_response({
+            'periodic_assessment': periodic_assessment.to_dict(),
+            'message': 'Periodic assessment updated successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating periodic assessment: {str(e)}")
+        return api_error('Failed to update periodic assessment', 500)
+
+@assessments_bp.route('/periodic/<int:periodic_id>', methods=['DELETE'])
+@jwt_required()
+def delete_periodic_assessment(periodic_id):
+    """Delete periodic assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        periodic_assessment = PeriodicAssessment.query.get_or_404(periodic_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and periodic_assessment.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        mop_name = periodic_assessment.mop.name if periodic_assessment.mop else 'Unknown MOP'
+        
+        db.session.delete(periodic_assessment)
+        db.session.commit()
+        
+        # Log activity
+        log_user_activity(
+            current_user.id,
+            ActionType.DELETE,
+            ResourceType.ASSESSMENT,
+            periodic_id,
+            f"Deleted periodic assessment for MOP {mop_name}"
+        )
+        
+        return api_response({
+            'message': 'Periodic assessment deleted successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting periodic assessment: {str(e)}")
+        return api_error('Failed to delete periodic assessment', 500)
+
+@assessments_bp.route('/periodic/<int:periodic_id>/executions', methods=['GET'])
+@jwt_required()
+def get_periodic_assessment_executions(periodic_id):
+    """Get execution history for a periodic assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        periodic_assessment = PeriodicAssessment.query.get_or_404(periodic_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and periodic_assessment.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        # Get limit from query params (default 5 for recent executions)
+        limit = request.args.get('limit', 5, type=int)
+        limit = min(limit, 50)  # Max 50 items
+        
+        # Get recent executions
+        executions = PeriodicAssessmentExecution.query.filter_by(
+            periodic_assessment_id=periodic_id
+        ).order_by(desc(PeriodicAssessmentExecution.created_at)).limit(limit).all()
+        
+        return api_response({
+            'executions': [execution.to_dict() for execution in executions],
+            'periodic_assessment': periodic_assessment.to_dict()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching periodic assessment executions: {str(e)}")
+        return api_error('Failed to fetch executions', 500)
+
+@assessments_bp.route('/periodic/<int:periodic_id>/start', methods=['POST'])
+@jwt_required()
+def start_periodic_assessment(periodic_id):
+    """Start a periodic assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        periodic_assessment = PeriodicAssessment.query.get_or_404(periodic_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and periodic_assessment.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        # Check if already active
+        if periodic_assessment.status == PeriodicStatus.ACTIVE:
+            return api_error('Periodic assessment is already active', 400)
+        
+        # Update status to active
+        periodic_assessment.status = PeriodicStatus.ACTIVE
+        
+        # Calculate next execution time
+        from services.periodic_scheduler import calculate_next_execution
+        periodic_assessment.next_execution = calculate_next_execution(
+            periodic_assessment.frequency,
+            periodic_assessment.execution_time
+        )
+        
+        db.session.commit()
+        
+        # Log activity
+        log_user_activity(
+            user_id=current_user.id,
+            action=ActionType.UPDATE,
+            resource_type=ResourceType.ASSESSMENT,
+            resource_id=periodic_id,
+            resource_name=f"Periodic {periodic_assessment.assessment_type} assessment",
+            details={
+                'action': 'start',
+                'mop_id': periodic_assessment.mop_id,
+                'frequency': periodic_assessment.frequency.value,
+                'next_execution': periodic_assessment.next_execution.isoformat() if periodic_assessment.next_execution else None
+            }
+        )
+        
+        return api_response({
+            'message': 'Periodic assessment started successfully',
+            'periodic_assessment': periodic_assessment.to_dict()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting periodic assessment: {str(e)}")
+        return api_error('Failed to start periodic assessment', 500)
+
+@assessments_bp.route('/periodic/<int:periodic_id>/pause', methods=['POST'])
+@jwt_required()
+def pause_periodic_assessment(periodic_id):
+    """Pause a periodic assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        periodic_assessment = PeriodicAssessment.query.get_or_404(periodic_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and periodic_assessment.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        # Check if already paused or inactive
+        if periodic_assessment.status == PeriodicStatus.PAUSED:
+            return api_error('Periodic assessment is already paused', 400)
+        
+        if periodic_assessment.status == PeriodicStatus.INACTIVE:
+            return api_error('Cannot pause inactive periodic assessment', 400)
+        
+        # Update status to paused
+        periodic_assessment.status = PeriodicStatus.PAUSED
+        db.session.commit()
+        
+        # Log activity
+        log_user_activity(
+            user_id=current_user.id,
+            action=ActionType.UPDATE,
+            resource_type=ResourceType.ASSESSMENT,
+            resource_id=periodic_id,
+            resource_name=f"Periodic {periodic_assessment.assessment_type} assessment",
+            details={
+                'action': 'pause',
+                'mop_id': periodic_assessment.mop_id,
+                'frequency': periodic_assessment.frequency.value
+            }
+        )
+        
+        return api_response({
+            'message': 'Periodic assessment paused successfully',
+            'periodic_assessment': periodic_assessment.to_dict()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error pausing periodic assessment: {str(e)}")
+        return api_error('Failed to pause periodic assessment', 500)
+
+@assessments_bp.route('/periodic/<int:periodic_id>/stop', methods=['POST'])
+@jwt_required()
+def stop_periodic_assessment(periodic_id):
+    """Stop a periodic assessment"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        periodic_assessment = PeriodicAssessment.query.get_or_404(periodic_id)
+        
+        # Check permissions
+        if current_user.role == 'user' and periodic_assessment.created_by != current_user.id:
+            return api_error('Access denied', 403)
+        
+        # Check if already inactive
+        if periodic_assessment.status == PeriodicStatus.INACTIVE:
+            return api_error('Periodic assessment is already stopped', 400)
+        
+        # Update status to inactive
+        periodic_assessment.status = PeriodicStatus.INACTIVE
+        periodic_assessment.next_execution = None
+        db.session.commit()
+        
+        # Log activity
+        log_user_activity(
+            user_id=current_user.id,
+            action=ActionType.UPDATE,
+            resource_type=ResourceType.ASSESSMENT,
+            resource_id=periodic_id,
+            resource_name=f"Periodic {periodic_assessment.assessment_type} assessment",
+            details={
+                'action': 'stop',
+                'mop_id': periodic_assessment.mop_id,
+                'frequency': periodic_assessment.frequency.value
+            }
+        )
+        
+        return api_response({
+            'message': 'Periodic assessment stopped successfully',
+            'periodic_assessment': periodic_assessment.to_dict()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error stopping periodic assessment: {str(e)}")
+        return api_error('Failed to stop periodic assessment', 500)

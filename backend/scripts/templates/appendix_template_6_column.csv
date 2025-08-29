@@ -1,0 +1,5 @@
+ID,Name,Command,Extract,Comparator,Reference Value
+CMD001,Check system uptime,uptime,first_line,non_empty,
+CMD002,Check disk usage,df -h,regex:([0-9]+)%,less_than,90
+CMD003,Check memory usage,free -m,field:2,greater_than,1000
+CMD004,Check running processes,ps aux | wc -l,raw,less_than,200

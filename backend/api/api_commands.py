@@ -355,18 +355,46 @@ def run_commands():
         command_validator = CommandValidator()
         
         for cmd in commands:
-            if 'command' not in cmd or not cmd['command'].strip():
+            # Check for required command field (both 3-column and 6-column formats)
+            command_text = cmd.get('command', '').strip()
+            if not command_text:
                 return api_error('Tất cả lệnh phải có nội dung câu lệnh', 400)
             
-            validation_result = command_validator.validate_command(cmd['command'])
+            # Validate command syntax
+            validation_result = command_validator.validate_command(command_text)
             if not validation_result['valid']:
-                error_msg = f'Lệnh không hợp lệ: {cmd.get("title", "Không xác định")}'
+                error_msg = f'Lệnh không hợp lệ: {cmd.get("title", cmd.get("name", "Không xác định"))}'
                 if validation_result.get('syntax_error'):
                     error_msg += f' - Lỗi cú pháp: {validation_result["syntax_error"]}'
                 elif validation_result.get('errors'):
                     error_msg += f' - {", ".join(validation_result["errors"])}'
                 
                 return api_error(error_msg, 400, validation_result)
+            
+            # Additional validation for 6-column format
+            if cmd.get('extract_method') or cmd.get('comparator_method'):
+                # Validate extract method
+                extract_method = cmd.get('extract_method', '').strip()
+                if not extract_method:
+                    return api_error(f'Extract method is required for command: {cmd.get("name", "Không xác định")}', 400)
+                
+                valid_extract_methods = ['raw', 'first_line', 'lines_count', 'regex', 'field', 'per_line']
+                if extract_method not in valid_extract_methods:
+                    return api_error(f'Invalid extract method "{extract_method}" for command: {cmd.get("name", "Không xác định")}. Valid methods: {", ".join(valid_extract_methods)}', 400)
+                
+                # Validate comparator method
+                comparator_method = cmd.get('comparator_method', '').strip()
+                if not comparator_method:
+                    return api_error(f'Comparator method is required for command: {cmd.get("name", "Không xác định")}', 400)
+                
+                valid_comparator_methods = ['eq', 'ne', 'in', 'not_in', 'int_eq', 'int_ge', 'int_le', 'empty', 'non_empty', 'per_line:in']
+                if comparator_method not in valid_comparator_methods:
+                    return api_error(f'Invalid comparator method "{comparator_method}" for command: {cmd.get("name", "Không xác định")}. Valid methods: {", ".join(valid_comparator_methods)}', 400)
+                
+                # Validate reference value for certain comparators
+                reference_value = cmd.get('reference_value', '').strip()
+                if comparator_method in ['eq', 'ne', 'in', 'not_in', 'int_eq', 'int_ge', 'int_le', 'per_line:in'] and not reference_value:
+                    return api_error(f'Reference value is required for comparator "{comparator_method}" in command: {cmd.get("name", "Không xác định")}', 400)
         
         # Get current servers from global storage
         servers_to_run = []
@@ -1011,14 +1039,32 @@ def execute_mop(mop_id):
                 db.session.commit()
                 
                 # Convert MOP commands to execution format
-                commands = [{
-                    'id': cmd.id,
-                    'title': f'Command {cmd.order_index}',
-                    'command': cmd.command_text,
-                    'description': cmd.description,
-                    'is_critical': cmd.is_critical,
-                    'timeout': cmd.timeout_seconds or 300
-                } for cmd in mop.commands.order_by(Command.order_index)]
+                commands = []
+                for cmd in mop.commands.order_by(Command.order_index):
+                    command_dict = {
+                        'id': cmd.id,
+                        'title': cmd.title or f'Command {cmd.order_index}',
+                        'command': cmd.command_text,
+                        'description': cmd.description,
+                        'is_critical': cmd.is_critical,
+                        'timeout': cmd.timeout_seconds or 300
+                    }
+                    
+                    # Add 6-column format fields if available
+                    if hasattr(cmd, 'command_id_ref') and cmd.command_id_ref:
+                        command_dict['command_id_ref'] = cmd.command_id_ref
+                    if hasattr(cmd, 'extract_method') and cmd.extract_method:
+                        command_dict['extract_method'] = cmd.extract_method
+                    if hasattr(cmd, 'comparator_method') and cmd.comparator_method:
+                        command_dict['comparator_method'] = cmd.comparator_method
+                    if hasattr(cmd, 'reference_value') and cmd.reference_value:
+                        command_dict['reference_value'] = cmd.reference_value
+                    
+                    # Legacy support for expected_output
+                    if cmd.expected_output:
+                        command_dict['expected_value'] = cmd.expected_output
+                    
+                    commands.append(command_dict)
                 
                 execution.total_commands = len(commands)
                 db.session.commit()
@@ -1027,14 +1073,36 @@ def execute_mop(mop_id):
                 timestamp = datetime.now().strftime("%H%M%S_%d%m%Y")
                 job_id = f"mop_{mop_id}_{timestamp}"
                 
+                # Prepare servers data for ansible
+                ansible_servers = []
+                for server in servers:
+                    if isinstance(server, str):
+                        # Simple IP string
+                        ansible_servers.append({
+                            'ip': server,
+                            'admin_username': 'admin',
+                            'admin_password': '',
+                            'root_username': 'root',
+                            'root_password': ''
+                        })
+                    else:
+                        # Server object with credentials
+                        ansible_servers.append({
+                            'ip': server.get('ip', server.get('serverIP', '')),
+                            'admin_username': server.get('admin_username', server.get('adminUsername', 'admin')),
+                            'admin_password': server.get('admin_password', server.get('adminPassword', '')),
+                            'root_username': server.get('root_username', server.get('rootUsername', 'root')),
+                            'root_password': server.get('root_password', server.get('rootPassword', ''))
+                        })
+                
                 # Run the execution
                 ansible_runner.run_playbook(
                     job_id=job_id,
                     commands=commands,
-                    servers=servers,
+                    servers=ansible_servers,
                     timestamp=timestamp,
                     execution_id=execution.id,
-                    dry_run=dry_run
+                    assessment_type=data.get('assessment_type', 'Risk')
                 )
                 
                 # Update status to completed

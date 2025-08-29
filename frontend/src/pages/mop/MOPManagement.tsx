@@ -8,11 +8,14 @@ import { useTranslation } from '../../i18n/useTranslation';
 
 interface Command {
   id?: number;
-  title: string;
-  command: string;
+  command_id_ref?: string; // ID column
+  title: string; // Name column
+  command: string; // Command column
   command_text?: string;
   description?: string;
-  reference_value?: string;
+  extract_method?: string; // Extract column
+  comparator_method?: string; // Comparator column
+  reference_value?: string; // Reference Value column
   expected_output?: string;
   is_critical?: boolean;
   order_index?: number;
@@ -215,8 +218,11 @@ const MOPManagement: React.FC = () => {
           handover_assessment: mopTypes.includes('handover_assessment'),
           commands: (mop.commands || []).map((cmd: Command) => ({
             id: cmd.id,
+            command_id_ref: cmd.command_id_ref || '',
             title: cmd.title || '',
             command: cmd.command || cmd.command_text || '',
+            extract_method: cmd.extract_method || '',
+            comparator_method: cmd.comparator_method || '',
             reference_value: cmd.reference_value || cmd.expected_output || ''
           }))
         });
@@ -270,8 +276,11 @@ const MOPManagement: React.FC = () => {
   // Command management functions
   const addCommand = () => {
     const newCommand: Command = {
+      command_id_ref: '',
       title: '',
       command: '',
+      extract_method: '',
+      comparator_method: '',
       reference_value: ''
     };
     setFormData(prev => ({
@@ -310,8 +319,11 @@ const MOPManagement: React.FC = () => {
   // Add command from template
   const addCommandFromTemplate = (template: typeof commandTemplates[0]) => {
     const newCommand: Command = {
+      command_id_ref: '',
       title: template.title,
       command: template.command,
+      extract_method: '',
+      comparator_method: '',
       reference_value: template.reference_value
     };
     
@@ -754,11 +766,14 @@ const MOPManagement: React.FC = () => {
                         <table className="table table-bordered">
                           <thead className="thead-light">
                             <tr>
-                              <th style={{ width: '8%' }}>STT</th>
-                              <th style={{ width: '30%' }}>Tên Command</th>
-                              <th style={{ width: '40%' }}>Câu lệnh</th>
-                              <th style={{ width: '15%' }}>Giá trị đối chiếu</th>
-                              <th style={{ width: '7%' }}>Actions</th>
+                              <th style={{ width: '5%' }}>STT</th>
+                              <th style={{ width: '10%' }}>ID</th>
+                              <th style={{ width: '20%' }}>Name</th>
+                              <th style={{ width: '25%' }}>Command</th>
+                              <th style={{ width: '12%' }}>Extract</th>
+                              <th style={{ width: '12%' }}>Comparator</th>
+                              <th style={{ width: '11%' }}>Reference Value</th>
+                              <th style={{ width: '5%' }}>Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -769,9 +784,19 @@ const MOPManagement: React.FC = () => {
                                   <input 
                                     type="text" 
                                     className="form-control form-control-sm"
+                                    value={command.command_id_ref || ''}
+                                    onChange={(e) => updateCommand(index, 'command_id_ref', e.target.value)}
+                                    placeholder="1a, 6a@{{user}}"
+                                    required 
+                                  />
+                                </td>
+                                <td>
+                                  <input 
+                                    type="text" 
+                                    className="form-control form-control-sm"
                                     value={command.title || ''}
                                     onChange={(e) => updateCommand(index, 'title', e.target.value)}
-                                    placeholder="Command Title"
+                                    placeholder="Command Name"
                                     required 
                                   />
                                 </td>
@@ -787,12 +812,46 @@ const MOPManagement: React.FC = () => {
                                   />
                                 </td>
                                 <td>
+                                  <select 
+                                    className="form-control form-control-sm"
+                                    value={command.extract_method || 'raw'}
+                                    onChange={(e) => updateCommand(index, 'extract_method', e.target.value)}
+                                  >
+                                    <option value="raw">raw</option>
+                                    <option value="first_line">first_line</option>
+                                    <option value="lines_count">lines_count</option>
+                                    <option value="regex">regex:(...)</option>
+                                    <option value="field">field:N</option>
+                                    <option value="per_line">per_line:&lt;sub&gt;</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <select 
+                                    className="form-control form-control-sm"
+                                    value={command.comparator_method || 'eq'}
+                                    onChange={(e) => updateCommand(index, 'comparator_method', e.target.value)}
+                                  >
+                                    <option value="eq">eq</option>
+                                    <option value="neq">neq</option>
+                                    <option value="contains">contains</option>
+                                    <option value="not_contains">not_contains</option>
+                                    <option value="regex">regex</option>
+                                    <option value="int_eq">int_eq</option>
+                                    <option value="int_ge">int_ge</option>
+                                    <option value="int_gt">int_gt</option>
+                                    <option value="int_le">int_le</option>
+                                    <option value="int_lt">int_lt</option>
+                                    <option value="empty">empty</option>
+                                    <option value="non_empty">non_empty</option>
+                                  </select>
+                                </td>
+                                <td>
                                   <textarea 
                                     className="form-control form-control-sm" 
                                     rows={2}
                                     value={command.reference_value || ''}
                                     onChange={(e) => updateCommand(index, 'reference_value', e.target.value)}
-                                    placeholder="Expected output"
+                                    placeholder="Reference value"
                                     style={{ resize: 'vertical', minHeight: '50px' }}
                                   />
                                 </td>

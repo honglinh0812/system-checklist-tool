@@ -1263,6 +1263,10 @@ def upload_mop():
                 order_index=cmd_data['order_index'],
                 is_critical=cmd_data['is_critical'],
                 timeout_seconds=cmd_data['timeout_seconds'],
+                # New 6-column format fields
+                extract_method=cmd_data.get('extract_method'),
+                comparator_method=cmd_data.get('comparator_method'),
+                command_id_ref=cmd_data.get('command_id_ref'),
                 # Keep legacy fields for backward compatibility
                 title=cmd_data['title'],
                 command=cmd_data['command'],
@@ -1325,8 +1329,18 @@ def upload_mop():
 def download_template():
     """Download MOP template file"""
     try:
-        # Path to template file
-        template_path = os.path.join('templates', 'server_list_template_v2.xlsx')
+        # Get template type from query parameter (default to 6-column)
+        template_type = request.args.get('type', '6-column')
+        
+        if template_type == '6-column':
+            template_path = os.path.join('scripts', 'templates', 'appendix_template_6_column.xlsx')
+            download_name = 'appendix_template_6_column.xlsx'
+        elif template_type == '3-column':
+            # Create 3-column template on the fly if needed
+            template_path = os.path.join('templates', 'server_list_template_v2.xlsx')
+            download_name = 'server_list_template.xlsx'
+        else:
+            return api_error('Invalid template type. Use "6-column" or "3-column"', 400)
         
         if not os.path.exists(template_path):
             return api_error('Template file not found', 404)
@@ -1334,7 +1348,7 @@ def download_template():
         return send_file(
             template_path,
             as_attachment=True,
-            download_name='server_list_template.xlsx',
+            download_name=download_name,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
         
