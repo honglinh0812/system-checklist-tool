@@ -1,6 +1,21 @@
 from flask import Flask
 from flask_restx import Api, Resource, fields, Namespace
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+def handle_api_response(response):
+    """Helper function to handle API responses for Flask-RESTX compatibility"""
+    if isinstance(response, tuple):
+        # If response is a tuple (data, status_code), extract the data
+        data, status_code = response
+        if hasattr(data, 'get_json'):
+            # If data is a Flask Response object, get its JSON content
+            return data.get_json(), status_code
+        return data, status_code
+    return response
 
 def init_api_docs(app):
     """Initialize Flask-RESTX API documentation"""
@@ -121,230 +136,255 @@ def init_api_docs(app):
     @auth_ns.route('/login')
     class Login(Resource):
         @auth_ns.expect(login_model)
-        @auth_ns.marshal_with(token_response, code=200)
+        @auth_ns.response(200, 'Success', token_response)
         @auth_ns.response(401, 'Invalid credentials', error_response_model)
         def post(self):
             """User login"""
-            pass
+            from api.api_auth import login
+            return login()
     
     @auth_ns.route('/logout')
     class Logout(Resource):
         @auth_ns.doc(security='Bearer')
-        @auth_ns.marshal_with(api_response_model)
+        @auth_ns.response(200, 'Success', api_response_model)
+        @jwt_required()
         def post(self):
             """User logout"""
-            pass
+            from api.api_auth import logout
+            return logout()
     
     @auth_ns.route('/refresh')
     class RefreshToken(Resource):
         @auth_ns.doc(security='Bearer')
-        @auth_ns.marshal_with(token_response)
+        @auth_ns.response(200, 'Success', token_response)
+        @jwt_required(refresh=True)
         def post(self):
             """Refresh access token"""
-            pass
+            from api.api_auth import refresh
+            return refresh()
     
     @auth_ns.route('/user')
     class CurrentUser(Resource):
         @auth_ns.doc(security='Bearer')
-        @auth_ns.marshal_with(user_model)
+        @auth_ns.response(200, 'Success', user_model)
+        @jwt_required()
         def get(self):
             """Get current user information"""
-            pass
+            from api.api_auth import get_current_user
+            return get_current_user()
     
     # User management endpoints
     @users_ns.route('')
     class UserList(Resource):
         @users_ns.doc(security='Bearer')
-        @users_ns.marshal_list_with(user_model)
+        @jwt_required()
         def get(self):
             """Get list of users (admin only)"""
-            pass
+            from api.api_users import get_users
+            return handle_api_response(get_users())
         
         @users_ns.doc(security='Bearer')
         @users_ns.expect(user_model)
-        @users_ns.marshal_with(user_model, code=201)
+        @jwt_required()
         def post(self):
             """Create new user (admin only)"""
-            pass
+            from api.api_users import create_user
+            return handle_api_response(create_user())
     
     @users_ns.route('/<int:user_id>')
     class UserDetail(Resource):
         @users_ns.doc(security='Bearer')
-        @users_ns.marshal_with(user_model)
         def get(self, user_id):
             """Get user by ID"""
-            pass
+            from api.api_users import get_user
+            return handle_api_response(get_user(user_id))
         
         @users_ns.doc(security='Bearer')
         @users_ns.expect(user_model)
-        @users_ns.marshal_with(user_model)
         def put(self, user_id):
             """Update user (admin only)"""
-            pass
+            from api.api_users import update_user
+            return handle_api_response(update_user(user_id))
         
         @users_ns.doc(security='Bearer')
-        @users_ns.marshal_with(api_response_model)
         def delete(self, user_id):
             """Delete user (admin only)"""
-            pass
+            from api.api_users import delete_user
+            return handle_api_response(delete_user(user_id))
     
     # MOP endpoints
     @mops_ns.route('')
     class MOPList(Resource):
         @mops_ns.doc(security='Bearer')
-        @mops_ns.marshal_list_with(mop_model)
         def get(self):
             """Get list of MOPs"""
-            pass
+            from api.api_mops import get_mops
+            return handle_api_response(get_mops())
         
         @mops_ns.doc(security='Bearer')
         @mops_ns.expect(mop_model)
-        @mops_ns.marshal_with(mop_model, code=201)
         def post(self):
             """Create new MOP"""
-            pass
+            from api.api_mops import create_mop
+            return handle_api_response(create_mop())
     
     @mops_ns.route('/<int:mop_id>')
     class MOPDetail(Resource):
         @mops_ns.doc(security='Bearer')
-        @mops_ns.marshal_with(mop_model)
         def get(self, mop_id):
             """Get MOP by ID"""
-            pass
+            from api.api_mops import get_mop
+            return handle_api_response(get_mop(mop_id))
         
         @mops_ns.doc(security='Bearer')
         @mops_ns.expect(mop_model)
-        @mops_ns.marshal_with(mop_model)
         def put(self, mop_id):
             """Update MOP"""
-            pass
+            from api.api_mops import update_mop
+            return handle_api_response(update_mop(mop_id))
         
         @mops_ns.doc(security='Bearer')
-        @mops_ns.marshal_with(api_response_model)
         def delete(self, mop_id):
             """Delete MOP"""
-            pass
+            from api.api_mops import delete_mop
+            return handle_api_response(delete_mop(mop_id))
     
     # Assessment endpoints
     @assessments_ns.route('/risk')
     class RiskAssessment(Resource):
         @assessments_ns.doc(security='Bearer')
-        @assessments_ns.marshal_with(execution_model, code=201)
         def post(self):
             """Start risk assessment"""
-            pass
+            from api.api_assessments import start_risk_assessment
+            return handle_api_response(start_risk_assessment())
     
     @assessments_ns.route('/handover')
     class HandoverAssessment(Resource):
         @assessments_ns.doc(security='Bearer')
-        @assessments_ns.marshal_with(execution_model, code=201)
         def post(self):
             """Start handover assessment"""
-            pass
+            from api.api_assessments import start_handover_assessment
+            return handle_api_response(start_handover_assessment())
     
     @assessments_ns.route('/executions')
     class ExecutionList(Resource):
         @assessments_ns.doc(security='Bearer')
-        @assessments_ns.marshal_list_with(execution_model)
         def get(self):
             """Get list of executions"""
-            pass
+            from api.api_assessments import get_assessment_results
+            return handle_api_response(get_assessment_results())
     
     @assessments_ns.route('/executions/<int:execution_id>')
     class ExecutionDetail(Resource):
         @assessments_ns.doc(security='Bearer')
-        @assessments_ns.marshal_with(execution_model)
         def get(self, execution_id):
             """Get execution details"""
-            pass
+            from api.api_assessments import get_assessment_result
+            return handle_api_response(get_assessment_result(execution_id))
     
     # Periodic assessment endpoints
     @periodic_ns.route('')
     class PeriodicAssessmentList(Resource):
         @periodic_ns.doc(security='Bearer')
-        @periodic_ns.marshal_list_with(periodic_assessment_model)
         def get(self):
             """Get list of periodic assessments"""
-            pass
+            from api.api_assessments import get_periodic_assessments
+            return handle_api_response(get_periodic_assessments())
         
         @periodic_ns.doc(security='Bearer')
         @periodic_ns.expect(periodic_assessment_model)
-        @periodic_ns.marshal_with(periodic_assessment_model, code=201)
         def post(self):
             """Create periodic assessment"""
-            pass
+            from api.api_assessments import create_periodic_assessment
+            return handle_api_response(create_periodic_assessment())
     
     @periodic_ns.route('/<int:periodic_id>')
     class PeriodicAssessmentDetail(Resource):
         @periodic_ns.doc(security='Bearer')
-        @periodic_ns.marshal_with(periodic_assessment_model)
         def get(self, periodic_id):
             """Get periodic assessment details"""
-            pass
+            from api.api_assessments import get_periodic_assessment
+            return handle_api_response(get_periodic_assessment(periodic_id))
         
         @periodic_ns.doc(security='Bearer')
-        @periodic_ns.marshal_with(api_response_model)
         def delete(self, periodic_id):
             """Delete periodic assessment"""
-            pass
+            from api.api_assessments import delete_periodic_assessment
+            return handle_api_response(delete_periodic_assessment(periodic_id))
     
     @periodic_ns.route('/<int:periodic_id>/start')
     class StartPeriodicAssessment(Resource):
         @periodic_ns.doc(security='Bearer')
-        @periodic_ns.marshal_with(api_response_model)
         def post(self, periodic_id):
             """Start periodic assessment"""
-            pass
-    
+            from api.api_assessments import start_periodic_assessment
+            return handle_api_response(start_periodic_assessment(periodic_id))
+
     @periodic_ns.route('/<int:periodic_id>/pause')
     class PausePeriodicAssessment(Resource):
         @periodic_ns.doc(security='Bearer')
-        @periodic_ns.marshal_with(api_response_model)
         def post(self, periodic_id):
             """Pause periodic assessment"""
-            pass
-    
+            from api.api_assessments import pause_periodic_assessment
+            return handle_api_response(pause_periodic_assessment(periodic_id))
+
     @periodic_ns.route('/<int:periodic_id>/stop')
     class StopPeriodicAssessment(Resource):
         @periodic_ns.doc(security='Bearer')
-        @periodic_ns.marshal_with(api_response_model)
         def post(self, periodic_id):
             """Stop periodic assessment"""
-            pass
+            from api.api_assessments import stop_periodic_assessment
+            return handle_api_response(stop_periodic_assessment(periodic_id))
     
     # Audit endpoints
     @audit_ns.route('/logs')
     class AuditLogs(Resource):
         @audit_ns.doc(security='Bearer')
-        @audit_ns.marshal_with(api_response_model)
         def get(self):
             """Get audit logs (admin only)"""
-            pass
+            from api.api_audit import get_audit_logs
+            return handle_api_response(get_audit_logs())
     
     @audit_ns.route('/stats')
     class AuditStats(Resource):
         @audit_ns.doc(security='Bearer')
-        @audit_ns.marshal_with(api_response_model)
         def get(self):
             """Get audit statistics (admin only)"""
-            pass
+            from api.api_audit import get_audit_stats
+            return handle_api_response(get_audit_stats())
     
     # Dashboard endpoints
     @dashboard_ns.route('/stats')
     class DashboardStats(Resource):
         @dashboard_ns.doc(security='Bearer')
-        @dashboard_ns.marshal_with(api_response_model)
         def get(self):
             """Get dashboard statistics"""
-            pass
+            from api.api_dashboard import get_dashboard_stats
+            return handle_api_response(get_dashboard_stats())
+
+    @dashboard_ns.route('/recent-mops')
+    class DashboardRecentMops(Resource):
+        @dashboard_ns.doc(security='Bearer')
+        def get(self):
+            """Get recent MOPs for dashboard"""
+            from api.api_dashboard import get_recent_mops
+            return handle_api_response(get_recent_mops())
+
+    @dashboard_ns.route('/recent-executions')
+    class DashboardRecentExecutions(Resource):
+        @dashboard_ns.doc(security='Bearer')
+        def get(self):
+            """Get recent executions for dashboard"""
+            from api.api_dashboard import get_recent_executions
+            return handle_api_response(get_recent_executions())
     
     # API Health check endpoint
     @api.route('/api-health')
     class ApiHealthCheck(Resource):
-        @api.marshal_with(api_response_model)
         def get(self):
             """API Health check endpoint"""
-            pass
+            from api.api_health import get_api_health
+            return handle_api_response(get_api_health())
     
     # Configure JWT security for Swagger UI
     authorizations = {

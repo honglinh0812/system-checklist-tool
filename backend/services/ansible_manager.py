@@ -564,7 +564,6 @@ class AnsibleRunner:
                             self.job_progress[job_id]['current_command'] = i + 1  # Current command being processed (1-based)
                             self.job_progress[job_id]['current_server'] = server_index  # Current server being processed (1-based)
                             self.job_progress[job_id]['percentage'] = progress_percentage
-                            logger.info(f"Processing results - Command: {i + 1}/{len(commands)}, Server: {server_index}/{len(servers)}, Progress: {progress_percentage}%")
                         
                         # Update running job progress
                         if job_id in self.running_jobs:
