@@ -7,8 +7,7 @@ import { ErrorMessage } from '../../components/common';
 import ProgressSteps from '../../components/common/ProgressSteps';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useAssessmentState, getAssessmentSteps, isStepCompleted, isStepAccessible } from '../../hooks/useAssessmentState';
-import { periodicAssessmentService } from '../../services/periodicAssessmentService';
-import type { PeriodicAssessment, PeriodicAssessmentExecution } from '../../services/periodicAssessmentService';
+
 
 interface MOP {
   id: number;
@@ -20,9 +19,9 @@ interface MOP {
 
 interface Command {
   id: number;
-  command_id_ref?: string; // ID column
-  title?: string; // Name column
-  command: string; // Command column
+  command_id_ref?: string; 
+  title?: string; 
+  command: string; 
   command_text: string;
   description: string;
   extract_method?: string; // Extract column
@@ -33,6 +32,11 @@ interface Command {
   order_index: number;
   rollback_command?: string | null;
   timeout_seconds?: number;
+  skip_condition?: {
+    condition_id: string;
+    condition_type: 'empty' | 'not_empty' | 'ok' | 'not_ok' | 'value_match';
+    condition_value?: string;
+  };
 }
 
 const HandoverAssessment: React.FC = () => {
@@ -49,7 +53,7 @@ const HandoverAssessment: React.FC = () => {
   const [selectedMOP, setSelectedMOP] = useState<string>('');
 
   const [filteredMops, setFilteredMops] = useState<MOP[]>([]);
-  const [activeTab, setActiveTab] = useState<'assessment' | 'periodic' | 'reports'>('assessment');
+  const [activeTab, setActiveTab] = useState<'assessment' | 'reports'>('assessment');
   const [assessmentType] = useState<'emergency' | 'periodic'>('emergency');
   const [showExecutionModal, setShowExecutionModal] = useState(false);
   const [showFileUploadModal, setShowFileUploadModal] = useState(false);
@@ -86,19 +90,14 @@ const HandoverAssessment: React.FC = () => {
   const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
   const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning' | 'info'; message: string} | null>(null);
   
-  // Periodic assessment states
-  const [periodicAssessments, setPeriodicAssessments] = useState<PeriodicAssessment[]>([]);
-  const [recentExecutions, setRecentExecutions] = useState<PeriodicAssessmentExecution[]>([]);
-  const [periodicFrequency, setPeriodicFrequency] = useState<'daily' | 'weekly' | 'monthly' | 'quarterly'>('daily');
-  const [periodicTime, setPeriodicTime] = useState<string>('09:00');
-  const [periodicLoading, setPeriodicLoading] = useState(false);
+
 
   // Add useEffect to monitor selectedServers and connectionResults changes
   useEffect(() => {
     // Check if all selected servers have successful connections
     const selectedResults = connectionResults.filter((_, index) => selectedServers[index] && connectionResults[index]);
     const allSuccess = selectedResults.length > 0 && selectedResults.every((result) => result && result.success === true);
-    console.log('Can start assessment updated:', allSuccess, 'Selected results:', selectedResults);
+    console.log('Can start assessment updated:', allSuccess);
     setCanStartAssessment(allSuccess);
   }, [selectedServers, connectionResults]);
 
@@ -118,7 +117,6 @@ const HandoverAssessment: React.FC = () => {
           mop.status === 'approved' && (mop as any).assessment_type === 'handover_assessment'
         );
         setFilteredMops(handoverMops);
-        console.log('Fetched MOPs:', allMops.length, 'Handover MOPs:', handoverMops.length);
       }
     } catch (error) {
       console.error('Error fetching MOPs:', error);
@@ -128,22 +126,8 @@ const HandoverAssessment: React.FC = () => {
   };
 
   useEffect(() => {
-    console.log('HandoverAssessment mounted, current states:', {
-      selectedMOP,
-      activeTab,
-      assessmentType,
-      serversLength: servers.length,
-      selectedServersLength: selectedServers.length
-    });
     fetchMOPs();
   }, []);
-
-  // Load periodic assessment data when switching to periodic tab
-  useEffect(() => {
-    if (activeTab === 'periodic') {
-      loadPeriodicAssessmentData();
-    }
-  }, [activeTab]);
 
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
@@ -171,11 +155,8 @@ const HandoverAssessment: React.FC = () => {
 
   const handleTestConnection = async () => {
     console.log('handleTestConnection called');
-    console.log('servers:', servers);
-    console.log('selectedServers:', selectedServers);
     
     const selectedServerList = servers.filter((_: any, index: number) => selectedServers[index]);
-    console.log('selectedServerList:', selectedServerList);
     
     if (selectedServerList.length === 0) {
       setNotification({type: 'warning', message: t('selectAtLeastOneServer')});
@@ -183,9 +164,6 @@ const HandoverAssessment: React.FC = () => {
     }
 
     try {
-      console.log('Sending request to:', API_ENDPOINTS.ASSESSMENTS.HANDOVER_TEST_CONNECTION);
-      
-      // Map frontend fields to backend expected fields
       const mappedServers = selectedServerList.map((server: any) => ({
         ip: server.serverIP,
         admin_username: server.sshUser,
@@ -195,15 +173,11 @@ const HandoverAssessment: React.FC = () => {
         sshPort: parseInt(server.sshPort) || 22
       }));
       
-      console.log('Request data:', { servers: mappedServers });
-      
       const response = await apiService.post<any>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_TEST_CONNECTION, {
         servers: mappedServers
       });
       
-      console.log('Response received:', response);
       const results = response.data?.results || response.results || [];
-      console.log('Extracted results:', results);
       
       // Create a new connection results array
       const newConnectionResults = [...connectionResults];
@@ -229,7 +203,6 @@ const HandoverAssessment: React.FC = () => {
       
       // Check if all selected servers have successful connections
       const selectedResults = newConnectionResults.filter((_, index) => selectedServers[index] && newConnectionResults[index]);
-      console.log('Selected results for assessment check:', selectedResults);
       const allSuccess = selectedResults.length > 0 && selectedResults.every((result) => result && result.success === true);
       console.log('Can start assessment:', allSuccess);
       
@@ -317,7 +290,8 @@ const HandoverAssessment: React.FC = () => {
                 // Calculate estimated time remaining
                 const calculateEstimatedTime = (currentProgress: any, startTime: Date) => {
                   const totalTasks = (currentProgress.total_commands || 0) * (currentProgress.total_servers || 1);
-                  const completedTasks = (currentProgress.current_command || 0) + ((currentProgress.current_server || 1) - 1) * (currentProgress.total_commands || 0);
+                  // Fix calculation: completed tasks = (current_command - 1) * total_servers + (current_server - 1)
+                  const completedTasks = ((currentProgress.current_command || 1) - 1) * (currentProgress.total_servers || 1) + ((currentProgress.current_server || 1) - 1);
                   
                   if (completedTasks === 0) return 'Đang tính toán...';
                   
@@ -326,13 +300,16 @@ const HandoverAssessment: React.FC = () => {
                   const remainingTasks = totalTasks - completedTasks;
                   const estimatedRemainingMs = remainingTasks * timePerTask;
                   
+                  // Ensure non-negative values
+                  if (estimatedRemainingMs <= 0) return 'Sắp hoàn thành';
+                  
                   const minutes = Math.floor(estimatedRemainingMs / 60000);
                   const seconds = Math.floor((estimatedRemainingMs % 60000) / 1000);
                   
                   if (minutes > 0) {
                     return `${minutes} phút ${seconds} giây`;
                   } else {
-                    return `${seconds} giây`;
+                    return `${Math.max(1, seconds)} giây`;
                   }
                 };
                 
@@ -480,19 +457,7 @@ const HandoverAssessment: React.FC = () => {
         }
       );
 
-      // Debug: Log toàn bộ response từ backend
-      console.log('Backend response:', response);
-      console.log('Backend servers data:', response.servers);
-
       if (response.success && response.servers) {
-        // Debug: Log từng server object
-        response.servers.forEach((server, index) => {
-          console.log(`Server ${index}:`, server);
-          console.log(`  admin_username: ${server.admin_username}`);
-          console.log(`  admin_password: ${server.admin_password}`);
-          console.log(`  root_username: ${server.root_username}`);
-          console.log(`  root_password: ${server.root_password}`);
-        });
 
         const newServers = response.servers.map((server: any) => {
           const mappedServer = {
@@ -507,8 +472,6 @@ const HandoverAssessment: React.FC = () => {
             sudoPassword: server.root_password
           };
           
-          // Debug: Log mapped server
-          console.log('Mapped server:', mappedServer);
           return mappedServer;
         });
 
@@ -603,97 +566,15 @@ const HandoverAssessment: React.FC = () => {
     setDeleteServerIndex(-1);
   };
 
-  // Periodic assessment handlers
-  const loadPeriodicAssessmentData = async () => {
-    try {
-      setPeriodicLoading(true);
-      const [assessmentsResponse, executionsResponse] = await Promise.all([
-        periodicAssessmentService.getPeriodicAssessments({assessment_type: 'handover'}),
-        periodicAssessmentService.getPeriodicAssessmentExecutions(1) // Default periodic ID, will be updated
-      ]);
-      
-      setPeriodicAssessments(assessmentsResponse || []);
-      
-      const sortedExecutions = (executionsResponse.executions || [])
-        .sort((a, b) => {
-          const timeA = new Date(a.completed_at || a.started_at || a.created_at).getTime();
-          const timeB = new Date(b.completed_at || b.started_at || b.created_at).getTime();
-          return timeB - timeA;
-        })
-        .slice(0, 5);
-      setRecentExecutions(sortedExecutions);
-    } catch (error) {
-      console.error('Error loading periodic assessment data:', error);
-      setNotification({type: 'error', message: 'Lỗi khi tải dữ liệu đánh giá định kỳ'});
-    } finally {
-      setPeriodicLoading(false);
-    }
-  };
 
-  const handleCreatePeriodicAssessment = async () => {
-    if (!selectedMOP) {
-      setNotification({type: 'error', message: 'Vui lòng chọn MOP trước khi tạo đánh giá định kỳ'});
-      return;
-    }
 
-    const selectedServerList = servers.filter((_: any, index: number) => selectedServers[index]);
-    if (selectedServerList.length === 0) {
-      setNotification({type: 'error', message: 'Vui lòng chọn ít nhất một server'});
-      return;
-    }
 
-    try {
-      setPeriodicLoading(true);
-      const response = await periodicAssessmentService.createPeriodicAssessment({
-        mop_id: parseInt(selectedMOP),
-        assessment_type: 'handover',
-        frequency: periodicFrequency,
-        execution_time: periodicTime,
-        servers: selectedServerList
-      });
 
-      setNotification({type: 'success', message: 'Tạo đánh giá định kỳ thành công'});
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error creating periodic assessment:', error);
-      setNotification({type: 'error', message: 'Lỗi khi tạo đánh giá định kỳ'});
-    } finally {
-      setPeriodicLoading(false);
-    }
-  };
 
-  const handleStartPeriodicAssessment = async (id: number) => {
-    try {
-      await periodicAssessmentService.startPeriodicAssessment(id);
-      setNotification({type: 'success', message: 'Bắt đầu đánh giá định kỳ thành công'});
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error starting periodic assessment:', error);
-      setNotification({type: 'error', message: 'Lỗi khi bắt đầu đánh giá định kỳ'});
-    }
-  };
 
-  const handlePausePeriodicAssessment = async (id: number) => {
-    try {
-      await periodicAssessmentService.pausePeriodicAssessment(id);
-      setNotification({type: 'success', message: 'Tạm dừng đánh giá định kỳ thành công'});
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error pausing periodic assessment:', error);
-      setNotification({type: 'error', message: 'Lỗi khi tạm dừng đánh giá định kỳ'});
-    }
-  };
 
-  const handleStopPeriodicAssessment = async (id: number) => {
-    try {
-      await periodicAssessmentService.stopPeriodicAssessment(id);
-      setNotification({type: 'success', message: 'Dừng đánh giá định kỳ thành công'});
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error stopping periodic assessment:', error);
-      setNotification({type: 'error', message: 'Lỗi khi dừng đánh giá định kỳ'});
-    }
-  };
+
+
 
   return (
     <div>
@@ -766,15 +647,7 @@ const HandoverAssessment: React.FC = () => {
                         <i className="fas fa-exchange-alt mr-1"></i> {t('assessment')}
                       </button>
                     </li>
-                    <li className="nav-item">
-                      <button 
-                        className={`nav-link ${activeTab === 'periodic' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('periodic')}
-                        type="button"
-                      >
-                        <i className="fas fa-clock mr-1"></i> Đánh giá định kỳ
-                      </button>
-                    </li>
+
                     <li className="nav-item">
                       <button 
                         className={`nav-link ${activeTab === 'reports' ? 'active' : ''}`}
@@ -995,7 +868,6 @@ const HandoverAssessment: React.FC = () => {
                                               <td>
                                                  {(() => {
                                                    console.log(`Checking connectionResults[${index}]:`, connectionResults[index]);
-                                                   console.log('Full connectionResults array:', connectionResults);
                                                    return connectionResults[index] ? (
                                                      <span className={`badge ${
                                                        connectionResults[index].success ? 'badge-success' : 'badge-danger'
@@ -1215,25 +1087,79 @@ const HandoverAssessment: React.FC = () => {
                                                 <tr>
                                                   <th>Server</th>
                                                   <th>{t('commandName')}</th>
+                                                  <th>Status</th>
                                                   <th>{t('executionResult')}</th>
                                                   <th>{t('referenceValue')}</th>
+                                                  <th>Skip Info</th>
                                                 </tr>
                                               </thead>
                                               <tbody>
-                                                {assessmentResults.test_results.map((result: any, index: number) => (
-                                                  <tr key={index}>
-                                                    <td>{result.server_ip}</td>
-                                                    <td>{result.command_text}</td>
-                                                    <td>
-                                                      <div className="mt-1">
-                                                        <small className="text-muted">{result.output}</small>
-                                                      </div>
-                                                    </td>
-                                                    <td>
-                                                      <code>{result.reference_value || 'N/A'}</code>
-                                                    </td>
-                                                  </tr>
-                                                ))}
+                                                {assessmentResults.test_results.map((result: any, index: number) => {
+                                                  const isSkipped = result.status === 'SKIPPED' || result.skipped;
+                                                  const rowClass = isSkipped ? 'table-warning' : 
+                                                                  result.status === 'OK' || result.validation_result === 'OK' || result.decision === 'APPROVED' ? 'table-success' : 
+                                                                  result.status === 'Not OK' || result.validation_result === 'Not OK' || result.decision === 'REJECTED' ? 'table-danger' : '';
+                                                  
+                                                  return (
+                                                    <tr key={index} className={rowClass}>
+                                                      <td>{result.server_ip}</td>
+                                                      <td>
+                                                        {result.title || result.command_text}
+                                                        {result.command_id_ref && (
+                                                          <><br /><small className="text-muted">ID: {result.command_id_ref}</small></>
+                                                        )}
+                                                      </td>
+                                                      <td>
+                                                        {isSkipped ? (
+                                                          <span className="badge badge-warning">
+                                                            <i className="fas fa-forward mr-1"></i>
+                                                            SKIPPED
+                                                          </span>
+                                                        ) : result.status === 'OK' || result.validation_result === 'OK' || result.decision === 'APPROVED' ? (
+                                                          <span className="badge badge-success">
+                                                            <i className="fas fa-check mr-1"></i>
+                                                            OK
+                                                          </span>
+                                                        ) : result.status === 'Not OK' || result.validation_result === 'Not OK' || result.decision === 'REJECTED' ? (
+                                                          <span className="badge badge-danger">
+                                                            <i className="fas fa-times mr-1"></i>
+                                                            Not OK
+                                                          </span>
+                                                        ) : (
+                                                          <span className="badge badge-secondary">N/A</span>
+                                                        )}
+                                                      </td>
+                                                      <td>
+                                                        {!isSkipped && (
+                                                          <div className="mt-1">
+                                                            <small className="text-muted">{result.output || result.actual_output}</small>
+                                                          </div>
+                                                        )}
+                                                        {isSkipped && (
+                                                          <small className="text-muted font-italic">Command was skipped</small>
+                                                        )}
+                                                      </td>
+                                                      <td>
+                                                        {!isSkipped && (
+                                                          <code>{result.reference_value || result.expected_output || 'N/A'}</code>
+                                                        )}
+                                                        {isSkipped && (
+                                                          <small className="text-muted">-</small>
+                                                        )}
+                                                      </td>
+                                                      <td>
+                                                        {isSkipped && result.skip_reason ? (
+                                                          <small className="text-warning">
+                                                            <i className="fas fa-info-circle mr-1"></i>
+                                                            {result.skip_reason}
+                                                          </small>
+                                                        ) : (
+                                                          <small className="text-muted">-</small>
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  );
+                                                })}
                                               </tbody>
                                             </table>
                                           </div>
@@ -1270,219 +1196,7 @@ const HandoverAssessment: React.FC = () => {
                     </div>
                   )}
                   
-                  {/* Periodic Assessment Tab */}
-                  {activeTab === 'periodic' && (
-                    <div className="tab-pane fade show active">
-                      <div className="row">
-                        <div className="col-md-12">
-                          <div className="card">
-                            <div className="card-header">
-                              <h3 className="card-title">
-                                <i className="fas fa-clock mr-2"></i>
-                                Đánh giá định kỳ
-                              </h3>
-                            </div>
-                            <div className="card-body">
-                              <div className="row">
-                                <div className="col-md-6">
-                                  <div className="form-group">
-                                    <label>Tần suất đánh giá</label>
-                                    <select 
-                                      className="form-control"
-                                      value={periodicFrequency}
-                                      onChange={(e) => setPeriodicFrequency(e.target.value as 'daily' | 'weekly' | 'monthly' | 'quarterly')}
-                                    >
-                                      <option value="daily">Hàng ngày</option>
-                                      <option value="weekly">Hàng tuần</option>
-                                      <option value="monthly">Hàng tháng</option>
-                                      <option value="quarterly">Hàng quý</option>
-                                    </select>
-                                  </div>
-                                </div>
-                                <div className="col-md-6">
-                                  <div className="form-group">
-                                    <label>Thời gian thực hiện</label>
-                                    <input 
-                                      type="time" 
-                                      className="form-control" 
-                                      value={periodicTime}
-                                      onChange={(e) => setPeriodicTime(e.target.value)}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div className="form-group">
-                                <label>MOP được chọn</label>
-                                <div className="border p-3 bg-light">
-                                  {state.selectedMOP ? (
-                                    <div>
-                                      <strong>{filteredMops.find(mop => mop.id.toString() === state.selectedMOP)?.name || state.selectedMOP}</strong>
-                                      <p className="text-muted mb-0">Loại: {filteredMops.find(mop => mop.id.toString() === state.selectedMOP)?.type.join(', ') || 'N/A'}</p>
-                                    </div>
-                                  ) : (
-                                    <p className="text-muted mb-0">Chưa chọn MOP. Vui lòng chọn MOP ở tab Đánh giá.</p>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="form-group">
-                                <label>Danh sách server</label>
-                                <div className="border p-3" style={{maxHeight: '200px', overflowY: 'auto'}}>
-                                  {servers.length > 0 ? (
-                                    servers.map((server, index) => (
-                                      <div key={index} className="form-check">
-                                        <input className="form-check-input" type="checkbox" id={`periodic-server-${index}`} defaultChecked />
-                                        <label className="form-check-label" htmlFor={`periodic-server-${index}`}>
-                                          {server.name || server.ip} ({server.ip})
-                                        </label>
-                                      </div>
-                                    ))
-                                  ) : (
-                                    <p className="text-muted mb-0">Chưa có server nào. Vui lòng thêm server ở tab Đánh giá.</p>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="mt-3">
-                                {periodicLoading ? (
-                                  <div className="text-center">
-                                    <div className="spinner-border text-primary" role="status">
-                                      <span className="sr-only">Loading...</span>
-                                    </div>
-                                    <p className="mt-2 text-muted">Đang xử lý...</p>
-                                  </div>
-                                ) : (
-                                  <>
-                                    {periodicAssessments.length === 0 ? (
-                                      <button 
-                                        className="btn btn-primary mr-2" 
-                                        disabled={!state.selectedMOP || servers.length === 0}
-                                        onClick={handleCreatePeriodicAssessment}
-                                      >
-                                        <i className="fas fa-plus mr-2"></i>
-                                        Tạo đánh giá định kỳ
-                                      </button>
-                                    ) : (
-                                      <>
-                                        <button 
-                                          className="btn btn-success mr-2"
-                                          onClick={() => handleStartPeriodicAssessment(periodicAssessments[0].id)}
-                                          disabled={periodicAssessments[0].status === 'active'}
-                                        >
-                                          <i className="fas fa-play mr-2"></i>
-                                          {periodicAssessments[0].status === 'active' ? 'Đang chạy' : 'Bắt đầu'}
-                                        </button>
-                                        <button 
-                                          className="btn btn-warning mr-2"
-                                          onClick={() => handlePausePeriodicAssessment(periodicAssessments[0].id)}
-                                          disabled={periodicAssessments[0].status !== 'active'}
-                                        >
-                                          <i className="fas fa-pause mr-2"></i>
-                                          Tạm dừng
-                                        </button>
-                                        <button 
-                                          className="btn btn-danger"
-                                          onClick={() => handleStopPeriodicAssessment(periodicAssessments[0].id)}
-                                          disabled={periodicAssessments[0].status === 'inactive'}
-                                        >
-                                          <i className="fas fa-stop mr-2"></i>
-                                          Dừng
-                                        </button>
-                                      </>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Recent Periodic Assessments */}
-                      <div className="row mt-4">
-                        <div className="col-md-12">
-                          <div className="card">
-                            <div className="card-header">
-                              <h3 className="card-title">
-                                <i className="fas fa-history mr-2"></i>
-                                5 lần đánh giá định kỳ gần nhất
-                              </h3>
-                            </div>
-                            <div className="card-body">
-                              <div className="table-responsive">
-                                <table className="table table-striped">
-                                  <thead>
-                                    <tr>
-                                      <th>Thời gian</th>
-                                      <th>MOP</th>
-                                      <th>Số server</th>
-                                      <th>Trạng thái</th>
-                                      <th>Kết quả</th>
-                                      <th>Hành động</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {recentExecutions.length === 0 ? (
-                                      <tr>
-                                        <td colSpan={6} className="text-center text-muted">
-                                          Chưa có đánh giá định kỳ nào được thực hiện
-                                        </td>
-                                      </tr>
-                                    ) : (
-                                      recentExecutions.map((execution, index) => {
-                                        const periodicAssessment = periodicAssessments.find(pa => pa.id === execution.periodic_assessment_id);
-                                        return (
-                                          <tr key={execution.id}>
-                                            <td>
-                                              {execution.started_at ? new Date(execution.started_at).toLocaleString('vi-VN') : 'N/A'}
-                                            </td>
-                                            <td>
-                                              {periodicAssessment?.mop_name || 'N/A'}
-                                            </td>
-                                            <td>
-                                              {periodicAssessment?.server_info?.length || 0}
-                                            </td>
-                                            <td>
-                                              <span className={`badge ${
-                                                execution.status === 'success' ? 'badge-success' :
-                                                execution.status === 'fail' ? 'badge-danger' :
-                                                execution.status === 'running' ? 'badge-warning' :
-                                                'badge-secondary'
-                                              }`}>
-                                                {execution.status === 'success' ? 'Thành công' :
-                                                 execution.status === 'fail' ? 'Thất bại' :
-                                                 execution.status === 'running' ? 'Đang chạy' :
-                                                 execution.status === 'pending' ? 'Chờ xử lý' : execution.status}
-                                              </span>
-                                            </td>
-                                            <td>
-                                              {execution.duration ? `${execution.duration}s` : 'N/A'}
-                                            </td>
-                                            <td>
-                                              <button 
-                                                className="btn btn-sm btn-outline-primary"
-                                                onClick={() => {
-                                                  // TODO: Hiển thị chi tiết kết quả
-                                                  console.log('View details:', execution);
-                                                }}
-                                              >
-                                                <i className="fas fa-eye"></i> Chi tiết
-                                              </button>
-                                            </td>
-                                          </tr>
-                                        );
-                                      })
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+
                 </div>
               </div>
             </div>
@@ -1739,20 +1453,43 @@ const HandoverAssessment: React.FC = () => {
                         <th>Extract</th>
                         <th>Comparator</th>
                         <th>Reference Value</th>
+                        <th>Skip Condition</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {getSelectedMOPCommands().map((command, index) => (
-                        <tr key={index}>
-                          <td>{typeof command === 'string' ? index + 1 : command.id}</td>
-                          <td>{typeof command === 'string' ? '-' : command.command_id_ref || '-'}</td>
-                          <td>{typeof command === 'string' ? `${t('command')} ${index + 1}` : command.title || command.description || `${t('command')} ${index + 1}`}</td>
-                          <td><code>{typeof command === 'string' ? command : command.command || command.command_text}</code></td>
-                          <td>{typeof command === 'string' ? '-' : command.extract_method || '-'}</td>
-                          <td>{typeof command === 'string' ? '-' : command.comparator_method || '-'}</td>
-                          <td>{typeof command === 'string' ? '-' : command.reference_value || command.expected_output || '-'}</td>
-                        </tr>
-                      ))}
+                      {getSelectedMOPCommands().map((command, index) => {
+                        const hasSkipCondition = typeof command !== 'string' && command.skip_condition;
+                        return (
+                          <tr key={index}>
+                            <td>{typeof command === 'string' ? index + 1 : command.id}</td>
+                            <td>{typeof command === 'string' ? '-' : command.command_id_ref || '-'}</td>
+                            <td>
+                              {typeof command === 'string' ? `${t('command')} ${index + 1}` : command.title || command.description || `${t('command')} ${index + 1}`}
+                              {hasSkipCondition && (
+                                <><br /><small className="text-warning"><i className="fas fa-forward mr-1"></i>Has skip condition</small></>
+                              )}
+                            </td>
+                            <td><code>{typeof command === 'string' ? command : command.command || command.command_text}</code></td>
+                            <td>{typeof command === 'string' ? '-' : command.extract_method || '-'}</td>
+                            <td>{typeof command === 'string' ? '-' : command.comparator_method || '-'}</td>
+                            <td>{typeof command === 'string' ? '-' : command.reference_value || command.expected_output || '-'}</td>
+                            <td>
+                               {hasSkipCondition && command.skip_condition ? (
+                                 <small className="text-warning">
+                                   <i className="fas fa-link mr-1"></i>
+                                   {command.skip_condition.condition_type === 'value_match' ? (
+                                     <>Skip if {command.skip_condition.condition_id} = "{command.skip_condition.condition_value}"</>
+                                   ) : (
+                                     <>Skip if {command.skip_condition.condition_id} is {command.skip_condition.condition_type}</>
+                                   )}
+                                 </small>
+                               ) : (
+                                 <small className="text-muted">-</small>
+                               )}
+                             </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -21,6 +21,7 @@ interface Execution {
   total_commands: number;
   passed_commands: number;
   failed_commands: number;
+  skipped_commands?: number;
   server_count: number;
   duration?: number;
   type: string;
@@ -305,11 +306,29 @@ const ExecutionHistory: React.FC = () => {
                                   <div>
                                     <small className="text-success">
                                       <i className="fas fa-check mr-1"></i>
-                                      {execution.passed_commands}/{execution.total_commands}
+                                      {execution.passed_commands}
                                     </small>
+                                    {execution.failed_commands > 0 && (
+                                      <>
+                                        {' | '}
+                                        <small className="text-danger">
+                                          <i className="fas fa-times mr-1"></i>
+                                          {execution.failed_commands}
+                                        </small>
+                                      </>
+                                    )}
+                                    {execution.skipped_commands && execution.skipped_commands > 0 && (
+                                      <>
+                                        {' | '}
+                                        <small className="text-warning">
+                                          <i className="fas fa-forward mr-1"></i>
+                                          {execution.skipped_commands}
+                                        </small>
+                                      </>
+                                    )}
                                     <br />
                                     <small className="text-muted">
-                                      Success: {execution.success_rate.toFixed(1)}%
+                                      Total: {execution.total_commands} | Success: {execution.success_rate.toFixed(1)}%
                                     </small>
                                   </div>
                                 )}
@@ -488,6 +507,15 @@ const ExecutionHistory: React.FC = () => {
                           <i className="fas fa-times mr-1"></i>
                           {t('failedLabel')} {selectedExecution.failed_commands}
                         </span>
+                        {selectedExecution.skipped_commands && selectedExecution.skipped_commands > 0 && (
+                          <>
+                            {' | '}
+                            <span className="text-warning">
+                              <i className="fas fa-forward mr-1"></i>
+                              Skipped {selectedExecution.skipped_commands}
+                            </span>
+                          </>
+                        )}
                         {' | '}
                         <span className="text-info">
                           <i className="fas fa-list mr-1"></i>

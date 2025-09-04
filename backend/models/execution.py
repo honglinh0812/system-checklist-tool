@@ -25,6 +25,7 @@ class ExecutionHistory(db.Model):
     execution_mode = db.Column(db.String(20), nullable=True)  # sequential, parallel
     total_commands = db.Column(db.Integer, nullable=True)
     completed_commands = db.Column(db.Integer, nullable=False, default=0)
+    skipped_commands = db.Column(db.Integer, nullable=False, default=0)
     
     # Legacy fields for backward compatibility
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Map to executed_by
@@ -48,3 +49,8 @@ class ServerResult(db.Model):
     stderr = db.Column(db.Text)
     return_code = db.Column(db.Integer)
     is_valid = db.Column(db.Boolean, nullable=False)
+    
+    # Skip condition fields
+    skipped = db.Column(db.Boolean, nullable=False, default=False)
+    skip_reason = db.Column(db.Text, nullable=True)
+    skip_condition_result = db.Column(db.String(20), nullable=True)  # Kết quả của command điều kiện

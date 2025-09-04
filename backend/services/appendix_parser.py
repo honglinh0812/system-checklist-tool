@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import logging
+import re
 from typing import List, Dict, Any, Tuple
 from werkzeug.datastructures import FileStorage
 from .command_sanitizer import CommandSanitizer
@@ -297,6 +298,11 @@ class AppendixParser:
                 command = str(row[column_mapping['command']]).strip() if 'command' in column_mapping and pd.notna(row[column_mapping['command']]) else ""
                 reference_value = str(row[column_mapping['reference_value']]).strip() if 'reference_value' in column_mapping and pd.notna(row[column_mapping['reference_value']]) else ""
                 
+                # Parse skip condition from title
+                skip_condition = self._parse_skip_condition(title)
+                if skip_condition:
+                    title = skip_condition['clean_title']  # Use cleaned title without skip syntax
+                
                 # Skip rows with empty command
                 if not command:
                     logger.warning(f"Skipping row {index + 1}: empty command")
@@ -317,7 +323,8 @@ class AppendixParser:
                     'is_critical': False,  # Default to non-critical
                     'timeout_seconds': 30,  # Default timeout
                     'sanitized': sanitize_result['is_modified'],
-                    'sanitize_warnings': sanitize_warnings
+                    'sanitize_warnings': sanitize_warnings,
+                    'skip_condition': skip_condition  # Add skip condition info
                 }
                 
                 # Add 6-column format specific fields
@@ -437,3 +444,49 @@ class AppendixParser:
         except Exception as e:
             logger.error(f"Error validating file: {str(e)}")
             return False, f"Error validating file: {str(e)}"
+    
+    def _parse_skip_condition(self, title: str) -> Dict[str, Any]:
+        """
+        Parse skip condition from command title using syntax: [SKIP_IF:condition_id:"condition_value"] Original Title
+        
+        Args:
+            title: Command title that may contain skip condition
+            
+        Returns:
+            Dictionary with skip condition info or None if no skip condition found
+        """
+        # Pattern to match [SKIP_IF:condition_id:"condition_value"] at the beginning of title
+        # Also support legacy format [SKIP_IF:condition_id:condition_type] for backward compatibility
+        pattern = r'^\[SKIP_IF:([^:]+):([^\]]+)\]\s*(.*)$'
+        match = re.match(pattern, title.strip())
+        
+        if not match:
+            return None
+            
+        condition_id = match.group(1).strip()
+        condition_value_raw = match.group(2).strip()
+        clean_title = match.group(3).strip()
+        
+        # Check if it's a quoted value (new format) or legacy format
+        if condition_value_raw.startswith('"') and condition_value_raw.endswith('"'):
+            # New format: [SKIP_IF:command_id:"value"]
+            condition_value = condition_value_raw[1:-1]  # Remove quotes
+            condition_type = 'value_match'  # New type for value matching
+        else:
+            # Legacy format: [SKIP_IF:command_id:empty|not_empty|ok|not_ok]
+            condition_type = condition_value_raw.lower()
+            condition_value = None
+            
+            # Validate legacy condition types
+            valid_legacy_types = ['empty', 'not_empty', 'ok', 'not_ok']
+            if condition_type not in valid_legacy_types:
+                logger.warning(f"Invalid skip condition type '{condition_type}' in title '{title}'. Valid legacy types: {valid_legacy_types} or use quoted value format")
+                return None
+            
+        return {
+            'condition_id': condition_id,
+            'condition_type': condition_type,
+            'condition_value': condition_value,
+            'clean_title': clean_title,
+            'original_title': title
+        }

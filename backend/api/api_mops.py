@@ -393,6 +393,68 @@ def get_mop_commands(mop_id):
         logger.error(f"Get MOP commands error: {str(e)}")
         return api_error('Failed to fetch commands', 500)
 
+@mops_bp.route('/<int:mop_id>/commands/bulk', methods=['POST'])
+@jwt_required()
+def add_mop_commands_bulk(mop_id):
+    """Add multiple commands to MOP"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        mop = MOP.query.get(mop_id)
+        if not mop:
+            return api_error('MOP not found', 404)
+        
+        # Check permissions
+        if current_user.role == 'user' and mop.created_by != current_user.id:
+            return api_error('Insufficient permissions', 403)
+        
+        # Check if MOP can be edited
+        if mop.status in ['approved', 'in_progress', 'completed']:
+            return api_error('Cannot edit MOP in current status', 400)
+        
+        json_data = request.get_json()
+        if not json_data:
+            return api_error('No JSON data provided', 400)
+        
+        commands_data = json_data.get('commands', [])
+        if not commands_data:
+            return api_error('No commands provided', 400)
+        
+        # Clear existing commands first
+        Command.query.filter_by(mop_id=mop_id).delete()
+        
+        created_commands = []
+        for idx, cmd_data in enumerate(commands_data):
+            # Map frontend fields to backend fields
+            command = Command(
+                mop_id=mop_id,
+                command_text=cmd_data.get('command', cmd_data.get('command_text', '')),
+                description=cmd_data.get('title', cmd_data.get('description', '')),
+                order_index=idx + 1,
+                is_critical=cmd_data.get('is_critical', False),
+                timeout_seconds=cmd_data.get('timeout_seconds'),
+                expected_output=cmd_data.get('expected_output', ''),
+                rollback_command=cmd_data.get('rollback_command', '')
+            )
+            db.session.add(command)
+            created_commands.append(command)
+        
+        db.session.commit()
+        
+        command_schema = CommandSchema(many=True)
+        commands_data = command_schema.dump(created_commands)
+        
+        logger.info(f"Bulk commands added to MOP {mop.name} by {current_user.username}")
+        
+        return api_response(commands_data, f'{len(created_commands)} commands added successfully', 201)
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error adding bulk commands to MOP {mop_id}: {str(e)}")
+        return api_error('Failed to add commands', 500)
+
 @mops_bp.route('/<int:mop_id>/commands', methods=['POST'])
 @jwt_required()
 def add_mop_command(mop_id):
@@ -478,7 +540,11 @@ def update_mop_command(mop_id, command_id):
         if mop.status in ['approved', 'in_progress', 'completed']:
             return api_error('Cannot edit MOP in current status', 400)
         
-        data = request.validated_json
+        json_data = request.get_json()
+        if not json_data:
+            return api_error('No JSON data provided', 400)
+        
+        data = json_data
         
         # Update command fields
         for field, value in data.items():
@@ -1255,6 +1321,17 @@ def upload_mop():
         # Create commands from parsed data
         from models.mop import Command
         for cmd_data in commands_data:
+            # Extract skip condition data
+            skip_condition = cmd_data.get('skip_condition')
+            skip_condition_id = None
+            skip_condition_type = None
+            skip_condition_value = None
+            
+            if skip_condition:
+                skip_condition_id = skip_condition.get('condition_id')
+                skip_condition_type = skip_condition.get('condition_type')
+                skip_condition_value = skip_condition.get('condition_value')
+            
             command = Command(
                 mop_id=mop.id,
                 command_text=cmd_data['command'],  # Map to required field
@@ -1267,6 +1344,10 @@ def upload_mop():
                 extract_method=cmd_data.get('extract_method'),
                 comparator_method=cmd_data.get('comparator_method'),
                 command_id_ref=cmd_data.get('command_id_ref'),
+                # Skip condition fields
+                skip_condition_id=skip_condition_id,
+                skip_condition_type=skip_condition_type,
+                skip_condition_value=skip_condition_value,
                 # Keep legacy fields for backward compatibility
                 title=cmd_data['title'],
                 command=cmd_data['command'],

@@ -2,7 +2,7 @@ ID,Name,Command,Extract,Comparator,Reference Value
 1a,tach_var_ra_khoi_source - detect RDO,dmidecode -t system | grep -w RDO,raw,non_empty,
 1b,tach_var_ra_khoi_source - /var partition present,grep -w '\s/var\s' /etc/fstab,raw,non_empty,
 2a,phan_vung_ud_ko_nam_chung_source - app partitions exist,grep -Ev '^\s*#' /etc/fstab | grep -Ewv '/$|/var$|/dev/shm$|/home$|/usr$|/proc$|/sys$|/dev/pts$|/opt$|swap|/boot$|/boot/efi$',raw,non_empty,
-3a,timezone,date +'%Z %z',regex:([+\-]\d{4}),eq,+0700
+3a,timezone,date +'%Z %z',regex:([+\-]\d{4}),eq,700
 4a,sudoers1 - '%sudo ALL=(ALL:ALL) ALL' must NOT exist,grep -Ev '^\s*#' /etc/sudoers | egrep -E '^\s*%sudo\s+ALL=\(ALL:ALL\)\s+ALL',raw,empty,
 5a,sudoers2 - '%admin ALL=(ALL) ALL' must NOT exist,grep -Ev '^\s*#' /etc/sudoers | egrep -E '^\s*%admin\s+ALL=\(ALL\)\s+ALL',raw,empty,
 6a,sudoers3 - per user rule must NOT exist (user={{user}}),grep -Ev '^\s*#' /etc/sudoers | egrep -w '^{{user}}\b' | grep -F 'ALL=(ALL:ALL) ALL',raw,empty,
@@ -15,12 +15,12 @@ ID,Name,Command,Extract,Comparator,Reference Value
 10a,duphong_bond3 - detect VMware/RDO,dmidecode -t system | egrep -w 'VMware|RDO',raw,non_empty,
 10b,duphong_bond3 - bonds count >= 1 (physical only),ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | grep -E '^bond[0-9]+$' | wc -l,raw,int_ge,1
 10c,duphong_bond3 - bond {{bond}} mode allowed,grep -E '^Bonding Mode:' /proc/net/bonding/{{bond}} | awk -F': ' '{print $2}' | awk '{print $1}',raw,in,round-robin|active-backup|balance-xor|broadcast|802.3ad|balance-tlb|balance-alb
-11a,san_multipath - list devices,dmsetup status | awk '$3!="linear"{print $1}' | sed 's/://g' | grep -v 'p[0-9]$' | grep -v No,per_line:raw,per_line:non_empty,
+11a,san_multipath - list devices,"dmsetup status | awk '$3!=""linear""{print $1}' | sed 's/://g' | grep -v 'p[0-9]$' | grep -v No",per_line:raw,per_line:non_empty,
 11b,san_multipath - device {{line}} has >=4 running paths,multipath -ll {{line}} | grep running$ | wc -l,raw,int_ge,4
 12a,kdump_service - must be active,systemctl is-active kdump-tools,raw,eq,active
 13a,sendmail_off - must NOT be active,systemctl is-active sendmail,raw,neq,active
 14a,postfix_off - must NOT be active,systemctl is-active postfix,raw,neq,active
-15a,bash_thay_dash1 - all users must use /bin/bash,awk -F: '($3>=1000 && $1!="nobody"){print $7}' /etc/passwd | grep -v bash,raw,empty,
+15a,bash_thay_dash1 - all users must use /bin/bash,"awk -F: '($3>=1000 && $1!=""nobody""){print $7}' /etc/passwd | grep -v bash",raw,empty,
 16a,bash_thay_dash2 - default shell must be bash,grep -E '^SHELL=/bin/bash' /etc/default/useradd,raw,non_empty,
 17a,bo_card_mang_ao - no virbr interface,ifconfig -a | grep virbr,raw,empty,
 18a,appamor_disable - must NOT be active,systemctl is-active apparmor,raw,neq,active
@@ -110,15 +110,15 @@ ID,Name,Command,Extract,Comparator,Reference Value
 69q,basic_package - sysfsutils,dpkg --get-selections | grep -w sysfsutils,raw,non_empty,
 69r,basic_package - traceroute,dpkg --get-selections | grep -w traceroute,raw,non_empty,
 69s,basic_package - e2fsprogs,dpkg --get-selections | grep -w e2fsprogs,raw,non_empty,
-70a,repo_taptrung - HTTP 200,curl --connect-timeout 3 -s -o /dev/null -I -w "%{http_code}" 10.254.144.164:8081,raw,eq,200
+70a,repo_taptrung - HTTP 200,"curl --connect-timeout 3 -s -o /dev/null -I -w ""%{http_code}"" 10.254.144.164:8081",raw,eq,200
 71a,ntp_service - must be active,systemctl status ntp | grep 'Active: active',raw,non_empty,
 72a,config_ntp1 - has ntp server,cat /etc/ntp.conf | grep -v ^# | grep @{ntp_server},raw,non_empty,
-73a,config_ntp2 - logfile path exists,test -f "$(cat /etc/ntp.conf | grep -v ^# | grep logfile | awk '{print $2}')" && echo exists || echo missing,raw,eq,exists
+73a,config_ntp2 - logfile path exists,"test -f ""$(cat /etc/ntp.conf | grep -v ^# | grep logfile | awk '{print $2}')"" && echo exists || echo missing",raw,eq,exists
 74a,config_ntp3 - logfile directive count,cat /etc/ntp.conf | grep -v ^# | grep logfile | wc -l,raw,int_eq,1
-74b,config_ntp3 - logrotate has that file,grep -F "$(cat /etc/ntp.conf | grep -v ^# | grep logfile | awk '{print $2}')" /etc/logrotate.d/syslog,raw,non_empty,
+74b,config_ntp3 - logrotate has that file,"grep -F ""$(cat /etc/ntp.conf | grep -v ^# | grep logfile | awk '{print $2}')"" /etc/logrotate.d/syslog",raw,non_empty,
 75a,time_synchronization1 - write sync probe,ntpdate -q 192.168.181.50 > /root/check_time_sync.txt,raw,non_empty,
 75b,time_synchronization1 - probe file has content,cat /root/check_time_sync.txt | wc -l,raw,int_ge,1
-76a,time_synchronization2 - offset != 0.000000,"cat /root/check_time_sync.txt | grep delay | awk '{print $6}' | cut -d',' -f1",raw,neq,0.000000
+76a,time_synchronization2 - offset != 0.000000,"cat /root/check_time_sync.txt | grep delay | awk '{print $6}' | cut -d',' -f1",raw,neq,0
 77a,time_synchronization3 - offset seconds part allowed,cat /root/check_time_sync.txt | grep delay | awk '{print $6}' | cut -d'.' -f1,raw,in,0|-0|+0
 78a,swappiness - value <= 10,cat /proc/sys/vm/swappiness,raw,int_le,10
 79a,lldp_service - detect VMware/RDO,dmidecode -t system | grep -w 'VMware\|RDO',raw,non_empty,

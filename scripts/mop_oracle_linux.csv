@@ -1,110 +1,152 @@
-Command Name,Command,Reference Value
-1. Check tach_var_ra_khoi_source - a,dmidecode -t system | grep -w RDO,Get list/check prerequisite
-1. Check tach_var_ra_khoi_source - b,cat /etc/fstab | grep -w /var,Empty result
-2. Check phan_vung_ud_ko_nam_chung_source - a,cat /etc/fstab | grep -vw #\|/\|/var\|/dev/shm\|/home\|/usr\|/proc\|/sys\|/dev/pts\|/opt\|swap\|/boot\|/boot/efi,Empty result
-3. Check timezone - a,date +%Z %z | grep -w 0700,Contains '+0700'
-4. Check sudoers1 - a,echo -e %wheel\tALL=(ALL)\tALL,Get list/check prerequisite
-4. Check sudoers1 - b,cat /etc/sudoers | grep -v ^# | grep $standard,Empty result
-5. Check sudoers2 - a,echo -e ALL=(ALL)\tALL,Get list/check prerequisite
-5. Check sudoers2 - b,cat /etc/passwd |grep /bin/bash  | grep -v ^# | grep -v nfsnobody | awk -F: '($3>=400) {print $1}',Empty result
-5. Check sudoers2 - c,cat /etc/sudoers | grep -v ^# | grep -w $i | grep $standard,Empty result
-6. Check sudoers3 - a,echo -e ALL=(ALL)  NOPASSWD: ALL,Get list/check prerequisite
-6. Check sudoers3 - b,cat /etc/passwd |grep /bin/bash  | grep -v ^# | grep -v nfsnobody | awk -F: '($3>=400) {print $1}',Empty result
-6. Check sudoers3 - c,cat /etc/sudoers | grep -v ^# | grep -w $i | grep $standard,Empty result
-7. Check ud_ko_dung_root - a,ps -ef | grep ^root | grep java\|tomcat\|jre\|jdk\|kubelet | grep -v grep,Empty result
-8. Check duphong_bond1 - a,dmidecode -t system | grep -w VMware\|RDO,Get list/check prerequisite
-8. Check duphong_bond1 - b,ip a | grep bond[0-9]: | awk '{print $2}' | awk -F: '{print $1}' | grep bond[0-9] | grep -v @bond,Empty result
-8. Check duphong_bond1 - c,cat /proc/net/bonding/$i | grep Slave Interface | wc -l,Empty result
-8. Check duphong_bond1 - d,cat /proc/net/bonding/$i | grep Slave Interface | awk '{print $3}',Empty result
-8. Check duphong_bond1 - e,cat /proc/net/bonding/$i | grep -A 2 Slave Interface: $j| grep MII Status | awk '{print $3}',Empty result
-9. Check duphong_bond2 - a,dmidecode -t system | grep -w VMware\|RDO,Get list/check prerequisite
-9. Check duphong_bond2 - b,ip a | grep bond[0-9]: | awk '{print $2}' | awk -F: '{print $1}' | grep bond[0-9] | grep -v @bond,Empty result
-9. Check duphong_bond2 - c,cat /etc/sysconfig/network-scripts/ifcfg-$i | grep -v ^# | grep mode | cut -d '' -f 2 | awk '{print $1}',Empty result
-9. Check duphong_bond2 - d,cat /proc/net/bonding/$i | grep Bonding Mode,Empty result
-10. Check san_multipath - a,dmsetup status| grep -vw linear |awk '{print $1}'| sed -e 's/://g'| grep -v p[0-9]$| grep -v No,Get list/check prerequisite
-10. Check san_multipath - b,multipath -ll $line | grep running$| wc -l,Empty result
-11. Check kdump_service - a,systemctl status kdump | grep Active: active,Empty result
-12. Check sendmail_off - a,systemctl status sendmail | grep Active: active,Empty result
-13. Check postfix_off - a,systemctl status postfix | grep Active: active,Empty result
-14. Check hearbeat_port - a,ip a | grep $line | grep mtu 9000,Empty result
-15. Check bo_card_mang_ao - a,ifconfig -a | grep virbr,Get list/check prerequisite
-15. Check bo_card_mang_ao - b,cat /etc/selinux/config | grep -v ^# | grep SELINUX=,Empty result
-15. Check bo_card_mang_ao - c,sestatus | grep Current mode | grep enforcing,Empty result
-17. Check nf_conntrack_max - a,cat $standard,Empty result
-18. Check hashsize - a,cat $standard,Empty result
-19. Check pass_never_expired - a,cat /etc/passwd |grep /bin/bash  | grep -v ^# | grep -v nobody | awk -F: '($3>=1000) {print $1}',Get list/check prerequisite
-19. Check pass_never_expired - b,chage -l $user | grep Password expires |  awk '{print $4}',Specific value match
-20. Check max_open_file_user - a,cat /etc/passwd |grep /bin/bash | grep -v ^# | grep -v nfsnobody | awk -F: '($3>=400) {print $1}',Get list/check prerequisite
-20. Check max_open_file_user - b,cat /etc/security/limits.conf | grep -v ^# | grep -w $user | grep -v soft | grep -w nofile,Non-empty result
-21. Check max_process_user - a,cat /etc/passwd |grep /bin/bash  | grep -v ^# | grep -v nfsnobody | awk -F: '($3>=400) {print $1}',Get list/check prerequisite
-21. Check max_process_user - b,cat /etc/security/limits.conf | grep -v ^# | grep -w $user | grep -v soft | grep -w nproc,Non-empty result
-22. Check max_open_file_user - a,cat /proc/sys/fs/file-max,Get list/check prerequisite
-22. Check max_open_file_user - b,cat /etc/sysctl.conf | grep -v ^# | grep -w  fs.file-max,Non-empty result
-23. Check bluetooth_off - a,systemctl status bluetooth | grep Active: active,Empty result
-24. Check cupsd_off - a,systemctl status cups | grep Active: active,Empty result
-25. Check per_user_trong_groupsudo1 - a,cat /etc/pam.d/su | grep -v ^# | grep -w auth | grep -w required | grep -w pam_wheel.so,Empty result
-26. Check per_user_trong_groupsudo2 - a,cat /etc/passwd |grep /bin/bash | grep -v ^# | grep -v nfsnobody | awk -F: '($3>=400) {print $1}',Get list/check prerequisite
-26. Check per_user_trong_groupsudo2 - b,cat /etc/group | grep wheel | grep $user,Empty result
-27. Check password1 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w minlen = 8,Empty result
-28. Check password2 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w dcredit = -1,Empty result
-29. Check password3 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w ucredit = -1,Empty result
-30. Check password4 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w lcredit = -1,Empty result
-31. Check password5 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w ocredit = -1,Empty result
-32. Check password6 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w maxrepeat = 3,Empty result
-33. Check password7 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w enforcing = 1,Empty result
-34. Check password8 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w retry = 3,Empty result
-35. Check password9 - a,cat /etc/security/pwquality.conf | grep -v ^# | grep -w enforce_for_root,Empty result
-36. Check pass_encryp_1 - a,cat /etc/pam.d/password-auth | grep -v ^# | grep -w password | grep -w sha512,Empty result
-37. Check pass_encryp_2 - a,cat /etc/security/pwhistory.conf | grep -v ^# | grep -w remember = 5,Empty result
-38. Check thuat_toan_mahoa - a,cat /etc/login.defs | grep -v ^# | grep ENCRYPT_METHOD | grep SHA512,Empty result
-39. Check cau_hinh_ssh_protocol - a,cat /etc/ssh/sshd_config | grep -v ^# | grep -w Protocol 2,Empty result
-40. Check cau_hinh_ssh_permitrootlogin - a,cat /etc/ssh/sshd_config | grep -v ^# | grep -w PermitRootLogin no,Empty result
-41. Check cau_hinh_ssh_allowusers - a,cat /etc/passwd |grep /bin/bash  | grep -v ^# | grep -v nfsnobody | awk -F: '($3>=400) {print $1}',Get list/check prerequisite
-41. Check cau_hinh_ssh_allowusers - b,cat /etc/ssh/sshd_config | grep -v ^# | grep -w AllowUsers | grep -w $user,Specific value match
-42. Check tudong_off_ssh_1 - a,cat /etc/profile | grep -v ^# | grep -w TMOUT=300 -A 2 | grep -w readonly TMOUT -A 1 | grep -w export TMOUT,Empty result
-43. Check tudong_off_ssh_2 - a,cat /etc/profile | grep -v ^# | grep TMOUT=300 | wc -l,Specific value match
-44. Check bandwidth_net - a,ip a | grep state UP | awk '{print $2}'| awk -F: '{print $1}',Get list/check prerequisite
-44. Check bandwidth_net - b,ethtool $i | grep Speed | awk '{print $2}'| awk -FM '{print $1}',>= 1000
-45. Check openssl_ver - a,openssl version -a | grep $i,Non-empty result
-46. Check file_unowner - a,find / -xdev \( -nouser -o -nogroup \) -print,Empty result
-47. Check bien_moitruong - a,echo $PATH | grep \./\|::\|/tmp,Empty result
-48. Check cau_hinh_crontab1 - a,ls /etc/ | grep cron.deny,Empty result
-49. Check cau_hinh_crontab2 - a,ls /etc/ | grep cron.allow,Empty result
-50. Check cau_hinh_crontab_min - a,crontab -l | grep -v ^# | grep -v sd_agent | grep -v scms-agent,Get list/check prerequisite
-50. Check cau_hinh_crontab_min - b,crontab -l | grep -v ^# | grep sd_agent | grep sd_agent_monitor.sh,Empty result
-50. Check cau_hinh_crontab_min - c,crontab -l | grep -v ^# | grep scms-agent | grep scms-mon,Empty result
-50. Check cau_hinh_crontab_min - d,cat /etc/logrotate.conf | grep -v ^# | grep -w $i,Empty result
-50. Check cau_hinh_crontab_min - e,cat /etc/logrotate.d/syslog | grep -v ^# | grep -w $i,Empty result
-50. Check cau_hinh_crontab_min - f,cat /etc/logrotate.d/iptables | grep -v ^# | grep -w $i,Empty result
-50. Check cau_hinh_crontab_min - g,cat /etc/logrotate.d/btmp | grep -v ^# | grep -w $i,Empty result
-50. Check cau_hinh_crontab_min - h,cat /etc/logrotate.d/wtmp | grep -v ^# | grep -w $i,Empty result
-50. Check cau_hinh_crontab_min - i,cat /etc/bashrc | grep -v ^# | grep local6.debug | grep ctty,Empty result
-50. Check cau_hinh_crontab_min - j,cat /etc/rsyslog.conf | grep -v ^# | grep -w $i,Empty result
-50. Check cau_hinh_crontab_min - k,tail -100 /var/log/cmdlog.log | grep $value,Empty result
-50. Check cau_hinh_crontab_min - l,cat /etc/bashrc | grep -v ^# | grep export PROMPT_COMMAND | grep local6.debug | wc -l,Empty result
-50. Check cau_hinh_crontab_min - m,cat /etc/rsyslog.conf | grep -v ^# | grep local6 | grep /var/log/cmdlog.log | wc -l,Empty result
-50. Check cau_hinh_crontab_min - n,cat /etc/rsyslog.conf | grep -v ^# | grep kern.debug | grep /var/log/iptables/iptables.log | wc -l,Empty result
-62. Check iptables_status - a,systemctl status iptables| grep Active: active,Empty result
-63. Check zone_reclaim_mode - a,cat /proc/sys/vm/zone_reclaim_mode,Specific value match
-64. Check mysql_not_active - a,ps -ef | grep mysql | grep -v ^root,Empty result
-65. Check phan_vung_swap - a,cat /proc/swaps | tail -n+2,Empty result
-66. Check oracle_scan_order - a,cat /etc/sysconfig/oracleasm | grep -v ^#| grep ORACLEASM_SCANORDER | grep -i dm |wc -l,Specific value match
-66. Check oracle_scan_order - b,cat /etc/sysconfig/oracleasm | grep -v ^#| grep ORACLEASM_SCANEXCLUDE | grep -i sd |wc -l,Specific value match
-67. Check haveged_service_on - a,dmidecode -t system | grep -i Vmware\|OpenStack,Get list/check prerequisite
-67. Check haveged_service_on - b,rpm -qa | grep haveged,Empty result
-67. Check haveged_service_on - c,service haveged status 2>/dev/null | grep running,Empty result
-68. Check basic_package - a,rpm -qa | grep ^$i-,Non-empty result
-69. Check swappiness - a,cat /proc/sys/vm/swappiness,Empty result
-70. Check repo_taptrung - a,curl --connect-timeout 3 -s -o /dev/null -I -w %{http_code} 10.60.129.132,Condition-based
-71. Check chronyd_status - a,systemctl status chronyd | grep Active: active,Empty result
-72. Check chronyd_config - a,cat /etc/chrony.conf | grep -v ^# | grep @{chrony_server},Empty result
-73. Check time_synchronization - a,chronyc sources | grep @{chrony_server} | awk '{print $5}',Specific value match
-74. Check lldp_service - a,dmidecode -t system | grep -w VMware\|RDO,Get list/check prerequisite
-74. Check lldp_service - b,rpm -qa | grep ^lldpd-,Non-empty result
-75. Check lldp_show_neighbor - a,dmidecode -t system | grep -w VMware\|RDO,Get list/check prerequisite
-75. Check lldp_show_neighbor - b,lldpcli show neighbors | grep LLDP neighbors:,Non-empty result
-76. Check ipx_installed - a,which ipx | grep /bin/ipx,Empty result
-77. Check iptables1 - a,iptables -S INPUT | tail -1 | grep \-A INPUT \-j DROP\|\-A INPUT \-j REJECT,Empty result
-78. Check iptables2 - a,iptables -S INPUT | tail -2 | head -1 | grep \-A INPUT \-j LOG,Empty result
-79. Check iptables3 - a,iptables -S OUTPUT | tail -1 | grep \-A OUTPUT \-j DROP\|\-A OUTPUT \-j REJECT,Empty result
-80. Check iptables4 - a,iptables -S OUTPUT | tail -2 | head -1 | grep \-A OUTPUT \-j LOG,Empty result
+ID,Name,Command,Extract,Comparator,Reference Value
+1p,detect VMware/RDO vendor,dmidecode -t system | grep -w "VMware\|RDO",raw,non_empty,
+1a,[SKIP_IF:1p:non_empty] tach_var_ra_khoi_source - /var must appear in fstab,cat /etc/fstab | grep -w /var,raw,non_empty,
+2a,phan_vung_ud_ko_nam_chung_source - find app partitions (exclude system mounts),cat /etc/fstab | grep -vw "#\|/\|/var\|/dev/shm\|/home\|/usr\|/proc\|/sys\|/dev/pts\|/opt\|swap\|/boot\|/boot/efi",raw,non_empty,
+3a,timezone offset must be +0700,date +"%Z %z",regex:([+\-]\d{4}),eq,+0700
+4a,sudoers1 - %wheel ALL=(ALL) ALL must NOT exist,cat /etc/sudoers | grep -v ^# | grep -F "%wheel	ALL=(ALL)	ALL",raw,empty,
+5a,sudoers2 - list bash users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+5b,sudoers2 - {{user}} must NOT have ALL=(ALL) ALL,cat /etc/sudoers | grep -v ^# | grep -w {{user}} | grep -F "ALL=(ALL)	ALL",raw,empty,
+6a,sudoers3 - list bash users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+6b,sudoers3 - {{user}} must NOT have NOPASSWD ALL,cat /etc/sudoers | grep -v ^# | grep -w {{user}} | grep -F "ALL=(ALL)  NOPASSWD: ALL",raw,empty,
+7a,ud_ko_dung_root - no root-run java/tomcat/jre/jdk/kubelet,ps -ef | grep ^root | grep -E "java|tomcat|jre|jdk|kubelet" | grep -v grep,raw,empty,
+8a,[SKIP_IF:1p:non_empty] duphong_bond1 - list bond devices,ip a | awk -F'[ :]' '/bond[0-9]+:/{print $2}' | grep -v "@bond",per_line:raw,per_line:non_empty,
+8b,dupong_bond1 - {{bond}} must have >=2 slaves,grep -c "Slave Interface" /proc/net/bonding/{{bond}},raw,int_ge,2
+8c,dupong_bond1 - {{bond}} slave {{iface}} MII must be up,grep -A 2 "Slave Interface: {{iface}}" /proc/net/bonding/{{bond}} | awk '/MII Status/{print $3}',raw,eq,up
+9a,[SKIP_IF:1p:non_empty] duphong_bond2 - list bond devices,ip a | awk -F'[ :]' '/bond[0-9]+:/{print $2}' | grep -v "@bond",per_line:raw,per_line:non_empty,
+9b,dupong_bond2 - {{bond}} mode from ifcfg must be valid,grep -v ^# /etc/sysconfig/network-scripts/ifcfg-{{bond}} | grep -o 'mode=[0-9]\+',raw,in,mode=0|mode=1|mode=2|mode=4|mode=5
+9c,dupong_bond2 - {{bond}} /proc mode must match type,grep "Bonding Mode" /proc/net/bonding/{{bond}},raw,contains,active-backup|round-robin|IEEE 802.3ad|xor|transmit load balancing
+10a,san_multipath - list non-linear devices,dmsetup status | awk '$3!="linear"{print $1}' | sed 's/://g' | grep -v 'p[0-9]$' | grep -v No,per_line:raw,per_line:non_empty,
+10b,san_multipath - {{line}} must have >=4 running paths,multipath -ll {{line}} | grep running$ | wc -l,raw,int_ge,4
+11a,kdump_service - must be active,systemctl is-active kdump,raw,eq,active
+12a,sendmail_off - must NOT be active,systemctl is-active sendmail,raw,neq,active
+13a,postfix_off - must NOT be active,systemctl is-active postfix,raw,neq,active
+14a,hearbeat_port - list non-bond UP ifaces,ip -o -4 addr show up | awk -F': ' '{print $2}' | grep -v '^bond' | sort -u,per_line:raw,per_line:non_empty,
+14b,hearbeat_port - {{iface}} must have MTU 9000,ip -o link show {{iface}} | grep 'mtu 9000',raw,non_empty,
+15a,bo_card_mang_ao - no virbr interface,ifconfig -a | grep virbr,raw,empty,
+16a,disable selinux - config must be disabled,grep -E '^SELINUX=' /etc/selinux/config | grep -v ^# ,raw,eq,SELINUX=disabled
+16b,disable selinux - current mode must NOT be enforcing,sestatus | grep -E '^Current mode',raw,not_contains,enforcing
+17a,nf_conntrack_max - file exists,test -f /proc/sys/net/netfilter/nf_conntrack_max && echo exists || echo missing,raw,eq,exists
+17b,nf_conntrack_max - value must be >=524288,cat /proc/sys/net/netfilter/nf_conntrack_max,raw,int_ge,524288
+18a,hashsize - file exists,test -f /sys/module/nf_conntrack/parameters/hashsize && echo exists || echo missing,raw,eq,exists
+18b,hashsize - value must be >=131072,cat /sys/module/nf_conntrack/parameters/hashsize,raw,int_ge,131072
+19a,pass_never_expired - list app users (uid>=1000),awk -F: '($3>=1000 && $7~/\/bin\/bash/ && $1!="nobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+19b,pass_never_expired - {{user}} expires must be 'never',chage -l {{user}} | awk -F': ' '/Password expires/{print $2}',raw,eq,never
+20a,max_open_file_user - list users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+20b,max_open_file_user - {{user}} must have nofile hard limit,grep -v ^# /etc/security/limits.conf | grep -w {{user}} | grep -v soft | grep -w nofile,raw,non_empty,
+21a,max_process_user - list users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+21b,max_process_user - {{user}} must have nproc hard limit,grep -v ^# /etc/security/limits.conf | grep -w {{user}} | grep -v soft | grep -w nproc,raw,non_empty,
+22a,max_open_file_server - kernel file-max value,cat /proc/sys/fs/file-max,raw,non_empty,
+22b,max_open_file_server - sysctl.conf contains file-max,grep -v ^# /etc/sysctl.conf | grep -w fs.file-max,raw,non_empty,
+23a,bluetooth_off - must NOT be active,systemctl is-active bluetooth,raw,neq,active
+24a,cupsd_off - must NOT be active,systemctl is-active cups,raw,neq,active
+25a,per_user_trong_groupsudo1 - pam_wheel.so must be required,grep -v ^# /etc/pam.d/su | grep -w "auth" | grep -w "required" | grep -w "pam_wheel.so",raw,non_empty,
+26a,per_user_trong_groupsudo2 - list users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody" && $1!="monitor" && $1!="vt_admin"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+26b,per_user_trong_groupsudo2 - {{user}} must NOT be in wheel group,grep wheel /etc/group | grep {{user}},raw,empty,
+27a,password_policy - minlen must be 8,grep -v ^# /etc/security/pwquality.conf | grep -w "minlen",field:3,int_ge,8
+28a,password_policy - dcredit must be -1,grep -v ^# /etc/security/pwquality.conf | grep -w "dcredit",field:3,int_eq,-1
+29a,password_policy - ucredit must be -1,grep -v ^# /etc/security/pwquality.conf | grep -w "ucredit",field:3,int_eq,-1
+30a,password_policy - lcredit must be -1,grep -v ^# /etc/security/pwquality.conf | grep -w "lcredit",field:3,int_eq,-1
+31a,password_policy - ocredit must be -1,grep -v ^# /etc/security/pwquality.conf | grep -w "ocredit",field:3,int_eq,-1
+32a,password_policy - maxrepeat must be 3,grep -v ^# /etc/security/pwquality.conf | grep -w "maxrepeat",field:3,int_eq,3
+33a,password_policy - enforcing must be 1,grep -v ^# /etc/security/pwquality.conf | grep -w "enforcing",field:3,int_eq,1
+34a,password_policy - retry must be 3,grep -v ^# /etc/security/pwquality.conf | grep -w "retry",field:3,int_eq,3
+35a,password_policy - enforce_for_root must exist,grep -v ^# /etc/security/pwquality.conf | grep -w "enforce_for_root",raw,non_empty,
+36a,pass_encryp_1 - pam sha512 must be set,grep -v ^# /etc/pam.d/password-auth | grep -w password | grep -w sha512,raw,non_empty,
+37a,pass_encryp_2 - remember=5 must be set,grep -v ^# /etc/security/pwhistory.conf | grep -w "remember",field:3,int_eq,5
+38a,thuat_toan_mahoa - ENCRYPT_METHOD must be SHA512,grep -v ^# /etc/login.defs | grep -w ENCRYPT_METHOD,field:2,eq,SHA512
+39a,cau_hinh_ssh_protocol - Protocol 2 must be set,grep -v ^# /etc/ssh/sshd_config | grep -w "Protocol",field:2,int_eq,2
+40a,cau_hinh_ssh_permitrootlogin - must be no,grep -v ^# /etc/ssh/sshd_config | grep -w "PermitRootLogin",field:2,eq,no
+41p,virt_env detector (vm|phy),dmidecode -t system | egrep -i 'Vmware|OpenStack|RDO' | awk 'BEGIN{v="phy"}{v="vm"}END{print v}',raw,in,vm|phy
+41a,cau_hinh_ssh_allowusers - list bash users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
+41b,cau_hinh_ssh_allowusers - {{user}} must appear in AllowUsers,grep -v ^# /etc/ssh/sshd_config | grep -w ^AllowUsers | grep -w {{user}},raw,non_empty,
+42a,tudong_off_ssh_1 - TMOUT=300 + readonly + export in /etc/profile,grep -v ^# /etc/profile | grep -w "TMOUT=300" -A 2 | grep -w "readonly TMOUT" -A 1 | grep -w "export TMOUT",raw,non_empty,
+43a,tudong_off_ssh_2 - TMOUT configured exactly once,grep -v ^# /etc/profile | grep "TMOUT=300" | wc -l,raw,int_eq,1
+44a,bandwidth_net - list interfaces state UP,ip a | awk '/state UP/{print $2}' | awk -F: '{print $1}',per_line:raw,per_line:non_empty,
+44b,bandwidth_net - {{iface}} speed must be >=1000Mbps,ethtool {{iface}} | awk '/Speed/{print $2}' | awk -FM '{print $1}',raw,int_ge,1000
+45a,openssl_ver - version must be in whitelist,openssl version | awk '{print $2}',raw,in,1.0.1e|1.0.2k|1.0.1u|1.0.2j|1.1.0a|1.1.0g|1.0.2n|1.1.1k|3.2.2
+46a,file_unowner - no files without owner/group,find / -xdev \( -nouser -o -nogroup \) -print,raw,empty,
+47a,bien_moitruong - PATH must not contain ./:/tmp,echo "$PATH" | egrep "\./|::|/tmp",raw,empty,
+48a,cau_hinh_crontab1 - /etc/cron.deny must be absent,ls -1 /etc/ | grep -w cron.deny,raw,empty,
+49a,cau_hinh_crontab2 - /etc/cron.allow must exist,ls -1 /etc/ | grep -w cron.allow,raw,non_empty,
+50a,cau_hinh_crontab_min - must have sd_agent monitor line,crontab -l | grep -v ^# | grep sd_agent | grep sd_agent_monitor.sh,raw,non_empty,
+50b,cau_hinh_crontab_min - must have scms-agent monitor line,crontab -l | grep -v ^# | grep scms-agent | grep scms-mon,raw,non_empty,
+50c,cau_hinh_crontab_min - no other active crontab lines,crontab -l | grep -v ^# | egrep -v 'sd_agent.*sd_agent_monitor\.sh|scms-agent.*scms-mon',raw,empty,
+51a,rsyslog1_1 - logrotate.conf has weekly,grep -v ^# /etc/logrotate.conf | grep -w weekly,raw,non_empty,
+51b,rsyslog1_1 - logrotate.conf has rotate 12,grep -v ^# /etc/logrotate.conf | grep -w "rotate 12",raw,non_empty,
+51c,rsyslog1_1 - logrotate.conf has create,grep -v ^# /etc/logrotate.conf | grep -w create,raw,non_empty,
+51d,rsyslog1_1 - logrotate.conf has dateext,grep -v ^# /etc/logrotate.conf | grep -w dateext,raw,non_empty,
+51e,rsyslog1_1 - logrotate.conf has compress,grep -v ^# /etc/logrotate.conf | grep -w compress,raw,non_empty,
+51f,rsyslog1_1 - logrotate.conf includes /etc/logrotate.d,grep -v ^# /etc/logrotate.conf | grep -w "include /etc/logrotate.d",raw,non_empty,
+52a,rsyslog1_2 - syslog rules include /var/log/cron,grep -v ^# /etc/logrotate.d/syslog | grep -w "/var/log/cron",raw,non_empty,
+52b,rsyslog1_2 - syslog rules include /var/log/maillog,grep -v ^# /etc/logrotate.d/syslog | grep -w "/var/log/maillog",raw,non_empty,
+52c,rsyslog1_2 - syslog rules include /var/log/messages,grep -v ^# /etc/logrotate.d/syslog | grep -w "/var/log/messages",raw,non_empty,
+52d,rsyslog1_2 - syslog rules include /var/log/secure,grep -v ^# /etc/logrotate.d/syslog | grep -w "/var/log/secure",raw,non_empty,
+52e,rsyslog1_2 - syslog rules include /var/log/spooler,grep -v ^# /etc/logrotate.d/syslog | grep -w "/var/log/spooler",raw,non_empty,
+52f,rsyslog1_2 - syslog rules include /var/log/cmdlog.log,grep -v ^# /etc/logrotate.d/syslog | grep -w "/var/log/cmdlog.log",raw,non_empty,
+52g,rsyslog1_2 - syslog block has compress,grep -v ^# /etc/logrotate.d/syslog | grep -w compress,raw,non_empty,
+52h,rsyslog1_2 - syslog block has sharedscripts,grep -v ^# /etc/logrotate.d/syslog | grep -w sharedscripts,raw,non_empty,
+52i,rsyslog1_2 - syslog postrotate cmd present,grep -v ^# /etc/logrotate.d/syslog | grep -F "/usr/bin/systemctl -s HUP kill rsyslog.service" ,raw,non_empty,
+52j,rsyslog1_2 - syslog block ends with endscript,grep -v ^# /etc/logrotate.d/syslog | grep -w endscript,raw,non_empty,
+53a,rsyslog1_3 - iptables log path present,grep -v ^# /etc/logrotate.d/iptables | grep -w "/var/log/iptables/iptables.log",raw,non_empty,
+53b,rsyslog1_3 - has daily,grep -v ^# /etc/logrotate.d/iptables | grep -w daily,raw,non_empty,
+53c,rsyslog1_3 - rotate 30,grep -v ^# /etc/logrotate.d/iptables | grep -w "rotate 30",raw,non_empty,
+53d,rsyslog1_3 - copytruncate,grep -v ^# /etc/logrotate.d/iptables | grep -w copytruncate,raw,non_empty,
+53e,rsyslog1_3 - compress,grep -v ^# /etc/logrotate.d/iptables | grep -w compress,raw,non_empty,
+53f,rsyslog1_3 - notifempty,grep -v ^# /etc/logrotate.d/iptables | grep -w notifempty,raw,non_empty,
+53g,rsyslog1_3 - missingok,grep -v ^# /etc/logrotate.d/iptables | grep -w missingok,raw,non_empty,
+54a,rsyslog1_4 - btmp path present,grep -v ^# /etc/logrotate.d/btmp | grep -w "/var/log/btmp",raw,non_empty,
+54b,rsyslog1_4 - missingok,grep -v ^# /etc/logrotate.d/btmp | grep -w missingok,raw,non_empty,
+54c,rsyslog1_4 - weekly,grep -v ^# /etc/logrotate.d/btmp | grep -w weekly,raw,non_empty,
+54d,rsyslog1_4 - create 0660 root utmp,grep -v ^# /etc/logrotate.d/btmp | grep -F "create 0660 root utmp",raw,non_empty,
+54e,rsyslog1_4 - rotate 12,grep -v ^# /etc/logrotate.d/btmp | grep -w "rotate 12",raw,non_empty,
+55a,rsyslog1_5 - wtmp path present,grep -v ^# /etc/logrotate.d/wtmp | grep -w "/var/log/wtmp",raw,non_empty,
+55b,rsyslog1_5 - missingok,grep -v ^# /etc/logrotate.d/wtmp | grep -w missingok,raw,non_empty,
+55c,rsyslog1_5 - weekly,grep -v ^# /etc/logrotate.d/wtmp | grep -w weekly,raw,non_empty,
+55d,rsyslog1_5 - create 0664 root utmp,grep -v ^# /etc/logrotate.d/wtmp | grep -F "create 0664 root utmp",raw,non_empty,
+55e,rsyslog1_5 - minsize 1M,grep -v ^# /etc/logrotate.d/wtmp | grep -F "minsize 1M",raw,non_empty,
+55f,rsyslog1_5 - rotate 12,grep -v ^# /etc/logrotate.d/wtmp | grep -w "rotate 12",raw,non_empty,
+56a,rsyslog2_1 - bashrc has local6.debug ctty,grep -v ^# /etc/bashrc | grep "local6.debug" | grep ctty,raw,non_empty,
+57a,rsyslog2_2 - has /var/log/cmdlog.log in rsyslog.conf,grep -v ^# /etc/rsyslog.conf | grep -w "/var/log/cmdlog.log",raw,non_empty,
+57b,rsyslog2_2 - has /var/log/iptables/iptables.log in rsyslog.conf,grep -v ^# /etc/rsyslog.conf | grep -w "/var/log/iptables/iptables.log",raw,non_empty,
+58a,rsyslog2_3 - cmdlog has recent entry matching {{value}},tail -100 /var/log/cmdlog.log | grep {{value}},raw,non_empty,
+59a,rsyslog3_1 - PROMPT_COMMAND configured exactly once,grep -v ^# /etc/bashrc | grep "export PROMPT_COMMAND" | grep "local6.debug" | wc -l,raw,int_eq,1
+60a,rsyslog3_2 - single local6->/var/log/cmdlog.log rule,grep -v ^# /etc/rsyslog.conf | grep "local6" | grep "/var/log/cmdlog.log" | wc -l,raw,int_eq,1
+61a,rsyslog3_3 - single kern.debug->iptables rule,grep -v ^# /etc/rsyslog.conf | grep "kern.debug" | grep "/var/log/iptables/iptables.log" | wc -l,raw,int_eq,1
+62a,iptables_status - service must be active,systemctl is-active iptables,raw,eq,active
+63a,zone_reclaim_mode - must be 0,cat /proc/sys/vm/zone_reclaim_mode,raw,int_eq,0
+64a,mysql_not_active - no mysql processes (non-root),ps -ef | grep mysql | grep -v ^root | grep -v grep,raw,empty,
+65a,phan_vung_swap - swaps must exist,tail -n +2 /proc/swaps,raw,non_empty,
+66a,oracle_scan_order - oracleasm config exists,test -f /etc/sysconfig/oracleasm && echo exists || echo missing,raw,eq,exists
+66b,oracle_scan_order - ORACLEASM_SCANORDER includes dm,grep -v ^# /etc/sysconfig/oracleasm | grep ORACLEASM_SCANORDER | grep -i dm | wc -l,raw,int_gt,0
+66c,oracle_scan_order - ORACLEASM_SCANEXCLUDE includes sd,grep -v ^# /etc/sysconfig/oracleasm | grep ORACLEASM_SCANEXCLUDE | grep -i sd | wc -l,raw,int_gt,0
+67a,[SKIP_IF:41p:"phy"] haveged_service_on - package installed (VM only),rpm -qa | grep ^haveged-,raw,non_empty,
+67b,[SKIP_IF:41p:"phy"] haveged_service_on - service running (VM only),service haveged status 2>/dev/null | grep running,raw,non_empty,
+68_telnet,[SKIP_IF:41p:"vm"] basic_package - telnet installed,rpm -qa | grep ^telnet-,raw,non_empty,
+68_sysstat,[SKIP_IF:41p:"vm"] basic_package - sysstat installed,rpm -qa | grep ^sysstat-,raw,non_empty,
+68_lsof,[SKIP_IF:41p:"vm"] basic_package - lsof installed,rpm -qa | grep ^lsof-,raw,non_empty,
+68_dmidecode,[SKIP_IF:41p:"vm"] basic_package - dmidecode installed,rpm -qa | grep ^dmidecode-,raw,non_empty,
+68_nettools,[SKIP_IF:41p:"vm"] basic_package - net-tools installed,rpm -qa | grep ^net-tools-,raw,non_empty,
+68_pciutils,[SKIP_IF:41p:"vm"] basic_package - pciutils installed,rpm -qa | grep ^pciutils-,raw,non_empty,
+68_iptables,[SKIP_IF:41p:"vm"] basic_package - iptables-services installed,rpm -qa | grep ^iptables-services-,raw,non_empty,
+68_chrony,[SKIP_IF:41p:"vm"] basic_package - chrony installed,rpm -qa | grep ^chrony-,raw,non_empty,
+68_ftp,[SKIP_IF:41p:"vm"] basic_package - ftp installed,rpm -qa | grep ^ftp-,raw,non_empty,
+68_nmap,[SKIP_IF:41p:"vm"] basic_package - nmap installed,rpm -qa | grep ^nmap-,raw,non_empty,
+68_iotop,[SKIP_IF:41p:"vm"] basic_package - iotop installed,rpm -qa | grep ^iotop-,raw,non_empty,
+68_wget,[SKIP_IF:41p:"vm"] basic_package - wget installed,rpm -qa | grep ^wget-,raw,non_empty,
+68_zip,[SKIP_IF:41p:"vm"] basic_package - zip installed,rpm -qa | grep ^zip-,raw,non_empty,
+68_unzip,[SKIP_IF:41p:"vm"] basic_package - unzip installed,rpm -qa | grep ^unzip-,raw,non_empty,
+68_sysfsutils,[SKIP_IF:41p:"vm"] basic_package - sysfsutils installed,rpm -qa | grep ^sysfsutils-,raw,non_empty,
+68_traceroute,[SKIP_IF:41p:"vm"] basic_package - traceroute installed,rpm -qa | grep ^traceroute-,raw,non_empty,
+68_e2fsprogs,[SKIP_IF:41p:"vm"] basic_package - e2fsprogs installed,rpm -qa | grep ^e2fsprogs-,raw,non_empty,
+69a,swappiness - value must be <=10,cat /proc/sys/vm/swappiness,raw,int_le,10
+70a,repo_taptrung - curl HTTP status must be 200,curl --connect-timeout 3 -s -o /dev/null -I -w "%{http_code}" 10.60.129.132,raw,eq,200
+71a,chronyd_status - must be active,systemctl is-active chronyd,raw,eq,active
+72a,chronyd_config - {{chrony_server}} must appear,grep -v ^# /etc/chrony.conf | grep {{chrony_server}},raw,non_empty,
+73a,time_synchronization - reach field must be 377,chronyc sources | awk -v s="{{chrony_server}}" '$0~s{print $5}',raw,int_eq,377
+74a,[SKIP_IF:41p:"vm"] lldp_service - lldpd package installed,rpm -qa | grep ^lldpd-,raw,non_empty,
+75a,[SKIP_IF:41p:"vm"] lldp_show_neighbor - neighbors exist,lldpcli show neighbors | grep "LLDP neighbors:",raw,non_empty,
+76a,ipx_installed - binary must exist,which ipx | grep "/bin/ipx",raw,non_empty,
+77a,iptables1 - last INPUT rule is DROP/REJECT,iptables -S INPUT | tail -1 | egrep "\-A INPUT \-j (DROP|REJECT)",raw,non_empty,
+78a,iptables2 - LOG rule present before last,iptables -S INPUT | tail -2 | head -1 | grep "\-A INPUT \-j LOG",raw,non_empty,
+79a,iptables3 - last OUTPUT rule is DROP/REJECT,iptables -S OUTPUT | tail -1 | egrep "\-A OUTPUT \-j (DROP|REJECT)",raw,non_empty,
+80a,iptables4 - LOG rule present before last,iptables -S OUTPUT | tail -2 | head -1 | grep "\-A OUTPUT \-j LOG",raw,non_empty

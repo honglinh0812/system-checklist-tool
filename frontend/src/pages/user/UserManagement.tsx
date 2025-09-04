@@ -69,6 +69,8 @@ const UserManagement: React.FC = () => {
     confirm_password: '',
     role: ''
   });
+  const [fieldErrors, setFieldErrors] = useState<{[key: string]: string}>({});
+  const [isFormValid, setIsFormValid] = useState(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterRole, setFilterRole] = useState<string>('');
   const [sortField, setSortField] = useState<string>('username');
@@ -143,9 +145,90 @@ const UserManagement: React.FC = () => {
     setTimeout(() => setAlert(null), 5000);
   };
 
+  // Validation functions
+  const validateField = (name: string, value: string, allData?: CreateUserData): string => {
+    const data = allData || formData;
+    
+    switch (name) {
+      case 'username':
+        if (!value.trim()) return 'Tên đăng nhập là bắt buộc';
+        if (value.length < 3) return 'Tên đăng nhập phải có ít nhất 3 ký tự';
+        if (value.length > 50) return 'Tên đăng nhập không được quá 50 ký tự';
+        if (!/^[a-zA-Z0-9_]+$/.test(value)) return 'Tên đăng nhập chỉ được chứa chữ cái, số và dấu gạch dưới';
+        return '';
+      
+      case 'email':
+        if (!value.trim()) return 'Email là bắt buộc';
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(value)) return 'Email không hợp lệ';
+        return '';
+      
+      case 'full_name':
+        if (!value.trim()) return 'Họ và tên là bắt buộc';
+        if (value.length < 2) return 'Họ và tên phải có ít nhất 2 ký tự';
+        if (value.length > 100) return 'Họ và tên không được quá 100 ký tự';
+        return '';
+      
+      case 'password':
+        if (!value) return 'Mật khẩu là bắt buộc';
+        if (value.length < 5) return 'Mật khẩu phải có ít nhất 5 ký tự';
+        if (value.length > 128) return 'Mật khẩu không được quá 128 ký tự';
+        return '';
+      
+      case 'confirm_password':
+        if (!value) return 'Xác nhận mật khẩu là bắt buộc';
+        if (value !== data.password) return 'Mật khẩu xác nhận không khớp';
+        return '';
+      
+      case 'role':
+        if (!value) return 'Vai trò là bắt buộc';
+        if (!['admin', 'user'].includes(value)) return 'Vai trò không hợp lệ';
+        return '';
+      
+      default:
+        return '';
+    }
+  };
+
+  const validateForm = (data: CreateUserData): boolean => {
+    const errors: {[key: string]: string} = {};
+    
+    Object.keys(data).forEach(key => {
+      const error = validateField(key, data[key as keyof CreateUserData], data);
+      if (error) {
+        errors[key] = error;
+      }
+    });
+    
+    setFieldErrors(errors);
+    const isValid = Object.keys(errors).length === 0;
+    setIsFormValid(isValid);
+    return isValid;
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
+    const newFormData = { ...formData, [name]: value };
+    setFormData(newFormData);
+    
+    // Real-time validation
+    const error = validateField(name, value, newFormData);
+    setFieldErrors(prev => ({
+      ...prev,
+      [name]: error
+    }));
+    
+    // Also validate confirm_password if password changed
+    if (name === 'password' && newFormData.confirm_password) {
+      const confirmError = validateField('confirm_password', newFormData.confirm_password, newFormData);
+      setFieldErrors(prev => ({
+        ...prev,
+        confirm_password: confirmError
+      }));
+    }
+    
+    // Check overall form validity
+    setTimeout(() => validateForm(newFormData), 0);
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -167,14 +250,9 @@ const UserManagement: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validation
-    if (!formData.username || !formData.email || !formData.full_name || !formData.password || !formData.role) {
-      showAlert('error', 'Vui lòng điền đầy đủ thông tin');
-      return;
-    }
-
-    if (formData.password !== formData.confirm_password) {
-      showAlert('error', 'Mật khẩu xác nhận không khớp');
+    // Validate entire form
+    if (!validateForm(formData)) {
+      showAlert('error', 'Vui lòng sửa các lỗi trong form trước khi gửi');
       return;
     }
 
@@ -303,6 +381,8 @@ const UserManagement: React.FC = () => {
       confirm_password: '',
       role: ''
     });
+    setFieldErrors({});
+    setIsFormValid(false);
   };
 
   const handleViewDetails = (user: User) => {
@@ -422,6 +502,11 @@ const UserManagement: React.FC = () => {
                     <option value="admin">Admin</option>
                     <option value="user">User</option>
                   </select>
+                  {fieldErrors.role && (
+                    <div className="invalid-feedback">
+                      {fieldErrors.role}
+                    </div>
+                  )}
                 </div>
                 <div className="col-md-3">
                   <select
@@ -731,12 +816,17 @@ const UserManagement: React.FC = () => {
                   <label>{t('username')}</label>
                   <input
                     type="text"
-                    className="form-control"
+                    className={`form-control ${fieldErrors.username ? 'is-invalid' : formData.username && !fieldErrors.username ? 'is-valid' : ''}`}
                     name="username"
                     value={formData.username}
                     onChange={handleInputChange}
                     required
                   />
+                  {fieldErrors.username && (
+                    <div className="invalid-feedback">
+                      {fieldErrors.username}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="col-md-6">
@@ -744,12 +834,17 @@ const UserManagement: React.FC = () => {
                   <label>{t('email')}</label>
                   <input
                     type="email"
-                    className="form-control"
+                    className={`form-control ${fieldErrors.email ? 'is-invalid' : formData.email && !fieldErrors.email ? 'is-valid' : ''}`}
                     name="email"
                     value={formData.email}
                     onChange={handleInputChange}
                     required
                   />
+                  {fieldErrors.email && (
+                    <div className="invalid-feedback">
+                      {fieldErrors.email}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -759,19 +854,24 @@ const UserManagement: React.FC = () => {
                   <label>{t('fullName')}</label>
                   <input
                     type="text"
-                    className="form-control"
+                    className={`form-control ${fieldErrors.full_name ? 'is-invalid' : formData.full_name && !fieldErrors.full_name ? 'is-valid' : ''}`}
                     name="full_name"
                     value={formData.full_name}
                     onChange={handleInputChange}
                     required
                   />
+                  {fieldErrors.full_name && (
+                    <div className="invalid-feedback">
+                      {fieldErrors.full_name}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="col-md-6">
                 <div className="form-group">
                   <label>{t('role')}</label>
                   <select
-                    className="form-control"
+                    className={`form-control ${fieldErrors.role ? 'is-invalid' : formData.role && !fieldErrors.role ? 'is-valid' : ''}`}
                     name="role"
                     value={formData.role}
                     onChange={handleInputChange}
@@ -790,12 +890,20 @@ const UserManagement: React.FC = () => {
                   <label>{t('password')}</label>
                   <input
                     type="password"
-                    className="form-control"
+                    className={`form-control ${fieldErrors.password ? 'is-invalid' : formData.password && !fieldErrors.password ? 'is-valid' : ''}`}
                     name="password"
                     value={formData.password}
                     onChange={handleInputChange}
                     required
                   />
+                  <small className="form-text text-muted">
+                    Mật khẩu phải có ít nhất 5 ký tự
+                  </small>
+                  {fieldErrors.password && (
+                    <div className="invalid-feedback">
+                      {fieldErrors.password}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="col-md-6">
@@ -803,12 +911,17 @@ const UserManagement: React.FC = () => {
                   <label>{t('confirmPassword')}</label>
                   <input
                     type="password"
-                    className="form-control"
+                    className={`form-control ${fieldErrors.confirm_password ? 'is-invalid' : formData.confirm_password && !fieldErrors.confirm_password ? 'is-valid' : ''}`}
                     name="confirm_password"
                     value={formData.confirm_password}
                     onChange={handleInputChange}
                     required
                   />
+                  {fieldErrors.confirm_password && (
+                    <div className="invalid-feedback">
+                      {fieldErrors.confirm_password}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -823,7 +936,7 @@ const UserManagement: React.FC = () => {
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={createLoading}
+                disabled={createLoading || !isFormValid}
               >
                 {createLoading ? t('creating') : t('createUser')}
               </button>

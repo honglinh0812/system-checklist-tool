@@ -96,7 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // Listen for auth logout events from API interceptor
     const handleAuthLogout = () => {
-      console.log('[AuthContext] Received auth:logout event');
+      ('[console.logAuthContext] Received auth:logout event');
       // Ensure localStorage is cleared when logout event is triggered
       authService.logout();
       dispatch({ type: 'LOGOUT' });
@@ -119,7 +119,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           console.log('[AuthContext] Verifying stored token...');
           const currentUser = await authService.getCurrentUser();
-          console.log('[AuthContext] Token verification successful:', currentUser);
           dispatch({
             type: 'LOGIN_SUCCESS',
             payload: { user: currentUser, token },
@@ -146,12 +145,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: 'LOGIN_START' });
       const credentials: LoginCredentials = { username, password };
       const response = await authService.login(credentials);
-      console.log('[AuthContext] Login successful:', response);
       dispatch({
         type: 'LOGIN_SUCCESS',
         payload: { user: response.user, token: response.access_token },
       });
-      console.log('[AuthContext] Login state updated successfully');
     } catch (error) {
       console.log('[AuthContext] Login failed:', error);
       dispatch({ type: 'LOGIN_FAILURE' });
@@ -184,7 +181,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('[AuthContext] Starting registration...');
       dispatch({ type: 'REGISTER_START' });
       const response = await authService.register(credentials);
-      console.log('[AuthContext] Registration successful:', response);
       dispatch({ type: 'REGISTER_SUCCESS' });
       return response;
     } catch (error) {

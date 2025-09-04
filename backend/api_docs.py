@@ -8,13 +8,18 @@ logger = logging.getLogger(__name__)
 
 def handle_api_response(response):
     """Helper function to handle API responses for Flask-RESTX compatibility"""
+    from flask import Response
+    
     if isinstance(response, tuple):
         # If response is a tuple (data, status_code), extract the data
         data, status_code = response
-        if hasattr(data, 'get_json'):
+        if isinstance(data, Response):
             # If data is a Flask Response object, get its JSON content
             return data.get_json(), status_code
         return data, status_code
+    elif isinstance(response, Response):
+        # If response is a Flask Response object directly
+        return response.get_json(), response.status_code
     return response
 
 def init_api_docs(app):
@@ -141,7 +146,7 @@ def init_api_docs(app):
         def post(self):
             """User login"""
             from api.api_auth import login
-            return login()
+            return handle_api_response(login())
     
     @auth_ns.route('/logout')
     class Logout(Resource):
@@ -151,7 +156,7 @@ def init_api_docs(app):
         def post(self):
             """User logout"""
             from api.api_auth import logout
-            return logout()
+            return handle_api_response(logout())
     
     @auth_ns.route('/refresh')
     class RefreshToken(Resource):
@@ -161,7 +166,7 @@ def init_api_docs(app):
         def post(self):
             """Refresh access token"""
             from api.api_auth import refresh
-            return refresh()
+            return handle_api_response(refresh())
     
     @auth_ns.route('/user')
     class CurrentUser(Resource):
@@ -171,7 +176,7 @@ def init_api_docs(app):
         def get(self):
             """Get current user information"""
             from api.api_auth import get_current_user
-            return get_current_user()
+            return handle_api_response(get_current_user())
     
     # User management endpoints
     @users_ns.route('')

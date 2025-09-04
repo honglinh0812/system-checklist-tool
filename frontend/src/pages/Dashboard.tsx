@@ -107,7 +107,6 @@ const Dashboard: React.FC = () => {
       
       // Fetch dashboard stats
       const statsData = await apiService.get<any>(API_ENDPOINTS.DASHBOARD.STATS);
-      console.log('[Dashboard] Dashboard stats response:', statsData);
       
       if (statsData.success && statsData.data.overview) {
         // Map backend data structure to frontend interface
@@ -144,8 +143,6 @@ const Dashboard: React.FC = () => {
       
     } catch (error: any) {
       console.error('[Dashboard] Error fetching dashboard stats:', error);
-      // If it's an authentication error, the API interceptor will handle logout
-      // and redirect will happen via useEffect
       if (error.response?.status === 401) {
         console.log('[Dashboard] Authentication error, will redirect to login');
       }

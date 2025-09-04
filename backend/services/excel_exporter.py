@@ -83,8 +83,8 @@ class ExcelExporter:
             ["Execution Time", data.get('execution_time', 'N/A')],
             ["Total Servers", str(data.get('total_servers', 0))],
             ["Total Commands", str(data.get('total_commands', 0))],
-            ["Passed Commands", str(data.get('passed_commands', 0))],
-            ["Failed Commands", str(data.get('failed_commands', 0))],
+            ["OK Commands", str(data.get('passed_commands', 0))],
+            ["Not OK Commands", str(data.get('failed_commands', 0))],
             ["Success Rate", f"{data.get('success_rate', 0):.1f}%"],
             ["Average Score", f"{data.get('average_score', 0):.1f}%"]
         ]
@@ -101,7 +101,7 @@ class ExcelExporter:
         
         validation_summary = data.get('validation_summary', {})
         if validation_summary:
-            headers = ["Validation Type", "Total", "Passed", "Failed", "Success Rate"]
+            headers = ["Validation Type", "Total", "OK", "Not OK", "Success Rate"]
             for col, header in enumerate(headers, 1):
                 cell = ws.cell(row=row, column=col, value=header)
                 cell.font = self.header_font
@@ -144,7 +144,7 @@ class ExcelExporter:
         # Headers
         headers = [
             "Server IP", "Command Title", "Command", "Expected Output", 
-            "Actual Output", "Validation Type", "Status", "Score", "Details"
+            "Actual Output", "Validation Type", "Result", "Decision", "Score", "Details"
         ]
         
         for col, header in enumerate(headers, 1):
@@ -159,9 +159,25 @@ class ExcelExporter:
         results = data.get('results', [])
         
         for result in results:
-            # Status color coding
-            status = "PASS" if result.get('is_valid', False) else "FAIL"
-            status_color = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") if status == "PASS" else PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            # Handle skipped commands
+            is_skipped = result.get('skipped', False)
+            skip_reason = result.get('skip_reason', '')
+            
+            if is_skipped:
+                result_status = "SKIPPED"
+                decision = "OK (skipped)"
+                status_color = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")  # Yellow for skipped
+                # Create details with skip condition info
+                skip_condition = result.get('skip_condition', {})
+                condition_id = skip_condition.get('condition_id', '')
+                condition_type = skip_condition.get('condition_type', '')
+                details = f"Skipped due to condition: {condition_id} result is {condition_type}" if condition_id and condition_type else skip_reason
+            else:
+                # Status color coding
+                result_status = "OK" if result.get('is_valid', False) else "Not OK"
+                decision = result.get('decision', 'APPROVED' if result.get('is_valid', False) else 'REJECTED')
+                status_color = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") if result_status == "OK" else PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                details = str(result.get('details', ''))
             
             # Row data
             row_data = [
@@ -171,15 +187,16 @@ class ExcelExporter:
                 result.get('expected_output', ''),
                 result.get('actual_output', ''),
                 result.get('validation_type', ''),
-                status,
+                result_status,
+                decision,
                 f"{result.get('score', 0):.1f}%",
-                str(result.get('details', ''))
+                details
             ]
             
             for col, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row, column=col, value=value)
                 cell.border = self.border
-                if col == 7:  # Status column
+                if col == 7:  # Result column
                     cell.fill = status_color
             
             row += 1

@@ -18,10 +18,20 @@ interface MOP {
 }
 
 interface Command {
-  id: number;
-  command_text: string;
-  description: string;
-  order_index: number;
+  id?: number;
+  command_id_ref?: string; // ID column
+  title: string; // Name column
+  command: string; // Command column
+  command_text?: string;
+  description?: string;
+  extract_method?: string; // Extract column
+  comparator_method?: string; // Comparator column
+  reference_value?: string; // Reference Value column
+  expected_output?: string;
+  is_critical?: boolean;
+  order_index?: number;
+  rollback_command?: string | null;
+  timeout_seconds?: number;
 }
 
 const RiskAssessment: React.FC = () => {
@@ -98,9 +108,7 @@ const RiskAssessment: React.FC = () => {
   const fetchMOPs = async () => {
     try {
       setLoading(true);
-      console.log('Fetching MOPs for risk assessment...');
       const response = await apiService.get<{success: boolean; data: {mops: MOP[]; pagination: any}}>(`${API_ENDPOINTS.MOPS.LIST}?context=assessment`);
-      console.log('MOP API response:', response);
       
       if (response && response.success && response.data) {
         const allMops = response.data.mops || [];
@@ -109,7 +117,6 @@ const RiskAssessment: React.FC = () => {
           mop.status === 'approved' && (mop as any).assessment_type === 'risk_assessment'
         );
         setFilteredMops(riskMops);
-        console.log('Fetched MOPs:', allMops.length, 'Risk MOPs:', riskMops.length);
       } else {
         console.warn('Invalid MOP response:', response);
         setFilteredMops([]);
@@ -118,19 +125,11 @@ const RiskAssessment: React.FC = () => {
       console.error('Error fetching MOPs:', error);
       setFilteredMops([]);
     } finally {
-      console.log('Risk Assessment fetchMOPs completed');
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    console.log('RiskAssessment mounted, current states:', {
-      selectedMOP,
-      activeTab,
-      assessmentType,
-      serversLength: servers.length,
-      selectedServersLength: selectedServers.length
-    });
     fetchMOPs();
   }, []);
 
@@ -149,11 +148,18 @@ const RiskAssessment: React.FC = () => {
       const assessments = await periodicAssessmentService.getPeriodicAssessments();
       setPeriodicAssessments(assessments);
       
-      // Load recent executions (last 5)
+      // Load recent executions (last 5) only if there are assessments
       const allExecutions: PeriodicAssessmentExecution[] = [];
-      for (const assessment of assessments) {
-        const response = await periodicAssessmentService.getPeriodicAssessmentExecutions(assessment.id);
-        allExecutions.push(...response.executions);
+      if (assessments.length > 0) {
+        for (const assessment of assessments) {
+          try {
+            const response = await periodicAssessmentService.getPeriodicAssessmentExecutions(assessment.id);
+            allExecutions.push(...response.executions);
+          } catch (executionError) {
+            // Log error but continue with other assessments
+            console.warn(`Failed to load executions for assessment ${assessment.id}:`, executionError);
+          }
+        }
       }
       
       // Sort by execution time and take last 5
@@ -201,38 +207,7 @@ const RiskAssessment: React.FC = () => {
     }
   };
 
-  const handleStartPeriodicAssessment = async (periodicId: number) => {
-    try {
-      await periodicAssessmentService.startPeriodicAssessment(periodicId);
-      showAlert('success', 'Đã bắt đầu đánh giá định kỳ');
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error starting periodic assessment:', error);
-      showAlert('error', 'Không thể bắt đầu đánh giá định kỳ');
-    }
-  };
 
-  const handlePausePeriodicAssessment = async (periodicId: number) => {
-    try {
-      await periodicAssessmentService.pausePeriodicAssessment(periodicId);
-      showAlert('success', 'Đã tạm dừng đánh giá định kỳ');
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error pausing periodic assessment:', error);
-      showAlert('error', 'Không thể tạm dừng đánh giá định kỳ');
-    }
-  };
-
-  const handleStopPeriodicAssessment = async (periodicId: number) => {
-    try {
-      await periodicAssessmentService.stopPeriodicAssessment(periodicId);
-      showAlert('success', 'Đã dừng đánh giá định kỳ');
-      await loadPeriodicAssessmentData();
-    } catch (error) {
-      console.error('Error stopping periodic assessment:', error);
-      showAlert('error', 'Không thể dừng đánh giá định kỳ');
-    }
-  };
 
   const handleMOPSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const mopId = event.target.value;
@@ -259,7 +234,6 @@ const RiskAssessment: React.FC = () => {
 
   const handleTestConnection = async () => {
     const selectedServerList = servers.filter((_, index) => selectedServers[index]);
-    console.log('selectedServerList:', selectedServerList);
     
     if (selectedServerList.length === 0) {
       showAlert('error', 'Vui lòng chọn ít nhất một server (tick vào checkbox) để test connection.');
@@ -278,7 +252,6 @@ const RiskAssessment: React.FC = () => {
 
     try {
       console.log('Sending request to:', API_ENDPOINTS.ASSESSMENTS.RISK_TEST_CONNECTION);
-      console.log('Request data:', { servers: mappedServerList });
       
       const response = await apiService.post<any>(API_ENDPOINTS.ASSESSMENTS.RISK_TEST_CONNECTION, {
         servers: mappedServerList
@@ -361,7 +334,6 @@ const RiskAssessment: React.FC = () => {
     }));
 
     try {
-      console.log('Setting assessment loading to true');
       setAssessmentLoading(true);
       
       // Update state to indicate assessment has started
@@ -378,7 +350,6 @@ const RiskAssessment: React.FC = () => {
         mop_id: parseInt(selectedMOP),
         servers: mappedServerList
       });
-      console.log('Start assessment response:', response);
       
       if (response.data && response.data.assessment_id && response.data.job_id) {
         showAlert('success', 'Assessment đã được bắt đầu thành công!');
@@ -388,7 +359,6 @@ const RiskAssessment: React.FC = () => {
           try {
             console.log('Fetching job status for job ID:', response.data.job_id);
             const statusResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.RISK_JOB_STATUS(response.data.job_id));
-            console.log('Job status response:', statusResponse);
             
             if (statusResponse.data) {
               const { status, logs } = statusResponse.data;
@@ -399,24 +369,21 @@ const RiskAssessment: React.FC = () => {
                 
                 // Calculate estimated time remaining
                 const calculateEstimatedTime = (currentProgress: any, startTime: Date) => {
-                  const now = new Date();
-                  const elapsedMs = now.getTime() - startTime.getTime();
-                  const completedCommands = currentProgress.current_command || 0;
-                  const totalCommands = currentProgress.total_commands || selectedMOPData.commands?.length || 0;
+                  const totalTasks = (currentProgress.total_commands || 0) * (currentProgress.total_servers || 1);
+                  // Fix calculation: completed tasks = (current_command - 1) * total_servers + (current_server - 1)
+                  const completedTasks = ((currentProgress.current_command || 1) - 1) * (currentProgress.total_servers || 1) + ((currentProgress.current_server || 1) - 1);
                   
-                  if (completedCommands === 0 || totalCommands === 0) {
-                    return 'Đang tính toán...';
-                  }
+                  if (completedTasks === 0) return 'Đang tính toán...';
                   
-                  const progressRatio = completedCommands / totalCommands;
-                  const estimatedTotalMs = elapsedMs / progressRatio;
-                  const remainingMs = estimatedTotalMs - elapsedMs;
+                  const elapsedTime = Date.now() - startTime.getTime();
+                  const timePerTask = elapsedTime / completedTasks;
+                  const remainingTasks = totalTasks - completedTasks;
+                  const estimatedRemainingMs = remainingTasks * timePerTask;
                   
-                  if (remainingMs <= 0) {
-                    return 'Sắp hoàn thành...';
-                  }
+                  // Ensure non-negative values
+                  if (estimatedRemainingMs <= 0) return 'Sắp hoàn thành';
                   
-                  const remainingMinutes = Math.ceil(remainingMs / (1000 * 60));
+                  const remainingMinutes = Math.ceil(estimatedRemainingMs / (1000 * 60));
                   if (remainingMinutes < 1) {
                     return 'Dưới 1 phút';
                   } else if (remainingMinutes < 60) {
@@ -462,7 +429,6 @@ const RiskAssessment: React.FC = () => {
                 try {
                   console.log('Fetching final results for assessment ID:', response.data.assessment_id);
                   const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.RISK_RESULTS(response.data.assessment_id));
-                  console.log('Final results response:', resultsResponse);
                   
                   updateState({ 
                     assessmentResults: {
@@ -584,19 +550,7 @@ const RiskAssessment: React.FC = () => {
         }
       );
 
-      // Debug: Log toàn bộ response từ backend
-      console.log('Backend response:', response);
-      console.log('Backend servers data:', response.servers);
-
       if (response.success && response.servers) {
-        // Debug: Log từng server object
-        response.servers.forEach((server, index) => {
-          console.log(`Server ${index}:`, server);
-          console.log(`  admin_username: ${server.admin_username}`);
-          console.log(`  admin_password: ${server.admin_password}`);
-          console.log(`  root_username: ${server.root_username}`);
-          console.log(`  root_password: ${server.root_password}`);
-        });
 
         const newServers = response.servers.map((server: any) => {
           const mappedServer = {
@@ -611,8 +565,6 @@ const RiskAssessment: React.FC = () => {
             sudoPassword: server.root_password
           };
           
-          // Debug: Log mapped server
-          console.log('Mapped server:', mappedServer);
           return mappedServer;
         });
 
@@ -981,7 +933,6 @@ const RiskAssessment: React.FC = () => {
                                               <td>
                                                 {(() => {
                                                   console.log(`Checking connectionResults[${index}]:`, connectionResults[index]);
-                                                  console.log('Full connectionResults array:', connectionResults);
                                                   return connectionResults[index] ? (
                                                     <span className={`badge ${
                                                       connectionResults[index].success ? 'badge-success' : 'badge-danger'
@@ -1708,17 +1659,25 @@ const RiskAssessment: React.FC = () => {
                   <table className="table table-striped">
                     <thead>
                       <tr>
-                        <th>ID</th>
-                        <th>Command Name</th>
-                        <th>Command</th>
+                        <th style={{ width: '5%' }}>STT</th>
+                        <th style={{ width: '10%' }}>ID</th>
+                        <th style={{ width: '20%' }}>Name</th>
+                        <th style={{ width: '25%' }}>Command</th>
+                        <th style={{ width: '12%' }}>Extract</th>
+                        <th style={{ width: '12%' }}>Comparator</th>
+                        <th style={{ width: '16%' }}>Reference Value</th>
                       </tr>
                     </thead>
                     <tbody>
                       {getSelectedMOPCommands().map((command, index) => (
                         <tr key={index}>
-                          <td>{typeof command === 'object' ? command.id : index + 1}</td>
-                          <td>{typeof command === 'object' ? command.description : `Command ${index + 1}`}</td>
-                          <td><code>{typeof command === 'string' ? command : command.command_text}</code></td>
+                          <td>{index + 1}</td>
+                          <td>{typeof command === 'object' ? (command.command_id_ref || command.id || 'N/A') : 'N/A'}</td>
+                          <td>{typeof command === 'object' ? (command.title || command.description || `Command ${index + 1}`) : `Command ${index + 1}`}</td>
+                          <td><code>{typeof command === 'string' ? command : (command.command || command.command_text || 'N/A')}</code></td>
+                          <td>{typeof command === 'object' ? (command.extract_method || 'raw') : 'raw'}</td>
+                          <td>{typeof command === 'object' ? (command.comparator_method || 'eq') : 'eq'}</td>
+                          <td>{typeof command === 'object' ? (command.reference_value || command.expected_output || 'N/A') : 'N/A'}</td>
                         </tr>
                       ))}
                     </tbody>

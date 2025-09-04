@@ -530,8 +530,61 @@ class AnsibleRunner:
                         'success': False,
                         'is_valid': False,
                         'expected': cmd.get('reference_value', ''),
-                        'validation_type': cmd.get('validation_type', 'exact_match')
+                        'validation_type': cmd.get('validation_type', 'exact_match'),
+                        'skip_condition': cmd.get('skip_condition'),
+                        'skipped': False,
+                        'skip_reason': ''
                     }
+                    
+                    # Check if this command should be skipped based on skip condition
+                    if self._should_skip_command(cmd, commands, server_results, ip):
+                        cmd_result['skipped'] = True
+                        cmd_result['skip_reason'] = 'Bỏ qua do thỏa mãn điều kiện skip condition'
+                        cmd_result['output'] = 'Command skipped due to skip condition'
+                        cmd_result['success'] = True
+                        cmd_result['is_valid'] = True
+                        cmd_result['validation_result'] = 'OK (skipped)'
+                        cmd_result['decision'] = 'APPROVED'
+                        
+                        # Set skip condition result for database storage
+                        skip_condition = cmd.get('skip_condition', {})
+                        condition_id = skip_condition.get('condition_id', '')
+                        condition_type = skip_condition.get('condition_type', '')
+                        cmd_result['skip_condition_result'] = f"{condition_id}:{condition_type}" if condition_id and condition_type else 'skip_condition'
+                        
+                        # Log skip information
+                        skip_info = cmd.get('skip_condition', {})
+                        logger.info(f"Skipping command {i+1} ({cmd_result['title']}) for {ip} due to skip condition: {skip_info.get('condition_id')}:{skip_info.get('condition_type')}")
+                        
+                        server_results[ip]['commands'].append(cmd_result)
+                        
+                        # Update progress
+                        current_operation += 1
+                        progress_percentage = min(100, int((current_operation / total_operations) * 100))
+                        server_index = servers.index(next(s for s in servers if s['ip'] == ip)) + 1
+                        
+                        current_progress = self.job_progress.get(job_id, {}).get('percentage', 0)
+                        if progress_percentage > current_progress:
+                            if job_id in self.job_progress:
+                                self.job_progress[job_id]['current_command'] = i + 1
+                                self.job_progress[job_id]['current_server'] = server_index
+                                self.job_progress[job_id]['percentage'] = progress_percentage
+                            
+                            if job_id in self.running_jobs:
+                                self.running_jobs[job_id]['progress'] = progress_percentage
+                        
+                        # Add to log content with proper format
+                        skip_condition = cmd.get('skip_condition', {})
+                        condition_id = skip_condition.get('condition_id', '')
+                        condition_type = skip_condition.get('condition_type', '')
+                        detailed_reason = f"Bỏ qua do thỏa mãn điều kiện skip ({condition_id} result is {condition_type})" if condition_id and condition_type else cmd_result['skip_reason']
+                        
+                        log_content.append(f"\nCommand {i+1}: {cmd_result['title']}")
+                        log_content.append(f"Status: SKIPPED")
+                        log_content.append(f"Reason: {detailed_reason}")
+                        log_content.append(f"Decision: OK (skipped)")
+                        
+                        continue
                     
                     try:
                         if hasattr(result, 'events') and result.events:
@@ -595,9 +648,9 @@ class AnsibleRunner:
                             cmd_result['validation_result'] = formatted_result
                             
                         else:
-                            # Legacy 3-column format validation
-                            expected_value = cmd.get('expected_value', cmd.get('reference_value', ''))
-                            validation_logic = cmd.get('logic', cmd.get('validation_type', 'exact_match'))
+                            # Fallback to basic validation for commands without extract/comparator methods
+                            expected_value = cmd.get('reference_value', '')
+                            validation_logic = 'exact_match'  # Default validation method
                             
                             validation = validator.validate_output(
                                 cmd_result.get('output', ''),
@@ -612,8 +665,8 @@ class AnsibleRunner:
                         cmd_result['is_valid'] = validation.get('is_valid', False)
                         cmd_result['validation_details'] = validation
                         cmd_result['expected_value'] = expected_value
-                        cmd_result['validation_type'] = validation.get('validation_type', validation_logic if 'validation_logic' in locals() else 'extract_compare')
-                        cmd_result['validation_method'] = cmd.get('extract_method', validation_logic if 'validation_logic' in locals() else 'unknown')
+                        cmd_result['validation_type'] = validation.get('validation_type', 'extract_compare' if cmd.get('extract_method') else 'exact_match')
+                        cmd_result['validation_method'] = cmd.get('extract_method', 'exact_match')
                         cmd_result['decision'] = 'APPROVED' if validation.get('is_valid', False) else 'REJECTED'
                         
                         # Add 6-column specific fields
@@ -698,6 +751,16 @@ class AnsibleRunner:
                         logger.error(f"Execution with ID {execution_id} not found")
                         return server_results
                     
+                    # Calculate skipped commands count
+                    skipped_count = 0
+                    for server_result in server_results.values():
+                        for cmd_result in server_result.get('commands', []):
+                            if cmd_result.get('skipped', False):
+                                skipped_count += 1
+                    
+                    # Update execution with skipped commands count
+                    execution.skipped_commands = skipped_count
+                    
                     # Get all commands from database for this MOP
                     mop_commands = MOPCommand.query.filter_by(mop_id=execution.mop_id).all()
                     
@@ -716,7 +779,10 @@ class AnsibleRunner:
                                 output=cmd_result.get('output', ''),
                                 stderr=cmd_result.get('error', ''),
                                 return_code=cmd_result.get('return_code'),
-                                is_valid=cmd_result.get('is_valid', False)
+                                is_valid=cmd_result.get('is_valid', False),
+                                skipped=cmd_result.get('skipped', False),
+                                skip_reason=cmd_result.get('skip_reason', ''),
+                                skip_condition_result=cmd_result.get('skip_condition_result', '')
                             )
                             
                             # Import db here to avoid circular imports
@@ -775,11 +841,19 @@ class AnsibleRunner:
         # Get return code safely
         return_code = getattr(result, 'rc', -1) if result else -1
         
+        # Calculate skipped commands count
+        skipped_count = 0
+        for server_result in server_results.values():
+            for cmd_result in server_result.get('commands', []):
+                if cmd_result.get('skipped', False):
+                    skipped_count += 1
+        
         summary = {
             'total_servers': len(servers),
             'successful_servers': sum(1 for s in server_results.values() if s['status'] == 'success'),
             'failed_servers': sum(1 for s in server_results.values() if s['status'] == 'failed'),
             'total_commands': len(commands),
+            'skipped_count': skipped_count,
             'return_code': return_code
         }
         
@@ -885,3 +959,85 @@ class AnsibleRunner:
         except Exception as e:
             logger.warning(f"Error expanding template variables: {str(e)}")
             return commands  # Return original commands if expansion fails
+    
+    def _should_skip_command(self, current_cmd: Dict, all_commands: List[Dict], server_results: Dict, server_ip: str) -> bool:
+        """
+        Check if a command should be skipped based on its skip condition
+        
+        Args:
+            current_cmd: Current command being processed
+            all_commands: List of all commands
+            server_results: Results from previous commands for this server
+            server_ip: IP of the server being processed
+            
+        Returns:
+            True if command should be skipped, False otherwise
+        """
+        skip_condition = current_cmd.get('skip_condition')
+        if not skip_condition:
+            return False
+            
+        condition_id = skip_condition.get('condition_id')
+        condition_type = skip_condition.get('condition_type')
+        condition_value = skip_condition.get('condition_value')
+        
+        if not condition_id or not condition_type:
+            return False
+            
+        # Find the reference command by ID
+        reference_cmd = None
+        reference_result = None
+        
+        # Look for the reference command in all commands
+        for cmd in all_commands:
+            cmd_id = cmd.get('command_id_ref', '')
+            if cmd_id == condition_id:
+                reference_cmd = cmd
+                break
+        
+        if not reference_cmd:
+            logger.warning(f"Skip condition reference command '{condition_id}' not found")
+            return False
+            
+        # Look for the reference command result in server results
+        if server_ip in server_results and 'commands' in server_results[server_ip]:
+            for cmd_result in server_results[server_ip]['commands']:
+                # Match by command_id_ref or title
+                if (cmd_result.get('command_id_ref') == condition_id or 
+                    cmd_result.get('title') == reference_cmd.get('title')):
+                    reference_result = cmd_result
+                    break
+        
+        if not reference_result:
+            # Reference command hasn't been executed yet, don't skip
+            return False
+            
+        # Apply skip condition logic
+        if condition_type == 'value_match':
+            # New format: Skip if reference command output matches the specified value
+            output = reference_result.get('output', '').strip()
+            return output == condition_value
+            
+        elif condition_type == 'empty':
+            # Legacy: Skip if reference command output is empty
+            output = reference_result.get('output', '').strip()
+            return len(output) == 0
+            
+        elif condition_type == 'not_empty':
+            # Legacy: Skip if reference command output is not empty
+            output = reference_result.get('output', '').strip()
+            return len(output) > 0
+            
+        elif condition_type == 'ok':
+            # Legacy: Skip if reference command validation result is OK
+            validation_result = reference_result.get('validation_result', '')
+            decision = reference_result.get('decision', '')
+            return validation_result == 'OK' or decision == 'APPROVED'
+            
+        elif condition_type == 'not_ok':
+            # Legacy: Skip if reference command validation result is Not OK
+            validation_result = reference_result.get('validation_result', '')
+            decision = reference_result.get('decision', '')
+            return validation_result == 'Not OK' or decision == 'REJECTED'
+            
+        return False

@@ -823,7 +823,11 @@ def get_execution_history():
         for exec in executions:
             # Calculate results summary
             total_commands = exec.total_commands or len(exec.results) if exec.results else 0
-            passed_commands = exec.completed_commands or (sum(1 for r in exec.results if r.is_valid) if exec.results else 0)
+            # Count passed commands including skipped ones
+            if exec.results:
+                passed_commands = sum(1 for r in exec.results if r.is_valid or getattr(r, 'skipped', False))
+            else:
+                passed_commands = exec.completed_commands or 0
             failed_commands = total_commands - passed_commands
             success_rate = (passed_commands / total_commands * 100) if total_commands > 0 else 0
             
@@ -879,13 +883,15 @@ def get_execution_history():
                             for cmd_result in results.values():
                                 if isinstance(cmd_result, dict) and 'status' in cmd_result:
                                     total_tests += 1
-                                    if cmd_result['status'] == 'OK':
+                                    if cmd_result['status'] == 'OK' or cmd_result.get('skipped', False):
                                         passed_tests += 1
                 elif isinstance(assessment.test_results, list):
                     for result in assessment.test_results:
-                        if isinstance(result, dict) and 'status' in result:
+                        if isinstance(result, dict):
                             total_tests += 1
-                            if result['status'] == 'OK':
+                            # Count successful and skipped commands as passed
+                            if (result.get('status') == 'OK' or result.get('result') == 'success' or 
+                                result.get('skipped', False)):
                                 passed_tests += 1
                 
                 success_rate = (passed_tests / total_tests * 100) if total_tests > 0 else 0
@@ -1064,6 +1070,14 @@ def execute_mop(mop_id):
                     if cmd.expected_output:
                         command_dict['expected_value'] = cmd.expected_output
                     
+                    # Add skip condition fields
+                    if cmd.skip_condition_id or cmd.skip_condition_type:
+                        command_dict['skip_condition'] = {
+                            'condition_id': cmd.skip_condition_id,
+                            'condition_type': cmd.skip_condition_type,
+                            'condition_value': cmd.skip_condition_value
+                        }
+                    
                     commands.append(command_dict)
                 
                 execution.total_commands = len(commands)
@@ -1181,7 +1195,11 @@ def export_all_executions():
         # Process ExecutionHistory records
         for exec in executions:
             total_commands = exec.total_commands or len(exec.results) if exec.results else 0
-            passed_commands = exec.completed_commands or (sum(1 for r in exec.results if r.is_valid) if exec.results else 0)
+            # Count passed commands including skipped ones
+            if exec.results:
+                passed_commands = sum(1 for r in exec.results if r.is_valid or getattr(r, 'skipped', False))
+            else:
+                passed_commands = exec.completed_commands or 0
             failed_commands = total_commands - passed_commands
             success_rate = (passed_commands / total_commands * 100) if total_commands > 0 else 0
             
@@ -1212,14 +1230,16 @@ def export_all_executions():
             if assessment.test_results:
                 if isinstance(assessment.test_results, list):
                     total_tests = len(assessment.test_results)
-                    passed_tests = sum(1 for result in assessment.test_results if result.get('result') == 'success')
+                    # Count successful and skipped commands as passed
+                    passed_tests = sum(1 for result in assessment.test_results 
+                                     if result.get('result') == 'success' or result.get('skipped', False))
                 elif isinstance(assessment.test_results, dict):
                     for server_ip, results in assessment.test_results.items():
                         if isinstance(results, dict):
                             for cmd_result in results.values():
                                 if isinstance(cmd_result, dict) and 'status' in cmd_result:
                                     total_tests += 1
-                                    if cmd_result['status'] == 'OK':
+                                    if cmd_result['status'] == 'OK' or cmd_result.get('skipped', False):
                                         passed_tests += 1
             
             success_rate = (passed_tests / total_tests * 100) if total_tests > 0 else 0

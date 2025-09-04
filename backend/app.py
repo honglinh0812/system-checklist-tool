@@ -676,23 +676,54 @@ def export_execution_results(execution_id):
         
         # Add detailed results
         for result in execution.results:
-            validation_result = command_validator.validate_output(
-                result.output, 
-                result.command.reference_value, 
-                result.command.validation_type
-            )
+            # Handle skipped commands
+            if result.skipped:
+                result_data = {
+                    'server_ip': result.server_ip,
+                    'command_title': result.command.title,
+                    'command': result.command.command,
+                    'expected_output': result.command.reference_value,
+                    'actual_output': result.output,
+                    'validation_type': result.command.validation_type,
+                    'is_valid': True,  # Skipped commands are considered valid
+                    'score': 100.0,  # Skipped commands get full score
+                    'details': result.skip_reason or 'Command was skipped',
+                    'skipped': True,
+                    'skip_reason': result.skip_reason,
+                    'decision': 'OK (skipped)'
+                }
+                
+                # Add skip condition info if available
+                if result.skip_condition_result:
+                    condition_parts = result.skip_condition_result.split(':')
+                    if len(condition_parts) == 2:
+                        result_data['skip_condition'] = {
+                            'condition_id': condition_parts[0],
+                            'condition_type': condition_parts[1]
+                        }
+            else:
+                # Handle normal commands
+                validation_result = command_validator.validate_output(
+                    result.output, 
+                    result.command.reference_value, 
+                    result.command.validation_type
+                )
+                
+                result_data = {
+                    'server_ip': result.server_ip,
+                    'command_title': result.command.title,
+                    'command': result.command.command,
+                    'expected_output': result.command.reference_value,
+                    'actual_output': result.output,
+                    'validation_type': result.command.validation_type,
+                    'is_valid': result.is_valid,
+                    'score': validation_result.get('score', 0),
+                    'details': validation_result.get('details', {}),
+                    'skipped': False,
+                    'decision': 'APPROVED' if result.is_valid else 'REJECTED'
+                }
             
-            execution_data['results'].append({
-                'server_ip': result.server_ip,
-                'command_title': result.command.title,
-                'command': result.command.command,
-                'expected_output': result.command.reference_value,
-                'actual_output': result.output,
-                'validation_type': result.command.validation_type,
-                'is_valid': result.is_valid,
-                'score': validation_result.get('score', 0),
-                'details': validation_result.get('details', {})
-            })
+            execution_data['results'].append(result_data)
         
         # Export to Excel
         filename = f"execution_{execution_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"

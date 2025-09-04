@@ -491,12 +491,24 @@ def start_risk_assessment():
                     # Prepare commands for ansible
                     commands = []
                     for command in mop_obj.commands:
-                        commands.append({
+                        command_dict = {
                             'title': command.title or command.description or f'Command {command.order_index}',
-                            'command': command.command_text,
-                            'reference_value': command.expected_output or command.reference_value or '',
+                            'command': command.command or command.command_text,
+                            'reference_value': command.reference_value or command.expected_output or '',
+                            'extract_method': command.extract_method or 'full_output',
+                            'comparator_method': command.comparator_method or 'exact_match',
                             'validation_type': 'exact_match'
-                        })
+                        }
+                        
+                        # Add skip condition fields
+                        if command.skip_condition_id or command.skip_condition_type:
+                            command_dict['skip_condition'] = {
+                                'condition_id': command.skip_condition_id,
+                                'condition_type': command.skip_condition_type,
+                                'condition_value': command.skip_condition_value
+                            }
+                        
+                        commands.append(command_dict)
                     
                     # Prepare servers for ansible
                     ansible_servers = []
@@ -786,12 +798,24 @@ def start_handover_assessment():
                     
                     commands = []
                     for command in mop_obj.commands:
-                        commands.append({
+                        command_dict = {
                             'title': command.title or command.description or f'Command {command.order_index}',
-                            'command': command.command_text,
-                            'reference_value': command.expected_output or command.reference_value or '',
+                            'command': command.command or command.command_text,
+                            'reference_value': command.reference_value or command.expected_output or '',
+                            'extract_method': command.extract_method or 'full_output',
+                            'comparator_method': command.comparator_method or 'exact_match',
                             'validation_type': 'exact_match'
-                        })
+                        }
+                        
+                        # Add skip condition fields
+                        if command.skip_condition_id or command.skip_condition_type:
+                            command_dict['skip_condition'] = {
+                                'condition_id': command.skip_condition_id,
+                                'condition_type': command.skip_condition_type,
+                                'condition_value': command.skip_condition_value
+                            }
+                        
+                        commands.append(command_dict)
                     
                     # Prepare servers for ansible
                     ansible_servers = []
@@ -1128,19 +1152,53 @@ def download_handover_assessment_report(assessment_id):
         # Convert test_results to the format expected by excel exporter
         if assessment.test_results:
             for result in assessment.test_results:
-                # Map the data structure correctly
-                is_valid = result.get('result') == 'success'
-                export_data['results'].append({
-                    'server_ip': result.get('server_ip', ''),
-                    'command_title': f"Command {result.get('command_index', 0) + 1}",  # Generate title from index
-                    'command': result.get('command_text', ''),  # Map command_text to command
-                    'expected_output': result.get('reference_value', ''),
-                    'actual_output': result.get('output', ''),
-                    'validation_type': 'exact_match',  # Default validation type
-                    'is_valid': is_valid,
-                    'score': 100.0 if is_valid else 0.0,  # Calculate score based on success
-                    'details': 'Command executed successfully' if is_valid else 'Command execution failed'
-                })
+                # Check if command was skipped
+                is_skipped = result.get('skipped', False)
+                skip_reason = result.get('skip_reason', '')
+                
+                if is_skipped:
+                    # Handle skipped commands
+                    result_data = {
+                        'server_ip': result.get('server_ip', ''),
+                        'command_title': f"Command {result.get('command_index', 0) + 1}",
+                        'command': result.get('command_text', ''),
+                        'expected_output': result.get('reference_value', ''),
+                        'actual_output': result.get('output', ''),
+                        'validation_type': 'exact_match',
+                        'is_valid': True,  # Skipped commands are considered valid
+                        'score': 100.0,  # Skipped commands get full score
+                        'details': skip_reason or 'Command was skipped',
+                        'skipped': True,
+                        'skip_reason': skip_reason,
+                        'decision': 'OK (skipped)'
+                    }
+                    
+                    # Add skip condition info if available
+                    if result.get('skip_condition_result'):
+                        condition_parts = result['skip_condition_result'].split(':')
+                        if len(condition_parts) == 2:
+                            result_data['skip_condition'] = {
+                                'condition_id': condition_parts[0],
+                                'condition_type': condition_parts[1]
+                            }
+                else:
+                    # Handle normal commands
+                    is_valid = result.get('result') == 'success'
+                    result_data = {
+                        'server_ip': result.get('server_ip', ''),
+                        'command_title': f"Command {result.get('command_index', 0) + 1}",
+                        'command': result.get('command_text', ''),
+                        'expected_output': result.get('reference_value', ''),
+                        'actual_output': result.get('output', ''),
+                        'validation_type': 'exact_match',
+                        'is_valid': is_valid,
+                        'score': 100.0 if is_valid else 0.0,
+                        'details': 'Command executed successfully' if is_valid else 'Command execution failed',
+                        'skipped': False,
+                        'decision': 'APPROVED' if is_valid else 'REJECTED'
+                    }
+                
+                export_data['results'].append(result_data)
         
         # Create Excel file
         exporter = ExcelExporter()
@@ -1199,19 +1257,53 @@ def download_risk_assessment_report(assessment_id):
         # Convert test_results to the format expected by excel exporter
         if assessment.test_results:
             for result in assessment.test_results:
-                # Map the data structure correctly
-                is_valid = result.get('result') == 'success'
-                export_data['results'].append({
-                    'server_ip': result.get('server_ip', ''),
-                    'command_title': f"Command {result.get('command_index', 0) + 1}",  # Generate title from index
-                    'command': result.get('command_text', ''),  # Map command_text to command
-                    'expected_output': result.get('reference_value', ''),
-                    'actual_output': result.get('output', ''),
-                    'validation_type': 'exact_match',  # Default validation type
-                    'is_valid': is_valid,
-                    'score': 100.0 if is_valid else 0.0,  # Calculate score based on success
-                    'details': 'Command executed successfully' if is_valid else 'Command execution failed'
-                })
+                # Check if command was skipped
+                is_skipped = result.get('skipped', False)
+                skip_reason = result.get('skip_reason', '')
+                
+                if is_skipped:
+                    # Handle skipped commands
+                    result_data = {
+                        'server_ip': result.get('server_ip', ''),
+                        'command_title': f"Command {result.get('command_index', 0) + 1}",
+                        'command': result.get('command_text', ''),
+                        'expected_output': result.get('reference_value', ''),
+                        'actual_output': result.get('output', ''),
+                        'validation_type': 'exact_match',
+                        'is_valid': True,  # Skipped commands are considered valid
+                        'score': 100.0,  # Skipped commands get full score
+                        'details': skip_reason or 'Command was skipped',
+                        'skipped': True,
+                        'skip_reason': skip_reason,
+                        'decision': 'OK (skipped)'
+                    }
+                    
+                    # Add skip condition info if available
+                    if result.get('skip_condition_result'):
+                        condition_parts = result['skip_condition_result'].split(':')
+                        if len(condition_parts) == 2:
+                            result_data['skip_condition'] = {
+                                'condition_id': condition_parts[0],
+                                'condition_type': condition_parts[1]
+                            }
+                else:
+                    # Handle normal commands
+                    is_valid = result.get('result') == 'success'
+                    result_data = {
+                        'server_ip': result.get('server_ip', ''),
+                        'command_title': f"Command {result.get('command_index', 0) + 1}",
+                        'command': result.get('command_text', ''),
+                        'expected_output': result.get('reference_value', ''),
+                        'actual_output': result.get('output', ''),
+                        'validation_type': 'exact_match',
+                        'is_valid': is_valid,
+                        'score': 100.0 if is_valid else 0.0,
+                        'details': 'Command executed successfully' if is_valid else 'Command execution failed',
+                        'skipped': False,
+                        'decision': 'APPROVED' if is_valid else 'REJECTED'
+                    }
+                
+                export_data['results'].append(result_data)
         
         # Create Excel file
         exporter = ExcelExporter()

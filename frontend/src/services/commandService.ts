@@ -27,15 +27,35 @@ export interface CommandStatus {
   results?: any;
 }
 
+export interface CommandResult {
+  command_id_ref: string;
+  title: string;
+  command: string;
+  expected_output?: string;
+  actual_output?: string;
+  validation_type?: string;
+  status: 'PASS' | 'FAIL' | 'SKIPPED';
+  score?: number;
+  details?: string;
+  server_ip?: string;
+  skip_condition?: {
+    condition_id: string;
+    condition_type: 'empty' | 'not_empty' | 'ok' | 'not_ok';
+  };
+  skipped?: boolean;
+  skip_reason?: string;
+}
+
 export interface CommandResults {
   job_id: string;
   status: string;
-  results: any[];
+  results: CommandResult[];
   summary: {
     total_servers: number;
     total_commands: number;
     success_count: number;
     failure_count: number;
+    skipped_count?: number;
   };
 }
 

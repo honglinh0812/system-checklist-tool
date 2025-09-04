@@ -59,6 +59,11 @@ class Command(db.Model):
     comparator_method = db.Column(db.String(100), nullable=True)  # Cột Comparator
     command_id_ref = db.Column(db.String(50), nullable=True)  # Cột ID
     
+    # Skip condition fields
+    skip_condition_id = db.Column(db.String(50), nullable=True)  # ID của command điều kiện
+    skip_condition_type = db.Column(db.String(20), nullable=True)  # 'empty', 'not_empty', 'ok', 'not_ok', 'value_match'
+    skip_condition_value = db.Column(db.Text, nullable=True)  # Giá trị để so sánh khi condition_type = 'value_match'
+    
     # Relationships
     results = db.relationship('ServerResult', backref='command')
 

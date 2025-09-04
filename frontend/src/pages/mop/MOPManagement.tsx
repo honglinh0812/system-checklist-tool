@@ -415,7 +415,7 @@ const MOPManagement: React.FC = () => {
         const validCommands = formData.commands.filter(cmd => cmd.title && cmd.command);
         if (validCommands.length > 0) {
           try {
-            const commandsResponse = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}/commands`, {
+            const commandsResponse = await apiService.post<any>(`${API_ENDPOINTS.MOPS.LIST}/${currentMop.id}/commands/bulk`, {
               commands: validCommands
             });
             
@@ -423,7 +423,8 @@ const MOPManagement: React.FC = () => {
               setNotification({type: 'warning', message: t('mopUpdatedButFailedToUpdateCommands')});
             }
           } catch (cmdError) {
-            console.log('Commands update not available, skipping...');
+            console.error('Commands update failed:', cmdError);
+            setNotification({type: 'warning', message: t('mopUpdatedButFailedToUpdateCommands')});
           }
         }
         
@@ -1076,18 +1077,24 @@ const MOPManagement: React.FC = () => {
                       <table className="table table-sm table-bordered">
                         <thead className="thead-light">
                           <tr>
-                            <th>STT</th>
-                            <th>Command Title</th>
-                            <th>Command</th>
-                            <th>Expected Output</th>
+                            <th style={{ width: '5%' }}>STT</th>
+                            <th style={{ width: '10%' }}>ID</th>
+                            <th style={{ width: '20%' }}>Name</th>
+                            <th style={{ width: '25%' }}>Command</th>
+                            <th style={{ width: '12%' }}>Extract</th>
+                            <th style={{ width: '12%' }}>Comparator</th>
+                            <th style={{ width: '16%' }}>Reference Value</th>
                           </tr>
                         </thead>
                         <tbody>
                           {formData.commands.map((cmd, index) => (
                             <tr key={index}>
                               <td>{index + 1}</td>
+                              <td>{cmd.command_id_ref || 'N/A'}</td>
                               <td>{cmd.title}</td>
                               <td><code>{cmd.command}</code></td>
+                              <td>{cmd.extract_method || 'raw'}</td>
+                              <td>{cmd.comparator_method || 'eq'}</td>
                               <td>{cmd.reference_value || 'N/A'}</td>
                             </tr>
                           ))}

@@ -237,20 +237,16 @@ yarn-error.log*
 backend/logs
 backend/reports
 backend/uploads
-GEMINI.md
-QUICK_START.md
-RISK_REPORT_FEATURE_IMPLEMENTATION.md
 
-backup.py
-monitor.py
-performance_test.py
 Báo_cáo_kỹ_thuật_Flask_Production_Optimization.md
-test_both_assessments.py
 docs/
-test.csv
-test.pdf
-test_appendix.csv
+backend/docs/
 .trae/
 checklist*
 COMMAND_SANITIZATION.md
 *.txt
+api_prometheus.py
+backend/config/prometheus_config.py
+backend/examples/
+backend/services/prometheus_client.py
+scripts/appendix_template_6_column_with_skip.csv
