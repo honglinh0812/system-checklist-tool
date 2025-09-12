@@ -54,11 +54,12 @@ def execute_periodic_assessment(app, periodic_assessment_id):
                 db.session.commit()
                 return
             
-            # Prepare servers
-            servers = periodic_assessment.server_info or []
+            # Prepare servers - only use selected servers
+            all_servers = periodic_assessment.server_info or []
+            servers = [server for server in all_servers if server.get('selected', True)]
             if not servers:
                 execution.status = 'fail'
-                execution.error_message = 'No servers configured'
+                execution.error_message = 'No servers selected for assessment'
                 execution.completed_at = datetime.now(GMT_PLUS_7)
                 db.session.commit()
                 return
@@ -213,7 +214,7 @@ def init_periodic_scheduler(app):
     
     scheduler = BackgroundScheduler(timezone=app.config.get('TZ', 'UTC'))
     
-    # Check every 5 minutes for due assessments
+    # Check every 5 minutes for due assessments (fixed from 5000 minutes)
     scheduler.add_job(
         check_and_execute_periodic_assessments,
         'interval',
@@ -224,5 +225,5 @@ def init_periodic_scheduler(app):
     )
     
     scheduler.start()
-    logger.info("Periodic assessment scheduler started (checking every 5 minutes)")
+    logger.info("Periodic assessment scheduler started")
     return scheduler

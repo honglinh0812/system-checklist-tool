@@ -16,3 +16,4 @@ def init_db(app):
     from .assessment import AssessmentResult
     from .periodic_assessment import PeriodicAssessment, PeriodicAssessmentExecution
     from .audit_log import UserActivityLog, ActionType, ResourceType
+    from .server import Server

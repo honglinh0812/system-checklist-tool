@@ -106,7 +106,7 @@ export const serverUtils = {
   },
 
   // Import servers from file data
-  importServersFromData: function(data: any[]): { success: boolean; imported: number; errors: string[] } {
+  importServersFromData: function(data: unknown[]): { success: boolean; imported: number; errors: string[] } {
     const errors: string[] = [];
     let imported = 0;
     
@@ -120,9 +120,10 @@ export const serverUtils = {
     data.forEach((row, index) => {
       try {
         // Expect columns: IP, Hostname, Description (optional)
-        const ip = row.ip || row.IP || row[0];
-        const hostname = row.hostname || row.Hostname || row[1];
-        const description = row.description || row.Description || row[2] || '';
+        const rowData = row as Record<string, unknown> & unknown[];
+        const ip = String(rowData.ip || rowData.IP || rowData[0] || '');
+        const hostname = String(rowData.hostname || rowData.Hostname || rowData[1] || '');
+        const description = String(rowData.description || rowData.Description || rowData[2] || '');
         
         if (!ip || !hostname) {
           errors.push(`Row ${index + 1}: Missing IP or hostname`);
@@ -149,7 +150,7 @@ export const serverUtils = {
         });
         
         imported++;
-      } catch (error) {
+      } catch {
         errors.push(`Row ${index + 1}: Error processing data`);
       }
     });
@@ -167,7 +168,7 @@ export const serverUtils = {
   },
 
   // Export servers to downloadable format
-  exportServers: function(): { data: any[]; filename: string } {
+  exportServers: function(): { data: unknown[]; filename: string } {
     const servers = this.loadServers();
     const data = servers.map(server => ({
       IP: server.ip,

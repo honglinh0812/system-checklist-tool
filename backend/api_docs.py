@@ -64,12 +64,19 @@ def init_api_docs(app):
     mop_model = api.model('MOP', {
         'id': fields.Integer(required=True, description='MOP ID'),
         'name': fields.String(required=True, description='MOP name'),
-        'type': fields.String(required=True, description='MOP type (risk, handover)'),
+        'type': fields.List(fields.String, required=True, description='MOP types (risk_assessment, handover_assessment)'),
         'description': fields.String(description='MOP description'),
         'status': fields.String(required=True, description='MOP status'),
         'created_by': fields.Integer(description='Creator user ID'),
         'created_at': fields.DateTime(description='Creation timestamp'),
         'updated_at': fields.DateTime(description='Last update timestamp')
+    })
+    
+    # MOP input model (for create/update requests)
+    mop_input_model = api.model('MOPInput', {
+        'name': fields.String(required=True, description='MOP name'),
+        'type': fields.List(fields.String, required=True, description='MOP types (e.g., risk_assessment, handover_assessment)'),
+        'description': fields.String(description='MOP description'),
     })
     
     # Server models
@@ -227,7 +234,7 @@ def init_api_docs(app):
             return handle_api_response(get_mops())
         
         @mops_ns.doc(security='Bearer')
-        @mops_ns.expect(mop_model)
+        @mops_ns.expect(mop_input_model)
         def post(self):
             """Create new MOP"""
             from api.api_mops import create_mop
@@ -242,7 +249,7 @@ def init_api_docs(app):
             return handle_api_response(get_mop(mop_id))
         
         @mops_ns.doc(security='Bearer')
-        @mops_ns.expect(mop_model)
+        @mops_ns.expect(mop_input_model)
         def put(self, mop_id):
             """Update MOP"""
             from api.api_mops import update_mop

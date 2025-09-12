@@ -24,7 +24,7 @@ export interface CommandStatus {
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;
   message: string;
-  results?: any;
+  results?: Record<string, unknown>;
 }
 
 export interface CommandResult {

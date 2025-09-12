@@ -14,7 +14,7 @@ export const formatUtils = {
         hour: '2-digit',
         minute: '2-digit'
       });
-    } catch (error) {
+    } catch {
       return 'Invalid Date';
     }
   },
@@ -30,7 +30,7 @@ export const formatUtils = {
         month: '2-digit',
         day: '2-digit'
       });
-    } catch (error) {
+    } catch {
       return 'Invalid Date';
     }
   },
@@ -74,7 +74,7 @@ export const formatUtils = {
   },
 
   // Format data for export
-  formatDataForExport: function(data: any[], format: 'excel' | 'csv' = 'csv'): string {
+  formatDataForExport: function(data: Record<string, unknown>[], format: 'excel' | 'csv' = 'csv'): string {
     if (format === 'excel') {
       return this.formatForExcel(data);
     } else {
@@ -83,13 +83,13 @@ export const formatUtils = {
   },
 
   // Format data for Excel export
-  formatForExcel: function(data: any[]): string {
+  formatForExcel: function(data: Record<string, unknown>[]): string {
     // For Excel, we'll return CSV format that Excel can import
     return this.formatForCSV(data);
   },
 
   // Format data for CSV export
-  formatForCSV: function(data: any[]): string {
+  formatForCSV: function(data: Record<string, unknown>[]): string {
     if (!data || data.length === 0) {
       return '';
     }
@@ -111,7 +111,7 @@ export const formatUtils = {
   },
 
   // Escape CSV values
-  escapeCsvValue: function(value: any): string {
+  escapeCsvValue: function(value: unknown): string {
     if (value === null || value === undefined) {
       return '';
     }
@@ -128,10 +128,11 @@ export const formatUtils = {
 
   // Format command output for display
   formatCommandOutput: function(output: string, maxLength: number = 500): string {
-    if (!output) return 'No output';
+    if (!output) return '""';
     
     // Remove ANSI color codes
-    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
+    // eslint-disable-next-line no-control-regex
+    const cleanOutput = output.replace(/\u001B\[[0-9;]*m/g, '');
     
     // Truncate if too long
     if (cleanOutput.length > maxLength) {

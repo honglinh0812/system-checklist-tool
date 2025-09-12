@@ -101,6 +101,22 @@ const AssessmentLogs: React.FC = () => {
     return new Date(dateString).toLocaleString();
   };
 
+  // Parse assessment results from log content
+  const parseAssessmentResults = (content: string) => {
+    try {
+      // Try to find JSON data in the log content
+      const jsonMatch = content.match(/\{[\s\S]*"test_results"[\s\S]*\}/g);
+      if (jsonMatch) {
+        const lastMatch = jsonMatch[jsonMatch.length - 1];
+        return JSON.parse(lastMatch);
+      }
+      return null;
+    } catch (error) {
+      console.error('Error parsing assessment results:', error);
+      return null;
+    }
+  };
+
   if (loading) {
     return (
       <div className="container-fluid">
@@ -248,6 +264,25 @@ const AssessmentLogs: React.FC = () => {
                   <strong>Modified:</strong> {formatDate(logContent.modified_at)}
                 </small>
               </div>
+              
+              {/* Assessment Summary if parseable */}
+              {(() => {
+                const assessmentResults = parseAssessmentResults(logContent.content);
+                return assessmentResults ? (
+                  <div className="mb-4">
+                    <h6 className="mb-3">
+                      <i className="fas fa-chart-line me-2"></i>
+                      Assessment Summary
+                    </h6>
+                    
+                  </div>
+                ) : null;
+              })()}
+              
+              <h6 className="mb-3">
+                <i className="fas fa-file-alt me-2"></i>
+                Raw Log Content
+              </h6>
               <pre className="bg-light p-3 rounded" style={{ maxHeight: '500px', overflow: 'auto' }}>
                 {logContent.content}
               </pre>

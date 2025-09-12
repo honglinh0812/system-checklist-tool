@@ -155,7 +155,7 @@ export function groupBy<T>(array: T[], key: keyof T): Record<string, T[]> {
 }
 
 // Error helpers
-export function getErrorMessage(error: any): string {
+export function getErrorMessage(error: unknown): string {
   if (error?.response?.data?.message) {
     return error.response.data.message;
   }
@@ -178,7 +178,7 @@ export function safeJsonParse<T>(jsonString: string | null, defaultValue: T): T 
 }
 
 // Debounce helper
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {

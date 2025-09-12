@@ -491,13 +491,23 @@ def start_risk_assessment():
                     # Prepare commands for ansible
                     commands = []
                     for command in mop_obj.commands:
+                        # Preserve original IDs from MOP for smart execution
+                        cmd_id = getattr(command, 'command_id_ref', None)
+                        if cmd_id is None:
+                            cmd_id = getattr(command, 'command_id', None)
+                        if cmd_id is None and hasattr(command, 'id'):
+                            cmd_id = getattr(command, 'id')
+                        order_idx = getattr(command, 'order_index', None)
+
                         command_dict = {
                             'title': command.title or command.description or f'Command {command.order_index}',
                             'command': command.command or command.command_text,
                             'reference_value': command.reference_value or command.expected_output or '',
-                            'extract_method': command.extract_method or 'full_output',
-                            'comparator_method': command.comparator_method or 'exact_match',
-                            'validation_type': 'exact_match'
+                            'extract_method': command.extract_method or 'raw',
+                            'comparator_method': command.comparator_method or 'eq',
+                            'validation_type': 'exact_match',
+                            'command_id_ref': str(cmd_id) if cmd_id is not None else None,
+                            'order_index': int(order_idx) if order_idx is not None else None
                         }
                         
                         # Add skip condition fields
@@ -563,6 +573,28 @@ def start_risk_assessment():
                         for server_ip, server_result in results['servers'].items():
                             if 'commands' in server_result:
                                 for cmd_idx, cmd_result in enumerate(server_result['commands']):
+                                    # Determine proper validation_result and decision
+                                    is_skipped = cmd_result.get('skipped', False)
+                                    validation_result = cmd_result.get('validation_result', '')
+                                    decision = cmd_result.get('decision', '')
+                                    is_valid = cmd_result.get('is_valid', False)
+                                    
+                                    # Set proper values based on command status
+                                    if is_skipped:
+                                        validation_result = 'OK (skipped)'
+                                        decision = 'OK (skipped)'
+                                        is_valid = True
+                                    elif not validation_result or validation_result == 'N/A':
+                                        # Fallback to success/failed status if validation_result is missing
+                                        if cmd_result.get('success', False):
+                                            validation_result = 'OK'
+                                            decision = 'APPROVED'
+                                            is_valid = True
+                                        else:
+                                            validation_result = 'Not OK'
+                                            decision = 'REJECTED'
+                                            is_valid = False
+                                    
                                     test_results.append({
                                         'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
                                         'command_index': cmd_idx,
@@ -570,7 +602,18 @@ def start_risk_assessment():
                                         'command_text': cmd_result['command'],
                                         'result': 'success' if cmd_result['success'] else 'failed',
                                         'output': cmd_result['output'],
-                                        'reference_value': cmd_result['expected']
+                                        'reference_value': cmd_result.get('expected', ''),
+                                        'validation_result': validation_result,
+                                        'decision': decision,
+                                        'is_valid': is_valid,
+                                        'skipped': is_skipped,
+                                        'skip_reason': cmd_result.get('skip_reason', ''),
+                                        'title': cmd_result.get('title', ''),
+                                        'extract_method': cmd_result.get('extract_method', ''),
+                                        'comparator_method': cmd_result.get('comparator_method', ''),
+                                        'command_id_ref': cmd_result.get('command_id_ref', ''),
+                                        'skip_condition': cmd_result.get('skip_condition_result', ''),
+                                        'recommendations': cmd_result.get('recommendations', [])
                                     })
                         
                         # Update assessment with results
@@ -798,13 +841,23 @@ def start_handover_assessment():
                     
                     commands = []
                     for command in mop_obj.commands:
+                        # Preserve original IDs from MOP for smart execution
+                        cmd_id = getattr(command, 'command_id_ref', None)
+                        if cmd_id is None:
+                            cmd_id = getattr(command, 'command_id', None)
+                        if cmd_id is None and hasattr(command, 'id'):
+                            cmd_id = getattr(command, 'id')
+                        order_idx = getattr(command, 'order_index', None)
+
                         command_dict = {
                             'title': command.title or command.description or f'Command {command.order_index}',
                             'command': command.command or command.command_text,
                             'reference_value': command.reference_value or command.expected_output or '',
-                            'extract_method': command.extract_method or 'full_output',
-                            'comparator_method': command.comparator_method or 'exact_match',
-                            'validation_type': 'exact_match'
+                            'extract_method': command.extract_method or 'raw',
+                            'comparator_method': command.comparator_method or 'eq',
+                            'validation_type': 'exact_match',
+                            'command_id_ref': str(cmd_id) if cmd_id is not None else None,
+                            'order_index': int(order_idx) if order_idx is not None else None
                         }
                         
                         # Add skip condition fields
@@ -877,7 +930,18 @@ def start_handover_assessment():
                                         'command_text': cmd_result['command'],
                                         'result': 'success' if cmd_result['success'] else 'failed',
                                         'output': cmd_result['output'],
-                                        'reference_value': cmd_result['expected']
+                                        'reference_value': cmd_result.get('expected', ''),
+                                        'validation_result': cmd_result.get('validation_result', 'N/A'),
+                                        'decision': cmd_result.get('decision', 'N/A'),
+                                        'is_valid': cmd_result.get('is_valid', False),
+                                        'skipped': cmd_result.get('skipped', False),
+                                        'skip_reason': cmd_result.get('skip_reason', ''),
+                                        'title': cmd_result.get('title', ''),
+                                        'extract_method': cmd_result.get('extract_method', ''),
+                                        'comparator_method': cmd_result.get('comparator_method', ''),
+                                        'command_id_ref': cmd_result.get('command_id_ref', ''),
+                                        'skip_condition': cmd_result.get('skip_condition_result', ''),
+                                        'recommendations': cmd_result.get('recommendations', [])
                                     })
                         
                         # Update assessment with results
@@ -994,6 +1058,25 @@ def get_handover_job_status(job_id):
             log_lines = job_logs['log_content'].split('\n')
             response_data['logs'] = [line for line in log_lines if line.strip()][-20:]  # Last 20 lines
             response_data['last_updated'] = job_logs.get('last_updated')
+            
+            # Extract assessment summary if job is completed
+            if job_status and job_status.get('status') == 'completed':
+                try:
+                    # Look for assessment summary in logs
+                    summary_start = -1
+                    for i, line in enumerate(log_lines):
+                        if 'ASSESSMENT SUMMARY' in line:
+                            summary_start = i
+                            break
+                    
+                    if summary_start >= 0:
+                        summary_lines = []
+                        for i in range(summary_start, len(log_lines)):
+                            if log_lines[i].strip():
+                                summary_lines.append(log_lines[i])
+                        response_data['assessment_summary'] = '\n'.join(summary_lines)
+                except Exception as e:
+                    logger.warning(f"Failed to extract assessment summary: {str(e)}")
         
         return api_response(response_data)
         
@@ -1035,6 +1118,25 @@ def get_risk_job_status(job_id):
             log_lines = job_logs['log_content'].split('\n')
             response_data['logs'] = [line for line in log_lines if line.strip()][-20:]  # Last 20 lines
             response_data['last_updated'] = job_logs.get('last_updated')
+            
+            # Extract assessment summary if job is completed
+            if job_status and job_status.get('status') == 'completed':
+                try:
+                    # Look for assessment summary in logs
+                    summary_start = -1
+                    for i, line in enumerate(log_lines):
+                        if 'ASSESSMENT SUMMARY' in line:
+                            summary_start = i
+                            break
+                    
+                    if summary_start >= 0:
+                        summary_lines = []
+                        for i in range(summary_start, len(log_lines)):
+                            if log_lines[i].strip():
+                                summary_lines.append(log_lines[i])
+                        response_data['assessment_summary'] = '\n'.join(summary_lines)
+                except Exception as e:
+                    logger.warning(f"Failed to extract assessment summary: {str(e)}")
         
         return api_response(response_data)
         
@@ -1183,7 +1285,14 @@ def download_handover_assessment_report(assessment_id):
                             }
                 else:
                     # Handle normal commands
-                    is_valid = result.get('result') == 'success'
+                    validation_result = result.get('validation_result', '')
+                    if not validation_result:
+                        # Fallback to result field if validation_result is missing
+                        validation_result = 'OK' if result.get('result') == 'success' else 'Not OK'
+                    
+                    is_valid = validation_result == 'OK'
+                    decision = validation_result  # Use validation_result as decision
+                    
                     result_data = {
                         'server_ip': result.get('server_ip', ''),
                         'command_title': f"Command {result.get('command_index', 0) + 1}",
@@ -1195,7 +1304,7 @@ def download_handover_assessment_report(assessment_id):
                         'score': 100.0 if is_valid else 0.0,
                         'details': 'Command executed successfully' if is_valid else 'Command execution failed',
                         'skipped': False,
-                        'decision': 'APPROVED' if is_valid else 'REJECTED'
+                        'decision': decision
                     }
                 
                 export_data['results'].append(result_data)

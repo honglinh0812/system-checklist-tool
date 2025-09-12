@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import { apiService } from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
-import { ErrorMessage, ProgressSteps } from '../../components/common';
-import { useAssessmentState, getAssessmentSteps, isStepCompleted, isStepAccessible } from '../../hooks/useAssessmentState';
+import { ErrorMessage } from '../../components/common';
+import { useAssessmentState } from '../../hooks/useAssessmentState';
 import { useTranslation } from '../../i18n/useTranslation';
 import { periodicAssessmentService } from '../../services/periodicAssessmentService';
 import type { PeriodicAssessment, PeriodicAssessmentExecution } from '../../services/periodicAssessmentService';
+import AssessmentResultsTable from '../../components/assessment/AssessmentResultsTable';
+import { serverService, Server } from '../../services/serverService';
 
 interface MOP {
   id: number;
@@ -39,7 +41,7 @@ const RiskAssessment: React.FC = () => {
   const { state: assessmentState, updateState } = useAssessmentState('risk');
   
   // Extract state values for easier access
-  const { selectedMOP, servers, selectedServers, currentStep, assessmentType, assessmentResults, assessmentProgress } = assessmentState;
+  const { selectedMOP, servers, selectedServers, assessmentType, assessmentResults, assessmentProgress } = assessmentState;
 
   const { t } = useTranslation();
   
@@ -66,23 +68,35 @@ const RiskAssessment: React.FC = () => {
     sudoPassword: ''
   });
   
-  // Progress steps
-  const steps = getAssessmentSteps('risk').map(step => ({
-    ...step,
-    completed: isStepCompleted(step.id, assessmentState),
-    active: step.id === currentStep
-  }));
-  
   // Non-persisted states - loading, temporary actions, và volatile data
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [serverFile, setServerFile] = useState<File | null>(null);
   const [connectionResults, setConnectionResults] = useState<({success: boolean, message: string, serverIndex: number} | null)[]>([]);
-  const [canStartAssessment, setCanStartAssessment] = useState(false);
+  
+  // Assessment readiness check
+  const assessmentReadiness = {
+    mopSelected: !!selectedMOP,
+    serversConfigured: servers.length > 0 && selectedServers.some(selected => selected),
+    connectionTested: connectionResults.some(result => result?.success === true)
+  };
+  
+  // Calculate if assessment can start based on readiness
+  const canStartAssessment = assessmentReadiness.mopSelected && 
+                            assessmentReadiness.serversConfigured && 
+                            assessmentReadiness.connectionTested;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteServerIndex, setDeleteServerIndex] = useState<number>(-1);
   const [assessmentLoading, setAssessmentLoading] = useState(false);
   const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
+  const [savedServersLoading, setSavedServersLoading] = useState(false);
+  
+  // Saved servers states
+  const [savedServers, setSavedServers] = useState<Server[]>([]);
+  const [showSavedServersModal, setShowSavedServersModal] = useState(false);
+  const [selectedSavedServers, setSelectedSavedServers] = useState<boolean[]>([]);
+  const [showDeleteSavedServerConfirm, setShowDeleteSavedServerConfirm] = useState(false);
+  const [deleteSavedServerId, setDeleteSavedServerId] = useState<number | null>(null);
   
   // Periodic assessment states
   const [periodicAssessments, setPeriodicAssessments] = useState<PeriodicAssessment[]>([]);
@@ -90,15 +104,9 @@ const RiskAssessment: React.FC = () => {
   const [periodicFrequency, setPeriodicFrequency] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
   const [periodicTime, setPeriodicTime] = useState<string>('09:00');
   const [periodicLoading, setPeriodicLoading] = useState(false);
+  const [periodicSelectedServers, setPeriodicSelectedServers] = useState<boolean[]>([]);
 
   // Add useEffect to monitor selectedServers and connectionResults changes
-  useEffect(() => {
-    // Check if all selected servers have successful connections
-    const selectedResults = connectionResults.filter((_, index) => selectedServers[index] && connectionResults[index]);
-    const allSuccess = selectedResults.length > 0 && selectedResults.every((result) => result && result.success === true);
-    console.log('Can start assessment updated:', allSuccess, 'Selected results:', selectedResults);
-    setCanStartAssessment(allSuccess);
-  }, [selectedServers, connectionResults]);
 
   const showAlert = (type: 'success' | 'error', message: string) => {
     setAlert({ type, message });
@@ -139,6 +147,11 @@ const RiskAssessment: React.FC = () => {
       loadPeriodicAssessmentData();
     }
   }, [activeTab]);
+
+  // Initialize periodicSelectedServers when servers change
+  useEffect(() => {
+    setPeriodicSelectedServers(new Array(servers.length).fill(true));
+  }, [servers]);
 
   const loadPeriodicAssessmentData = async () => {
     try {
@@ -182,6 +195,13 @@ const RiskAssessment: React.FC = () => {
       return;
     }
 
+    // Check if at least one server is selected for periodic assessment
+    const hasSelectedServers = periodicSelectedServers.some(selected => selected);
+    if (!hasSelectedServers) {
+      showAlert('error', 'Vui lòng chọn ít nhất một server cho đánh giá định kỳ');
+      return;
+    }
+
     try {
       setPeriodicLoading(true);
       
@@ -190,9 +210,9 @@ const RiskAssessment: React.FC = () => {
         assessment_type: 'risk' as const,
         frequency: periodicFrequency,
         execution_time: periodicTime,
-        servers: servers.map((server, index) => ({
+        servers: servers.filter((_, index) => periodicSelectedServers[index]).map(server => ({
           ...server,
-          selected: selectedServers[index] || false
+          selected: true
         }))
       };
 
@@ -226,11 +246,6 @@ const RiskAssessment: React.FC = () => {
     setAssessmentLoading(false);
   };
   
-  const handleStepClick = (stepId: string) => {
-    if (isStepAccessible(stepId, assessmentState)) {
-      updateState({ currentStep: stepId });
-    }
-  };
 
   const handleTestConnection = async () => {
     const selectedServerList = servers.filter((_, index) => selectedServers[index]);
@@ -247,7 +262,7 @@ const RiskAssessment: React.FC = () => {
       admin_password: server.sshPassword,
       root_username: server.sudoUser,
       root_password: server.sudoPassword,
-      sshPort: server.sshPort || '22'
+      ssh_port: parseInt(server.sshPort) || 22
     }));
 
     try {
@@ -280,12 +295,7 @@ const RiskAssessment: React.FC = () => {
       
       setConnectionResults(newConnectionResults);
       
-      // Check if all selected servers have successful connections
-      const selectedResults = newConnectionResults.filter((_, index) => selectedServers[index] && newConnectionResults[index]);
-      const allSuccess = selectedResults.length > 0 && selectedResults.every((result) => result && result.success === true);
-      console.log('Can start assessment:', allSuccess);
-      
-      setCanStartAssessment(allSuccess);
+      // Connection results updated - readiness will be calculated automatically
     } catch (error) {
       console.error('Error testing connection:', error);
       showAlert('error', 'Có lỗi xảy ra khi test connection.');
@@ -354,6 +364,21 @@ const RiskAssessment: React.FC = () => {
       if (response.data && response.data.assessment_id && response.data.job_id) {
         showAlert('success', 'Assessment đã được bắt đầu thành công!');
         
+        // Initialize assessment progress with start time
+        updateState({
+          assessmentProgress: {
+            currentCommand: 'Đang khởi tạo...',
+            currentServer: 'Đang chuẩn bị...',
+            completedCommands: 0,
+            totalCommands: selectedMOPData.commands?.length || 0,
+            completedServers: 0,
+            totalServers: mappedServerList.length,
+            logs: [],
+            startTime: new Date(),
+            estimatedTimeRemaining: 'Đang tính toán...'
+          }
+        });
+        
         // Polling for job status and progress using job_id
         const pollJobStatus = async () => {
           try {
@@ -367,21 +392,29 @@ const RiskAssessment: React.FC = () => {
               if (status === 'running' || status === 'pending') {
                 const detailedProgress = statusResponse.data.detailed_progress || {};
                 
-                // Calculate estimated time remaining
+                // Calculate estimated time remaining with improved accuracy
                 const calculateEstimatedTime = (currentProgress: any, startTime: Date) => {
                   const totalTasks = (currentProgress.total_commands || 0) * (currentProgress.total_servers || 1);
-                  // Fix calculation: completed tasks = (current_command - 1) * total_servers + (current_server - 1)
-                  const completedTasks = ((currentProgress.current_command || 1) - 1) * (currentProgress.total_servers || 1) + ((currentProgress.current_server || 1) - 1);
+                  
+                  // Use backend's percentage if available, otherwise calculate from current position
+                  let completedTasks;
+                  if (currentProgress.percentage && currentProgress.percentage > 0) {
+                    // Use backend's percentage calculation which is more accurate
+                    completedTasks = Math.floor((currentProgress.percentage / 100) * totalTasks);
+                  } else {
+                    // Fallback to position-based calculation
+                    completedTasks = ((currentProgress.current_command || 1) - 1) * (currentProgress.total_servers || 1) + ((currentProgress.current_server || 1) - 1);
+                  }
                   
                   if (completedTasks === 0) return 'Đang tính toán...';
                   
                   const elapsedTime = Date.now() - startTime.getTime();
-                  const timePerTask = elapsedTime / completedTasks;
-                  const remainingTasks = totalTasks - completedTasks;
+                  const timePerTask = elapsedTime / Math.max(1, completedTasks);
+                  const remainingTasks = Math.max(0, totalTasks - completedTasks);
                   const estimatedRemainingMs = remainingTasks * timePerTask;
                   
                   // Ensure non-negative values
-                  if (estimatedRemainingMs <= 0) return 'Sắp hoàn thành';
+                  if (estimatedRemainingMs <= 0 || remainingTasks === 0) return 'Sắp hoàn thành';
                   
                   const remainingMinutes = Math.ceil(estimatedRemainingMs / (1000 * 60));
                   if (remainingMinutes < 1) {
@@ -395,11 +428,12 @@ const RiskAssessment: React.FC = () => {
                   }
                 };
                 
-                const startTime = assessmentProgress?.startTime || new Date();
+                const startTime = assessmentProgress?.startTime ? new Date(assessmentProgress.startTime) : new Date();
                 const estimatedTimeRemaining = calculateEstimatedTime(detailedProgress, startTime);
                 
                 updateState({ 
                   assessmentProgress: {
+                    ...assessmentProgress,
                     currentCommand: `Đang thực hiện command ${detailedProgress.current_command || 1}/${detailedProgress.total_commands || selectedMOPData.commands?.length || 0}`,
                     currentServer: `Đang xử lý server ${detailedProgress.current_server || 1}/${detailedProgress.total_servers || mappedServerList.length}`,
                     completedCommands: detailedProgress.current_command || 0,
@@ -407,7 +441,7 @@ const RiskAssessment: React.FC = () => {
                     completedServers: detailedProgress.current_server || 0,
                     totalServers: detailedProgress.total_servers || mappedServerList.length,
                     logs: logs ? logs.slice(-20) : [],
-                    startTime,
+                    startTime: assessmentProgress?.startTime || new Date(),
                     estimatedTimeRemaining
                   }
                 });
@@ -460,7 +494,7 @@ const RiskAssessment: React.FC = () => {
               // No status data, continue polling
               setTimeout(pollJobStatus, 1000);
             }
-          } catch (error) {
+          } catch (error: unknown) {
             console.error('Error fetching job status:', error);
             // Continue polling even on error, might be temporary
             setTimeout(pollJobStatus, 2000);
@@ -470,7 +504,7 @@ const RiskAssessment: React.FC = () => {
         // Start polling after 2 seconds
         setTimeout(pollJobStatus, 2000);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error starting assessment:', error);
       showAlert('error', 'Có lỗi xảy ra khi bắt đầu assessment.');
       setAssessmentLoading(false);
@@ -489,7 +523,7 @@ const RiskAssessment: React.FC = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error downloading template:', error);
       showAlert('error', 'Có lỗi xảy ra khi tải template.');
     }
@@ -557,7 +591,7 @@ const RiskAssessment: React.FC = () => {
             name: server.name || server.server_name || server.ip,
             ip: server.ip || server.server_ip,
             serverIP: server.ip || server.server_ip,
-            sshPort: server.ssh_port || '22',
+            sshPort: server.ssh_port?.toString() || '22',
             // Map từ backend fields sang frontend fields
             sshUser: server.admin_username,
             sshPassword: server.admin_password,
@@ -580,7 +614,7 @@ const RiskAssessment: React.FC = () => {
       } else {
         showAlert('error', response.message || 'Có lỗi xảy ra khi xử lý file.');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error uploading file:', error);
       showAlert('error', 'Có lỗi xảy ra khi upload file.');
     }
@@ -617,27 +651,19 @@ const RiskAssessment: React.FC = () => {
     if (!assessmentResults?.id) {
       setNotification({
         type: 'error',
-        message: 'Không có kết quả assessment để tải về'
+        message: 'Không có kết quả báo cáo để tải về'
       });
       return;
     }
 
     try {
-      const response = await fetch(API_ENDPOINTS.ASSESSMENTS.RISK_DOWNLOAD(assessmentResults.id), {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}` // Add auth if needed
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to download report');
-      }
+      // Use apiService to ensure proper authentication
+      const response = await apiService.downloadBlob(API_ENDPOINTS.ASSESSMENTS.RISK_DOWNLOAD(assessmentResults.id));
 
       // Get filename from response headers or create default
-      const contentDisposition = response.headers.get('content-disposition');
+      const contentDisposition = response.headers['content-disposition'];
       let filename = `risk_assessment_${assessmentResults.id}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-      if (contentDisposition) {
+      if (contentDisposition && typeof contentDisposition === 'string') {
         const filenameMatch = contentDisposition.match(/filename="(.+)"/); 
         if (filenameMatch) {
           filename = filenameMatch[1];
@@ -645,8 +671,7 @@ const RiskAssessment: React.FC = () => {
       }
 
       // Create blob and download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.style.display = 'none';
       a.href = url;
@@ -660,7 +685,7 @@ const RiskAssessment: React.FC = () => {
         type: 'success',
         message: 'Báo cáo đã được tải về thành công'
       });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error downloading report:', error);
       setNotification({
         type: 'error',
@@ -669,12 +694,156 @@ const RiskAssessment: React.FC = () => {
     }
   };
 
+  // Saved servers functions
+  const handleSaveCurrentServers = async () => {
+    // Check if any servers are selected
+    const selectedServerIndices = selectedServers.map((selected, index) => selected ? index : -1).filter(index => index !== -1);
+    
+    if (selectedServerIndices.length === 0) {
+      showAlert('error', 'Vui lòng chọn ít nhất một server để lưu');
+      return;
+    }
+
+    const selectedServerList = selectedServerIndices.map(index => servers[index]);
+
+    try {
+      const serverData = selectedServerList.map(server => ({
+        name: server.name || server.ip || server.serverIP,
+        ip: server.ip || server.serverIP,
+        ssh_port: parseInt(server.sshPort) || 22,
+        admin_username: server.sshUser,
+        admin_password: server.sshPassword,
+        root_username: server.sudoUser,
+        root_password: server.sudoPassword,
+        description: `Risk Assessment - ${new Date().toLocaleDateString('vi-VN')}`
+      }));
+
+      // Use bulk save servers to handle duplicates properly
+      const result = await serverService.bulkSaveServers(serverData);
+      
+      if (result.success) {
+        showAlert('success', `Đã lưu thành công ${result.saved_count} server(s)`);
+        if (result.error_count && result.error_count > 0) {
+          console.warn('Some servers had errors:', result.errors);
+          showAlert('error', `${result.error_count} server(s) không thể lưu (có thể đã tồn tại)`);
+        }
+      } else {
+        showAlert('error', result.message || 'Có lỗi xảy ra khi lưu server');
+      }
+    } catch (error: any) {
+      console.error('Error saving servers:', error);
+      
+      // Handle specific error cases
+      if (error?.response?.status === 409) {
+        showAlert('error', 'Một số server đã tồn tại trong hệ thống');
+      } else if (error?.response?.data?.message) {
+        showAlert('error', error.response.data.message);
+      } else {
+        showAlert('error', 'Có lỗi xảy ra khi lưu server');
+      }
+    }
+  };
+
+  const handleLoadSavedServers = async () => {
+    const selectedIndexes = selectedSavedServers
+      .map((selected, index) => selected ? index : -1)
+      .filter(index => index !== -1);
+
+    if (selectedIndexes.length === 0) {
+      setNotification({
+        type: 'error',
+        message: 'Vui lòng chọn ít nhất một server'
+      });
+      return;
+    }
+
+    const selectedServersData = selectedIndexes.map(index => savedServers[index]);
+    const newServers = selectedServersData.map(server => ({
+      name: server.name,
+      ip: server.ip,
+      serverIP: server.ip,
+      sshPort: server.ssh_port?.toString() || '22',
+      sshUser: server.admin_username || '',
+      sshPassword: server.admin_password || '',
+      sudoUser: server.root_username || '',
+      sudoPassword: server.root_password || ''
+    }));
+
+    updateState({ 
+      servers: [...servers, ...newServers],
+      selectedServers: [...selectedServers, ...new Array(newServers.length).fill(false)]
+    });
+    setConnectionResults([...connectionResults, ...new Array(newServers.length).fill(null)]);
+    
+    setShowSavedServersModal(false);
+    setSelectedSavedServers([]);
+    setNotification({
+      type: 'success',
+      message: `Đã tải thành công ${newServers.length} server`
+    });
+  };
+
+  const handleDeleteSavedServer = async (serverId: number) => {
+    setDeleteSavedServerId(serverId);
+    setShowDeleteSavedServerConfirm(true);
+  };
+
+  const confirmDeleteSavedServer = async () => {
+    if (deleteSavedServerId === null) return;
+
+    try {
+      await serverService.deleteServer(deleteSavedServerId);
+      await fetchSavedServers();
+      setNotification({
+        type: 'success',
+        message: 'Đã xóa server thành công'
+      });
+    } catch (error) {
+      console.error('Error deleting server:', error);
+      setNotification({
+        type: 'error',
+        message: 'Có lỗi xảy ra khi xóa server'
+      });
+    } finally {
+      setShowDeleteSavedServerConfirm(false);
+      setDeleteSavedServerId(null);
+    }
+  };
+
+  const handleOpenSavedServersModal = () => {
+    setShowSavedServersModal(true);
+  };
+
+  const fetchSavedServers = async () => {
+    try {
+      setSavedServersLoading(true);
+      const response = await serverService.getSavedServers();
+      setSavedServers(response.servers || []);
+      setSelectedSavedServers(new Array(response.servers?.length || 0).fill(false));
+    } catch (error) {
+      console.error('Error fetching saved servers:', error);
+      setNotification({
+        type: 'error',
+        message: 'Có lỗi xảy ra khi tải danh sách server đã lưu'
+      });
+    } finally {
+      setSavedServersLoading(false);
+    }
+  };
+
+  // Load saved servers when modal opens
+  useEffect(() => {
+    if (showSavedServersModal) {
+      fetchSavedServers();
+    }
+  }, [showSavedServersModal]);
+
   return (
     <div>
       {/* Content Header */}
       <section className="content-header">
         <div className="container-fluid">
-          <div className="row mb-2">
+          <div className="row mb-2"> 
             <div className="col-sm-6">
               <h1>Risk Assessment</h1>
             </div>
@@ -725,15 +894,6 @@ const RiskAssessment: React.FC = () => {
                         <i className="fas fa-clock mr-1"></i> Đánh giá định kỳ
                       </button>
                     </li>
-                    <li className="nav-item">
-                      <button 
-                        className={`nav-link ${activeTab === 'reports' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('reports')}
-                        type="button"
-                      >
-                        <i className="fas fa-chart-bar mr-1"></i> Báo cáo
-                      </button>
-                    </li>
                   </ul>
                 </div>
                 <div className="card-body">
@@ -750,10 +910,10 @@ const RiskAssessment: React.FC = () => {
                           </div>
                         ) : (
                           <>
-                            {/* Progress Steps - Always visible */}
+                            {/* Assessment Readiness Checklist */}
                             <div className="mb-4">
-                              <div className="d-flex justify-content-between align-items-center">
-                                <h6>Tiến trình đánh giá</h6>
+                              <div className="d-flex justify-content-between align-items-center mb-3">
+                                <h6>Checklist chuẩn bị đánh giá</h6>
                                 {(assessmentResults || selectedMOP || servers.length > 0) && (
                                   <button 
                                     className="btn btn-outline-secondary btn-sm"
@@ -762,14 +922,12 @@ const RiskAssessment: React.FC = () => {
                                         selectedMOP: '',
                                         servers: [],
                                         selectedServers: [],
-                                        currentStep: 'select-mop',
                                         assessmentStarted: false,
                                         assessmentCompleted: false,
                                         hasResults: false
                                       });
                                       updateState({ assessmentResults: null, assessmentProgress: null });
                                       setConnectionResults([]);
-                                      setCanStartAssessment(false);
                                       setAssessmentLoading(false);
                                       setNotification(null);
                                     }}
@@ -780,10 +938,58 @@ const RiskAssessment: React.FC = () => {
                                   </button>
                                 )}
                               </div>
-                              <ProgressSteps 
-                                steps={steps}
-                                onStepClick={handleStepClick}
-                              />
+                              
+                              <div className="card" style={{backgroundColor: '#f8f9fa', border: '1px solid #dee2e6'}}>
+                                <div className="card-body py-2">
+                                  <div className="row">
+                                    <div className="col-md-4">
+                                      <div className="form-check">
+                                        <input 
+                                          className="form-check-input" 
+                                          type="checkbox" 
+                                          checked={assessmentReadiness.mopSelected}
+                                          disabled
+                                          id="checkMOP"
+                                        />
+                                        <label className="form-check-label" htmlFor="checkMOP">
+                                          <i className={`fas ${assessmentReadiness.mopSelected ? 'fa-check-circle text-success' : 'fa-circle text-muted'} mr-1`}></i>
+                                          Chọn MOP
+                                        </label>
+                                      </div>
+                                    </div>
+                                    <div className="col-md-4">
+                                      <div className="form-check">
+                                        <input 
+                                          className="form-check-input" 
+                                          type="checkbox" 
+                                          checked={assessmentReadiness.serversConfigured}
+                                          disabled
+                                          id="checkServers"
+                                        />
+                                        <label className="form-check-label" htmlFor="checkServers">
+                                          <i className={`fas ${assessmentReadiness.serversConfigured ? 'fa-check-circle text-success' : 'fa-circle text-muted'} mr-1`}></i>
+                                          Cấu hình Server
+                                        </label>
+                                      </div>
+                                    </div>
+                                    <div className="col-md-4">
+                                      <div className="form-check">
+                                        <input 
+                                          className="form-check-input" 
+                                          type="checkbox" 
+                                          checked={assessmentReadiness.connectionTested}
+                                          disabled
+                                          id="checkConnection"
+                                        />
+                                        <label className="form-check-label" htmlFor="checkConnection">
+                                          <i className={`fas ${assessmentReadiness.connectionTested ? 'fa-check-circle text-success' : 'fa-circle text-muted'} mr-1`}></i>
+                                          Kiểm tra kết nối
+                                        </label>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                             
                             {/* MOP Selection */}
@@ -824,7 +1030,7 @@ const RiskAssessment: React.FC = () => {
                             <div className="mt-4">
                               <h6>Chọn Server</h6>
                               <div className="row">
-                                <div className="col-md-6">
+                                <div className="col-md-4">
                                   <button 
                                     className="btn btn-outline-primary btn-block"
                                     onClick={() => setShowFileUploadModal(true)}
@@ -833,13 +1039,22 @@ const RiskAssessment: React.FC = () => {
                                     Upload File Server
                                   </button>
                                 </div>
-                                <div className="col-md-6">
+                                <div className="col-md-4">
                                   <button 
                                     className="btn btn-outline-secondary btn-block"
                                     onClick={() => setShowManualInputModal(true)}
                                   >
                                     <i className="fas fa-keyboard mr-2"></i>
-                                    Nhập Thủ Công
+                                    Nhập thông tin server
+                                  </button>
+                                </div>
+                                <div className="col-md-4">
+                                  <button 
+                                    className="btn btn-outline-success btn-block"
+                                    onClick={handleOpenSavedServersModal}
+                                  >
+                                    <i className="fas fa-list mr-2"></i>
+                                    Chọn từ danh sách đã lưu
                                   </button>
                                 </div>
                               </div>
@@ -935,9 +1150,9 @@ const RiskAssessment: React.FC = () => {
                                                   console.log(`Checking connectionResults[${index}]:`, connectionResults[index]);
                                                   return connectionResults[index] ? (
                                                     <span className={`badge ${
-                                                      connectionResults[index].success ? 'badge-success' : 'badge-danger'
+                                                      connectionResults[index]?.success ? 'badge-success' : 'badge-danger'
                                                     }`}>
-                                                      {connectionResults[index].success ? 'Connection Success' : 'Connection Failed'}
+                                                      {connectionResults[index]?.success ? 'Connection Success' : 'Connection Failed'}
                                                     </span>
                                                   ) : (
                                                     <span className="text-muted">Chưa kiểm tra</span>
@@ -958,8 +1173,17 @@ const RiskAssessment: React.FC = () => {
                                         </tbody>
                                       </table>
                                     </div>
-                                    
                                     <div className="mt-3">
+                                      
+                                      <button 
+                                        className="btn btn-outline-warning"
+                                        onClick={handleSaveCurrentServers}
+                                        disabled={servers.length === 0}
+                                      >
+                                        <i className="fas fa-save mr-2"></i>
+                                        Lưu servers
+                                      </button>
+
                                        <button 
                                          className="btn btn-warning mr-2"
                                          onClick={handleTestConnection}
@@ -985,7 +1209,7 @@ const RiskAssessment: React.FC = () => {
                                            <div className="card-header">
                                              <h6 className="mb-0">
                                                <i className="fas fa-spinner fa-spin mr-2"></i>
-                                               Đang thực hiện Risk Assessment
+                                               Đang thực hiện báo cáo rủi ro, vui lòng đợi...
                                              </h6>
                                            </div>
                                            <div className="card-body">
@@ -1047,20 +1271,6 @@ const RiskAssessment: React.FC = () => {
                                                      </div>
                                                    </div>
                                                  )}
-                                                 
-                                                 {/* Real-time Logs */}
-                                                 {assessmentProgress.logs && assessmentProgress.logs.length > 0 && (
-                                                   <div className="mt-3">
-                                                     <h6><strong>Logs thời gian thực:</strong></h6>
-                                                     <div className="card">
-                                                       <div className="card-body p-2" style={{backgroundColor: '#f8f9fa', maxHeight: '200px', overflowY: 'auto'}}>
-                                                         <pre style={{fontSize: '11px', margin: 0, whiteSpace: 'pre-wrap'}}>
-                                                           {assessmentProgress.logs.slice(-20).join('\n')}
-                                                         </pre>
-                                                       </div>
-                                                     </div>
-                                                   </div>
-                                                 )}
                                                </div>
                                              ) : (
                                                <div className="text-center">
@@ -1084,18 +1294,31 @@ const RiskAssessment: React.FC = () => {
                                                <i className="fas fa-chart-line mr-2"></i>
                                                Assessment Results
                                              </h5>
-                                             <button 
-                                               className="btn btn-secondary btn-sm"
-                                               onClick={() => updateState({ assessmentResults: null })}
-                                             >
-                                               <i className="fas fa-times mr-2"></i>
-                                               Clear Results
-                                             </button>
-                                           </div>
+                                             <div className="ml-auto">
+                                              <button 
+                                                className="btn btn-primary"
+                                                onClick={handleDownloadReport}
+                                                disabled={!assessmentResults?.id}
+                                              >
+                                                <i className="fas fa-download mr-2"></i>
+                                                Tải báo cáo Excel
+                                              </button>
+                                            </div>
+                                             <div className="ml-auto">
+                                               <button 
+                                                 className="btn btn-secondary btn-sm"
+                                                 onClick={() => updateState({ assessmentResults: null })}
+                                               >
+                                                 <i className="fas fa-times mr-2"></i>
+                                                 Clear Results
+                                               </button>
+                                             </div>
+                                           </div>                                 
+                                           
                                            <div className="card-body">
-                                             <div className="mb-3">
-                                               <h6><strong>MOP đã chạy:</strong> {assessmentResults.mop_name}</h6>
-                                               <p><strong>Trạng thái:</strong> 
+                                             {/* Assessment Summary */}
+                                             <h6><strong>MOP đã chạy:</strong> {assessmentResults.mop_name}</h6>
+                                              <p><strong>Trạng thái:</strong> 
                                                  <span className={`badge ml-2 ${
                                                    assessmentResults.status === 'success' ? 'badge-success' : 
                                                    assessmentResults.status === 'fail' ? 'badge-danger' : 'badge-warning'
@@ -1103,22 +1326,8 @@ const RiskAssessment: React.FC = () => {
                                                    {assessmentResults.status === 'success' ? 'Thành công' : 
                                                     assessmentResults.status === 'fail' ? 'Thất bại' : 'Đang xử lý'}
                                                  </span>
-                                               </p>
-                                               
-                                               {/* Execution Logs */}
-                                               {assessmentResults.execution_logs && (
-                                                 <div className="mt-3">
-                                                   <h6><strong>Logs thực thi:</strong></h6>
-                                                   <div className="card">
-                                                     <div className="card-body" style={{backgroundColor: '#f8f9fa'}}>
-                                                       <pre style={{fontSize: '12px', maxHeight: '300px', overflow: 'auto', whiteSpace: 'pre-wrap'}}>
-                                                         {assessmentResults.execution_logs}
-                                                       </pre>
-                                                     </div>
-                                                   </div>
-                                                 </div>
-                                               )}
-                                               
+                                             </p>
+                                             <div className="mb-3">          
                                                {/* Error Message */}
                                                {assessmentResults.error_message && (
                                                  <div className="mt-3">
@@ -1130,48 +1339,87 @@ const RiskAssessment: React.FC = () => {
                                                )}
                                              </div>
                                              
-                                             {assessmentResults.test_results && (
-                                               <div className="table-responsive">
-                                                 <table className="table table-bordered table-striped">
-                                                   <thead className="thead-dark">
-                                                     <tr>
-                                                       <th>Server</th>
-                                                       <th>Tên câu lệnh</th>
-                                                       <th>Kết quả thực hiện</th>
-                                                       <th>Giá trị tham chiếu</th>
-                                                     </tr>
-                                                   </thead>
-                                                   <tbody>
-                                                     {assessmentResults.test_results.map((result: any, index: number) => (
-                                                       <tr key={index}>
-                                                         <td>{result.server_ip}</td>
-                                                         <td>{result.command_text}</td>
-                                                         <td>
-                                                           <div className="mt-1">
-                                                             <small className="text-muted">{result.output}</small>
-                                                           </div>
-                                                         </td>
-                                                         <td>
-                                                           <code>{result.reference_value || ' '}</code>
-                                                         </td>
-                                                       </tr>
-                                                     ))}
-                                                   </tbody>
-                                                 </table>
-                                               </div>
-                                             )}
-                                           </div>
-                                           
-                                           {/* Download Report Button */}
-                                           <div className="mt-3">
-                                             <button 
-                                               className="btn btn-primary"
-                                               onClick={handleDownloadReport}
-                                               disabled={!assessmentResults?.id}
-                                             >
-                                               <i className="fas fa-download mr-2"></i>
-                                               Tải báo cáo Excel
-                                             </button>
+                                             {assessmentResults.test_results && (() => {
+                                               // Get selected server IPs
+                                               const selectedServerIPs = servers
+                                                 .filter((_, index) => selectedServers[index])
+                                                 .map(server => server.serverIP || server.ip);
+                                               
+                                               // Filter results to only show selected servers
+                                               const filteredResults = assessmentResults.test_results.filter((result: any) => 
+                                                 selectedServerIPs.includes(result.server_ip)
+                                               );
+                                               
+                                               if (selectedServerIPs.length === 0) {
+                                                 return (
+                                                   <div className="alert alert-warning">
+                                                     <i className="fas fa-exclamation-triangle mr-2"></i>
+                                                     Không có server nào được chọn. Vui lòng chọn server để xem kết quả.
+                                                   </div>
+                                                 );
+                                               }
+                                               
+                                               if (filteredResults.length === 0) {
+                                                 return (
+                                                   <div className="alert alert-info">
+                                                     <i className="fas fa-info-circle mr-2"></i>
+                                                     Không có kết quả nào cho các server được chọn.
+                                                   </div>
+                                                 );
+                                               }
+                                               
+                                               return (
+                                                 <AssessmentResultsTable 
+                                                   results={filteredResults.map((result: any) => {
+                                                     const command = assessmentResults.commands ? assessmentResults.commands[result.command_index] : null;
+                                                     let skipPrefix = '';
+                                                     let expandedSuffix = '';
+                                                     
+                                                     // Add skip condition prefix
+                                                     if (result.skip_condition) {
+                                                       skipPrefix = `[SKIP_IF:${result.skip_condition.condition_id}:${result.skip_condition.condition_type}] `;
+                                                     } else if (result.skipped) {
+                                                       skipPrefix = '[SKIPPED] ';
+                                                     }
+                                                     
+                                                     // Add expanded command suffix if applicable
+                                                     if (result._expanded_from) {
+                                                       expandedSuffix = ` (expanded from ${result._expanded_from})`;
+                                                     }
+                                                     
+                                                     // Use consistent title logic
+                                                     const baseTitle = result.title?.trim() || command?.title || command?.description || result.command_name || 'Unnamed Command';
+                                                     const cmdName = skipPrefix + baseTitle + expandedSuffix;
+                                                     
+                                                     return {
+                                                       server_ip: result.server_ip,
+                                                       command_name: cmdName,
+                                                       command_text: result.command_text || result.command,
+                                                       status: result.skipped || result.status === 'SKIPPED' || result.validation_result === 'OK (skipped)' ? 'SKIPPED' :
+                                                             result.decision === 'APPROVED' ? 'OK' : 
+                                                             result.decision === 'REJECTED' ? 'Not OK' :
+                                                             result.validation_result === 'OK' ? 'OK' :
+                                                             result.validation_result === 'Not OK' ? 'Not OK' :
+                                                             result.status === 'OK' ? 'OK' :
+                                                             result.status === 'Not OK' ? 'Not OK' : 'N/A',
+                                                       output: result.output || result.actual_output,
+                                                       actual_output: result.actual_output,
+                                                       reference_value: result.reference_value || result.expected_output,
+                                                       expected_output: result.expected_output,
+                                                       skip_reason: result.skip_reason,
+                                                       skipped: result.skipped || result.status === 'SKIPPED',
+                                                       validation_result: result.validation_result,
+                                                       decision: result.decision,
+                                                       title: baseTitle,
+                                                       command_id_ref: result.command_id_ref,
+                                                       sub_results: result.sub_results,
+                                                       _expanded_from: result._expanded_from,
+                                                       recommendations: result.recommendations || []
+                                                     };
+                                                   })}
+                                                 />
+                                               );
+                                             })()}
                                            </div>
                                          </div>
                                        </div>
@@ -1186,49 +1434,6 @@ const RiskAssessment: React.FC = () => {
                             </div>
                           </>
                         )}
-                      </div>
-                    )}
-                    
-                    {/* Reports Tab */}
-                    {activeTab === 'reports' && (
-                      <div className="tab-pane fade show active">
-                        <div className="row">
-                          <div className="col-md-6">
-                            <div className="card">
-                              <div className="card-header">
-                                <h3 className="card-title">
-                                  <i className="fas fa-calendar-week mr-2"></i>
-                                  Báo cáo Tuần
-                                </h3>
-                              </div>
-                              <div className="card-body">
-                                <p>Tạo báo cáo risk assessment hàng tuần</p>
-                                <button className="btn btn-info">
-                                  <i className="fas fa-download mr-2"></i>
-                                  Tải báo cáo tuần
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="col-md-6">
-                            <div className="card">
-                              <div className="card-header">
-                                <h3 className="card-title">
-                                  <i className="fas fa-calendar-alt mr-2"></i>
-                                  Báo cáo Tháng
-                                </h3>
-                              </div>
-                              <div className="card-body">
-                                <p>Tạo báo cáo risk assessment hàng tháng</p>
-                                <button className="btn btn-success">
-                                  <i className="fas fa-download mr-2"></i>
-                                  Tải báo cáo tháng
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     )}
                     
@@ -1293,7 +1498,17 @@ const RiskAssessment: React.FC = () => {
                                     {servers.length > 0 ? (
                                       servers.map((server, index) => (
                                         <div key={index} className="form-check">
-                                          <input className="form-check-input" type="checkbox" id={`periodic-server-${index}`} defaultChecked />
+                                          <input 
+                                            className="form-check-input" 
+                                            type="checkbox" 
+                                            id={`periodic-server-${index}`} 
+                                            checked={periodicSelectedServers[index] || false}
+                                            onChange={(e) => {
+                                              const newSelection = [...periodicSelectedServers];
+                                              newSelection[index] = e.target.checked;
+                                              setPeriodicSelectedServers(newSelection);
+                                            }}
+                                          />
                                           <label className="form-check-label" htmlFor={`periodic-server-${index}`}>
                                             {server.name} ({server.ip})
                                           </label>
@@ -1308,7 +1523,7 @@ const RiskAssessment: React.FC = () => {
                                 <div className="mt-3">
                                   <button 
                                     className="btn btn-primary mr-2" 
-                                    disabled={!selectedMOP || servers.length === 0 || periodicLoading}
+                                    disabled={!selectedMOP || servers.length === 0 || !periodicSelectedServers.some(selected => selected) || periodicLoading}
                                     onClick={handleCreatePeriodicAssessment}
                                   >
                                     {periodicLoading ? (
@@ -1698,6 +1913,110 @@ const RiskAssessment: React.FC = () => {
         </div>
       )}
 
+      {/* Saved Servers Modal */}
+      {showSavedServersModal && (
+        <div className="modal fade show" style={{display: 'block'}} tabIndex={-1}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Chọn từ danh sách server đã lưu</h5>
+                <button 
+                  type="button" 
+                  className="close" 
+                  onClick={() => setShowSavedServersModal(false)}
+                >
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                {savedServersLoading ? (
+                  <div className="text-center">
+                    <div className="spinner-border" role="status">
+                      <span className="sr-only">Loading...</span>
+                    </div>
+                  </div>
+                ) : savedServers.length > 0 ? (
+                  <div className="table-responsive">
+                    <table className="table table-striped">
+                      <thead>
+                        <tr>
+                          <th>
+                            <input 
+                              type="checkbox" 
+                              checked={selectedSavedServers.length > 0 && selectedSavedServers.every(selected => selected)}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setSelectedSavedServers(savedServers.map(() => checked));
+                              }}
+                            /> Chọn tất cả
+                          </th>
+                          <th>Tên</th>
+                          <th>IP</th>
+                          <th>SSH Port</th>
+                          <th>SSH User</th>
+                          <th>Mô tả</th>
+                          <th>Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {savedServers.map((server, index) => (
+                          <tr key={server.id}>
+                            <td>
+                              <input 
+                                type="checkbox" 
+                                checked={selectedSavedServers[index] || false}
+                                onChange={(e) => {
+                                  const newSelected = [...selectedSavedServers];
+                                  newSelected[index] = e.target.checked;
+                                  setSelectedSavedServers(newSelected);
+                                }}
+                              />
+                            </td>
+                            <td>{server.name}</td>
+                            <td>{server.ip}</td>
+                            <td>{server.ssh_port}</td>
+                            <td>{server.admin_username}</td>
+                            <td>{server.description}</td>
+                            <td>
+                              <button 
+                                className="btn btn-sm btn-danger"
+                                onClick={() => server.id && handleDeleteSavedServer(server.id)}
+                                title="Xóa server"
+                              >
+                                <i className="fas fa-trash"></i>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-muted">Chưa có server nào được lưu.</p>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowSavedServersModal(false)}
+                >
+                  Đóng
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-primary" 
+                  onClick={handleLoadSavedServers}
+                  disabled={!selectedSavedServers.some(selected => selected)}
+                >
+                  Tải server đã chọn
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete Server Confirmation Dialog */}
       <ConfirmDialog
         isOpen={showDeleteConfirm}
@@ -1705,6 +2024,18 @@ const RiskAssessment: React.FC = () => {
         onConfirm={confirmDeleteServer}
         title="Xác nhận xóa server"
         message="Bạn có chắc chắn muốn xóa server này?"
+        confirmText="Xóa"
+        cancelText="Hủy"
+        confirmVariant="danger"
+      />
+
+      {/* Delete Saved Server Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showDeleteSavedServerConfirm}
+        onClose={() => setShowDeleteSavedServerConfirm(false)}
+        onConfirm={confirmDeleteSavedServer}
+        title="Xác nhận xóa server đã lưu"
+        message="Bạn có chắc chắn muốn xóa server này khỏi danh sách đã lưu?"
         confirmText="Xóa"
         cancelText="Hủy"
         confirmVariant="danger"

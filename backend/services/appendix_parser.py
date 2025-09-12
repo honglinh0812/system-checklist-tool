@@ -298,10 +298,7 @@ class AppendixParser:
                 command = str(row[column_mapping['command']]).strip() if 'command' in column_mapping and pd.notna(row[column_mapping['command']]) else ""
                 reference_value = str(row[column_mapping['reference_value']]).strip() if 'reference_value' in column_mapping and pd.notna(row[column_mapping['reference_value']]) else ""
                 
-                # Parse skip condition from title
-                skip_condition = self._parse_skip_condition(title)
-                if skip_condition:
-                    title = skip_condition['clean_title']  # Use cleaned title without skip syntax
+                # Skip condition parsing moved to new smart execution system
                 
                 # Skip rows with empty command
                 if not command:
@@ -313,6 +310,8 @@ class AppendixParser:
                 sanitized_command = sanitize_result['sanitized']
                 sanitize_warnings = sanitize_result['warnings']
                 
+                # Dynamic reference detection moved to new smart execution system
+                
                 command_dict = {
                     'title': title,
                     'command': sanitized_command,
@@ -323,18 +322,27 @@ class AppendixParser:
                     'is_critical': False,  # Default to non-critical
                     'timeout_seconds': 30,  # Default timeout
                     'sanitized': sanitize_result['is_modified'],
-                    'sanitize_warnings': sanitize_warnings,
-                    'skip_condition': skip_condition  # Add skip condition info
+                    'sanitize_warnings': sanitize_warnings
+                    # skip_condition and dynamic_reference moved to smart execution
                 }
                 
                 # Add 6-column format specific fields
                 if is_6_column_format:
-                    command_dict['command_id_ref'] = str(row[column_mapping['command_id_ref']]).strip() if 'command_id_ref' in column_mapping and pd.notna(row[column_mapping['command_id_ref']]) else f"cmd_{index + 1}"
+                    # ALWAYS use the ID column from CSV. Do NOT generate new IDs.
+                    if 'command_id_ref' not in column_mapping or pd.isna(row[column_mapping['command_id_ref']]):
+                        logger.error(f"Row {index + 1} is missing required ID column. Aborting parse for this row.")
+                        continue
+                    command_dict['command_id_ref'] = str(row[column_mapping['command_id_ref']]).strip()
                     command_dict['extract_method'] = str(row[column_mapping['extract_method']]).strip() if 'extract_method' in column_mapping and pd.notna(row[column_mapping['extract_method']]) else 'raw'
                     command_dict['comparator_method'] = str(row[column_mapping['comparator_method']]).strip() if 'comparator_method' in column_mapping and pd.notna(row[column_mapping['comparator_method']]) else 'eq'
                 else:
-                    # Default values for legacy format
-                    command_dict['command_id_ref'] = f"cmd_{index + 1}"
+                    # Legacy format (no ID column). Do NOT invent new IDs.
+                    # Try to extract from title; if not possible, skip row to avoid inconsistent IDs.
+                    extracted_id = self._extract_command_id_from_title(title, index + 1)
+                    if not extracted_id:
+                        logger.error(f"Cannot determine command ID for row {index + 1} (title='{title}'). Skipping this row.")
+                        continue
+                    command_dict['command_id_ref'] = str(extracted_id)
                     command_dict['extract_method'] = 'raw'
                     command_dict['comparator_method'] = 'eq'
                 
@@ -345,6 +353,62 @@ class AppendixParser:
                 continue
         
         return commands
+    
+    def _extract_command_id_from_title(self, title: str, fallback_index: int) -> str:
+        """
+        Extract command ID from title for smart execution
+        
+        Strategy: Use original MOP numbering scheme for consistency with skip conditions
+        
+        Args:
+            title: Command title from MOP
+            fallback_index: Fallback sequential index (1-based)
+            
+        Returns:
+            Extracted command ID matching MOP's original scheme
+        """
+        if not title:
+            return str(fallback_index)
+        
+        import re
+        
+        # Pattern 1: Extract numbered prefix (1., 2., 6., 11., 1p., etc.)
+        # This preserves the original MOP numbering scheme
+        number_pattern = re.compile(r'^(\d+[a-z]*)\.\s')
+        match = number_pattern.match(title)
+        if match:
+            extracted_id = match.group(1)
+            
+            # Special handling: If this is command 1 and might be referenced as '1p'
+            # Check if this could be a reference command by analyzing title content
+            if extracted_id == '1' and self._might_be_reference_command(title):
+                return '1p'
+            
+            return extracted_id
+        
+        # Pattern 2: For commands without explicit numbering, use sequential
+        # This ensures every command has a consistent ID
+        return str(fallback_index)
+    
+    def _might_be_reference_command(self, title: str) -> bool:
+        """
+        Heuristic to detect if a command might be referenced by skip conditions
+        
+        Args:
+            title: Command title to analyze
+            
+        Returns:
+            True if this command might be referenced as '1p' by skip conditions
+        """
+        # Look for keywords that suggest this is a detection/check command
+        # that might be referenced by skip conditions
+        reference_indicators = [
+            'detect', 'check', 'verify', 'test', 'validate',
+            'RDO', 'VMware', 'system', 'platform'
+        ]
+        
+        title_lower = title.lower()
+        return any(indicator in title_lower for indicator in reference_indicators)
     
     def _determine_validation_type(self, reference_value: str) -> str:
         """
@@ -445,7 +509,7 @@ class AppendixParser:
             logger.error(f"Error validating file: {str(e)}")
             return False, f"Error validating file: {str(e)}"
     
-    def _parse_skip_condition(self, title: str) -> Dict[str, Any]:
+    def _old_parse_skip_condition_removed(self, title: str):
         """
         Parse skip condition from command title using syntax: [SKIP_IF:condition_id:"condition_value"] Original Title
         
@@ -477,16 +541,14 @@ class AppendixParser:
             condition_type = condition_value_raw.lower()
             condition_value = None
             
+            # Normalize common variations
+            if condition_type == 'non_empty':
+                condition_type = 'not_empty'
+            
             # Validate legacy condition types
             valid_legacy_types = ['empty', 'not_empty', 'ok', 'not_ok']
             if condition_type not in valid_legacy_types:
                 logger.warning(f"Invalid skip condition type '{condition_type}' in title '{title}'. Valid legacy types: {valid_legacy_types} or use quoted value format")
                 return None
             
-        return {
-            'condition_id': condition_id,
-            'condition_type': condition_type,
-            'condition_value': condition_value,
-            'clean_title': clean_title,
-            'original_title': title
-        }
+        pass  # Method removed

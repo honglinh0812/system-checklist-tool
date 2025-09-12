@@ -134,7 +134,7 @@ export const executionUtils = {
   },
 
   // Export execution results
-  exportExecutionResults: function(execution: ExecutionProgress): { data: any[]; filename: string } {
+  exportExecutionResults: function(execution: ExecutionProgress): { data: Record<string, unknown>[]; filename: string } {
     const data = execution.results.map(result => ({
       Server: result.server,
       Command: result.command,
@@ -150,25 +150,29 @@ export const executionUtils = {
   },
 
   // Get execution history for a MOP
-  getMOPExecutionHistory: function(mopId: number): any[] {
+  getMOPExecutionHistory: function(mopId: number): unknown[] {
     return storage.loadMOPHistory(mopId);
   },
 
   // Get all execution history
-  getAllExecutionHistory: function(): any[] {
-    const allHistory: Record<number, any[]> = storage.loadState('mop_history', {}) || {};
-    const executions: any[] = [];
+  getAllExecutionHistory: function(): unknown[] {
+    const allHistory: Record<number, unknown[]> = storage.loadState('mop_history', {}) || {};
+    const executions: unknown[] = [];
     
     Object.keys(allHistory).forEach(mopId => {
       const mopExecutions = allHistory[parseInt(mopId)] || [];
-      executions.push(...mopExecutions.map((exec: any) => ({
-        ...exec,
+      executions.push(...mopExecutions.map((exec: unknown) => ({
+        ...(exec as Record<string, unknown>),
         mopId: parseInt(mopId)
       })));
     });
     
     // Sort by timestamp (newest first)
-    return executions.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+    return executions.sort((a, b) => {
+      const aData = a as Record<string, unknown>;
+      const bData = b as Record<string, unknown>;
+      return new Date(String(bData.startTime || '')).getTime() - new Date(String(aData.startTime || '')).getTime();
+    });
   },
 
   // Format execution time

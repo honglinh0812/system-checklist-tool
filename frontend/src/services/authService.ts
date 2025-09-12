@@ -27,8 +27,9 @@ class AuthService {
   async logout(): Promise<void> {
     try {
       await apiService.post(API_ENDPOINTS.AUTH.LOGOUT);
-    } catch (error: any) {
-      const status = error?.response?.status;
+    } catch (error: unknown) {
+      const errorObj = error as { response?: { status?: number } };
+      const status = errorObj?.response?.status;
       if (status !== 401 && status !== 403) {
         console.error('Logout error:', error);
       }

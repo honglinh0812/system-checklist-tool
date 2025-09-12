@@ -350,25 +350,20 @@ class AdvancedValidator:
             )
             
             # Format result based on comparison_result structure
-            if isinstance(comparison_result, dict) and 'results' in comparison_result:
-                # Multi-line result (per_line processing)
-                is_valid = comparison_result.get('overall_result', False)
+            if isinstance(comparison_result, dict) and 'overall_result' in comparison_result:
+                # Result from apply_comparator
+                overall_result = comparison_result.get('overall_result', 'Not OK')
+                is_valid = overall_result == 'OK'
                 details = {
                     'extracted_data': extracted_data,
                     'expected': expected,
                     'extract_method': extract_method,
                     'comparator_method': comparator_method,
-                    'line_results': comparison_result.get('results', []),
-                    'overall_result': is_valid
+                    'comparison_result': comparison_result,
+                    'formatted_result': overall_result
                 }
-                # Create formatted result string for display
-                result_lines = []
-                for line_result in comparison_result.get('results', []):
-                    status = "OK" if line_result.get('result', False) else "Not OK"
-                    result_lines.append(f"{line_result.get('variable', '')} - {status}")
-                details['formatted_result'] = '\n'.join(result_lines) if result_lines else ("OK" if is_valid else "Not OK")
             else:
-                # Single result
+                # Single result (boolean)
                 is_valid = bool(comparison_result)
                 details = {
                     'extracted_data': extracted_data,

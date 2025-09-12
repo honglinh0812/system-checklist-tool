@@ -23,6 +23,7 @@ from api.api_assessments import assessments_bp
 from api.api_audit import audit_bp
 from api.api_auth import auth_bp
 from api.api_health import health_bp
+from api.api_servers import servers_bp
 from api_docs import init_api_docs
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -128,6 +129,7 @@ def create_app(config_name='development'):
     app.register_blueprint(executions_bp)
     app.register_blueprint(assessments_bp)
     app.register_blueprint(audit_bp)
+    app.register_blueprint(servers_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(health_bp)
     
@@ -911,8 +913,6 @@ def download_assessment_logs_zip(log_dir):
     except Exception as e:
         logger.error(f"Error downloading assessment logs ZIP: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
-
-# MOP approval routes (approve, finalize, approve-final) moved to api/api_mops.py blueprint
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

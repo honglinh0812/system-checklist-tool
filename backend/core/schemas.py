@@ -76,7 +76,7 @@ class MOPCreateSchema(Schema):
     
 class MOPUpdateSchema(Schema):
     name = fields.Str(validate=validate.Length(min=3, max=200))
-    description = fields.Str(validate=validate.Length(min=10))
+    description = fields.Str(missing='', validate=validate.Length(min=0))
     type = fields.List(fields.Str(), validate=validate.Length(min=1))
     status = fields.Str(validate=validate.OneOf([
         'pending', 'approved'

@@ -82,6 +82,7 @@ const MOPManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
   const [deleteMopId, setDeleteMopId] = useState<string | null>(null);
   const [deleteMopName, setDeleteMopName] = useState('');
   const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
@@ -388,16 +389,36 @@ const MOPManagement: React.FC = () => {
       return;
     }
 
+    // Show confirmation dialog for updates
+    if (isEditing && currentMop) {
+      setShowUpdateConfirm(true);
+      return;
+    }
+
+    await performSaveMOP();
+  };
+
+  const performSaveMOP = async () => {
     try {
       if (isEditing && currentMop) {
-        const mopUpdateData = {
-          name: formData.name,
-          description: formData.description,
-          type: [
-            ...(formData.risk_assessment ? ['risk_assessment'] : []),
-            ...(formData.handover_assessment ? ['handover_assessment'] : [])
-          ]
-        };
+        const mopUpdateData: any = {};
+        
+        // Chỉ thêm các trường có giá trị thay đổi
+        if (formData.name && formData.name.trim()) {
+          mopUpdateData.name = formData.name.trim();
+        }
+        
+        if (formData.description !== undefined) {
+          mopUpdateData.description = formData.description || '';
+        }
+        
+        const types = [
+          ...(formData.risk_assessment ? ['risk_assessment'] : []),
+          ...(formData.handover_assessment ? ['handover_assessment'] : [])
+        ];
+        if (types.length > 0) {
+          mopUpdateData.type = types;
+        }
         
         console.log('Updating MOP with data:', mopUpdateData);
         console.log('MOP ID:', currentMop.id);
@@ -408,7 +429,8 @@ const MOPManagement: React.FC = () => {
         
         if (!updateResponse.success) {
           console.error('Update failed:', updateResponse.error);
-          setNotification({type: 'error', message: updateResponse.error || t('errorUpdatingMOP')});
+          const errorMsg = updateResponse.error || updateResponse.message || t('errorUpdatingMOP');
+          setNotification({type: 'error', message: errorMsg});
           return;
         }
         
@@ -420,7 +442,8 @@ const MOPManagement: React.FC = () => {
             });
             
             if (!commandsResponse.success) {
-              setNotification({type: 'warning', message: t('mopUpdatedButFailedToUpdateCommands')});
+              const cmdErrorMsg = commandsResponse.error || commandsResponse.message || t('mopUpdatedButFailedToUpdateCommands');
+              setNotification({type: 'warning', message: cmdErrorMsg});
             }
           } catch (cmdError) {
             console.error('Commands update failed:', cmdError);
@@ -454,8 +477,34 @@ const MOPManagement: React.FC = () => {
       fetchMOPs();
     } catch (error) {
       console.error('Error saving MOP:', error);
-      setNotification({type: 'error', message: t('errorSavingMOP')});
+      let errorMessage = t('errorSavingMOP');
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        const errorObj = error as any;
+        // Lấy thông tin lỗi chi tiết từ response
+        const serverError = errorObj.response?.data?.error || errorObj.response?.data?.message;
+        const validationErrors = errorObj.response?.data?.errors;
+        
+        if (serverError) {
+          errorMessage = serverError;
+        } else if (validationErrors && Array.isArray(validationErrors)) {
+          errorMessage = validationErrors.join(', ');
+        } else if (validationErrors && typeof validationErrors === 'object') {
+          errorMessage = Object.values(validationErrors).flat().join(', ');
+        } else {
+          errorMessage = errorObj.error || errorObj.message || errorMessage;
+        }
+      }
+      
+      setNotification({type: 'error', message: errorMessage});
     }
+  };
+
+  const confirmUpdate = async () => {
+    setShowUpdateConfirm(false);
+    await performSaveMOP();
   };
 
   const approveMOP = async (mopId: string) => {
@@ -813,18 +862,59 @@ const MOPManagement: React.FC = () => {
                                   />
                                 </td>
                                 <td>
-                                  <select 
-                                    className="form-control form-control-sm"
-                                    value={command.extract_method || 'raw'}
-                                    onChange={(e) => updateCommand(index, 'extract_method', e.target.value)}
-                                  >
-                                    <option value="raw">raw</option>
-                                    <option value="first_line">first_line</option>
-                                    <option value="lines_count">lines_count</option>
-                                    <option value="regex">regex:(...)</option>
-                                    <option value="field">field:N</option>
-                                    <option value="per_line">per_line:&lt;sub&gt;</option>
-                                  </select>
+                                  <div className="extract-method-container">
+                                    <select 
+                                      className="form-control form-control-sm mb-1"
+                                      value={command.extract_method?.split(':')[0] || 'raw'}
+                                      onChange={(e) => {
+                                        const baseMethod = e.target.value;
+                                        if (baseMethod === 'raw' || baseMethod === 'first_line' || baseMethod === 'lines_count') {
+                                          updateCommand(index, 'extract_method', baseMethod);
+                                        } else {
+                                          // For regex, field, per_line - keep existing value or set default
+                                          const currentValue = command.extract_method || '';
+                                          if (!currentValue.startsWith(baseMethod + ':')) {
+                                            updateCommand(index, 'extract_method', baseMethod + ':');
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      <option value="raw">raw</option>
+                                      <option value="first_line">first_line</option>
+                                      <option value="lines_count">lines_count</option>
+                                      <option value="regex">regex</option>
+                                      <option value="field">field</option>
+                                      <option value="per_line">per_line</option>
+                                    </select>
+                                    {(command.extract_method?.startsWith('regex:') || command.extract_method?.split(':')[0] === 'regex') && (
+                                      <input
+                                        type="text"
+                                        className="form-control form-control-sm"
+                                        placeholder="Enter regex pattern"
+                                        value={command.extract_method?.substring(6) || ''}
+                                        onChange={(e) => updateCommand(index, 'extract_method', 'regex:' + e.target.value)}
+                                      />
+                                    )}
+                                    {(command.extract_method?.startsWith('field:') || command.extract_method?.split(':')[0] === 'field') && (
+                                      <input
+                                        type="number"
+                                        className="form-control form-control-sm"
+                                        placeholder="Field number"
+                                        min="1"
+                                        value={command.extract_method?.substring(6) || ''}
+                                        onChange={(e) => updateCommand(index, 'extract_method', 'field:' + e.target.value)}
+                                      />
+                                    )}
+                                    {(command.extract_method?.startsWith('per_line:') || command.extract_method?.split(':')[0] === 'per_line') && (
+                                      <input
+                                        type="text"
+                                        className="form-control form-control-sm"
+                                        placeholder="Sub-method (e.g., in, eq)"
+                                        value={command.extract_method?.substring(9) || ''}
+                                        onChange={(e) => updateCommand(index, 'extract_method', 'per_line:' + e.target.value)}
+                                      />
+                                    )}
+                                  </div>
                                 </td>
                                 <td>
                                   <select 
@@ -962,23 +1052,39 @@ const MOPManagement: React.FC = () => {
                 {currentMop.commands && currentMop.commands.length > 0 && (
                   <div className="mt-4">
                     <h6><strong>Commands:</strong></h6>
-                    <div className="table-responsive">
-                      <table className="table table-sm table-bordered">
-                        <thead className="thead-light">
+                    <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                      <table className="table table-sm table-bordered" style={{ fontSize: '0.85rem' }}>
+                        <thead className="thead-light" style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                           <tr>
-                            <th>STT</th>
-                            <th>Command Title</th>
-                            <th>Command</th>
-                            <th>Expected Output</th>
+                            <th style={{ width: '50px', minWidth: '50px' }}>STT</th>
+                            <th style={{ width: '80px', minWidth: '80px' }}>ID</th>
+                            <th style={{ width: '150px', minWidth: '150px' }}>Name</th>
+                            <th style={{ width: '200px', minWidth: '200px' }}>Command</th>
+                            <th style={{ width: '100px', minWidth: '100px' }}>Extract</th>
+                            <th style={{ width: '100px', minWidth: '100px' }}>Comparator</th>
+                            <th style={{ width: '150px', minWidth: '150px' }}>Reference Value</th>
                           </tr>
                         </thead>
                         <tbody>
                           {currentMop.commands.map((cmd, index) => (
                             <tr key={index}>
-                              <td>{index + 1}</td>
-                              <td>{cmd.title}</td>
-                              <td><code>{cmd.command}</code></td>
-                              <td>{cmd.reference_value || 'N/A'}</td>
+                              <td style={{ textAlign: 'center' }}>{index + 1}</td>
+                              <td style={{ wordBreak: 'break-word' }}>{cmd.command_id_ref || cmd.id || 'N/A'}</td>
+                              <td style={{ wordBreak: 'break-word' }}>{cmd.title || cmd.description || `Command ${index + 1}`}</td>
+                              <td style={{ wordBreak: 'break-word', maxWidth: '200px' }}>
+                                <code style={{ fontSize: '0.8rem', wordBreak: 'break-all' }}>
+                                  {(cmd.command || cmd.command_text || '').length > 50 
+                                    ? (cmd.command || cmd.command_text || '').substring(0, 50) + '...' 
+                                    : (cmd.command || cmd.command_text || '')}
+                                </code>
+                              </td>
+                              <td style={{ wordBreak: 'break-word' }}>{cmd.extract_method || 'raw'}</td>
+                              <td style={{ wordBreak: 'break-word' }}>{cmd.comparator_method || 'eq'}</td>
+                              <td style={{ wordBreak: 'break-word', maxWidth: '150px' }}>
+                                {(cmd.reference_value || cmd.expected_output || ' ').length > 30 
+                                  ? (cmd.reference_value || cmd.expected_output || ' ').substring(0, 30) + '...' 
+                                  : (cmd.reference_value || cmd.expected_output || ' ')}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1095,7 +1201,7 @@ const MOPManagement: React.FC = () => {
                               <td><code>{cmd.command}</code></td>
                               <td>{cmd.extract_method || 'raw'}</td>
                               <td>{cmd.comparator_method || 'eq'}</td>
-                              <td>{cmd.reference_value || 'N/A'}</td>
+                              <td>{cmd.reference_value || ' '}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1129,6 +1235,47 @@ const MOPManagement: React.FC = () => {
         cancelText="Cancel"
         confirmVariant="success"
       />
+
+      {/* Update Confirmation Dialog */}
+      {showUpdateConfirm && (
+        <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Xác nhận cập nhật MOP</h5>
+                <button 
+                  type="button" 
+                  className="close" 
+                  onClick={() => setShowUpdateConfirm(false)}
+                >
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                <p>Bạn có chắc chắn muốn cập nhật nội dung MOP này không?</p>
+                <p><strong>MOP:</strong> {formData.name}</p>
+                <p><strong>Số lệnh:</strong> {formData.commands.length}</p>
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowUpdateConfirm(false)}
+                >
+                  Hủy
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-primary" 
+                  onClick={confirmUpdate}
+                >
+                  Xác nhận cập nhật
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

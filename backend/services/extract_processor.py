@@ -11,11 +11,11 @@ class ExtractProcessor:
     
     def __init__(self):
         self.supported_extracts = [
-            'raw', 'first_line', 'lines_count', 'regex', 'field', 'per_line'
+            'raw', 'first_line', 'lines_count', 'regex', 'field', 'per_line', 'user', 'iface'
         ]
         self.supported_comparators = [
             # String comparators
-            'eq', 'neq', 'contains', 'not_contains', 'regex', 'in', 'not_in',
+            'eq', 'neq', 'contains', 'not_contains', 'regex', 'in', 'not_in', 'contains_any',
             # Numeric comparators
             'int_eq', 'int_ge', 'int_gt', 'int_le', 'int_lt',
             # Special comparators
@@ -77,6 +77,7 @@ class ExtractProcessor:
                         result = self.process_extract(line, sub_method)
                         results.append(result)
                 return results
+            
             
             else:
                 logger.warning(f"Unsupported extract method: {method}")
@@ -220,15 +221,30 @@ class ExtractProcessor:
             elif method == 'regex':
                 return bool(re.search(reference_str, data_str))
             elif method == 'in':
-                # Check if data is in comma-separated reference list
-                ref_list = [item.strip() for item in reference_str.split(',')]
+                # Check if data is in pipe-separated or comma-separated reference list
+                # Support both '|' and ',' as separators
+                if '|' in reference_str:
+                    ref_list = [item.strip() for item in reference_str.split('|')]
+                else:
+                    ref_list = [item.strip() for item in reference_str.split(',')]
                 return data_str in ref_list
             elif method == 'not_in':
                 ref_list = [item.strip() for item in reference_str.split(',')]
                 return data_str not in ref_list
+            elif method == 'contains_any':
+                # Check if data contains any of the reference values (comma-separated)
+                ref_list = [item.strip() for item in reference_str.split(',')]
+                return any(ref_item in data_str for ref_item in ref_list)
             
             # Numeric comparators
             elif method.startswith('int_'):
+                # Handle empty data gracefully
+                if not data_str or not data_str.strip():
+                    # For empty data, only return True for int_eq with reference '0' or empty
+                    if method == 'int_eq' and (reference_str == '0' or not reference_str.strip()):
+                        return True
+                    return False
+                    
                 try:
                     data_int = int(data_str)
                     ref_int = int(reference_str)
@@ -244,7 +260,9 @@ class ExtractProcessor:
                     elif method == 'int_lt':
                         return data_int < ref_int
                 except ValueError:
-                    logger.warning(f"Cannot convert to int: data='{data_str}', reference='{reference_str}'")
+                    # Only log warning if data is not empty (to reduce noise)
+                    if data_str.strip():
+                        logger.warning(f"Cannot convert to int: data='{data_str}', reference='{reference_str}'")
                     return False
             
             # Special comparators

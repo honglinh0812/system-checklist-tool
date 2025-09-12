@@ -254,7 +254,16 @@ def update_mop(mop_id):
         
         logger.info(f"Updating MOP {mop_id} with data: {json_data}")
         
-        data = json_data
+        # Validate input data using schema
+        from core.schemas import MOPUpdateSchema
+        schema = MOPUpdateSchema()
+        try:
+            data = schema.load(json_data)
+            logger.info(f"Validation passed for MOP {mop_id}, data: {data}")
+        except Exception as e:
+            logger.error(f"Validation error for MOP {mop_id}: {str(e)}")
+            logger.error(f"Input data: {json_data}")
+            return api_error(f'Invalid data: {str(e)}', 400)
         
         # Track changes for audit log
         changes = {}
@@ -263,14 +272,15 @@ def update_mop(mop_id):
         # Update MOP fields - only allow schema-supported fields
         allowed_fields = ['name', 'description', 'type']
         for field in allowed_fields:
-            if field in data:
+            if field in data and data[field] is not None:
                 new_value = data[field]
-                # Handle type field specially - convert array to comma-separated string
-                if field == 'type' and isinstance(new_value, list):
-                    new_value = ','.join(new_value)
+                # Ensure type is always an array
+                if field == 'type' and isinstance(new_value, list) and len(new_value) > 0:
+                    new_value = [str(item) for item in new_value if item]
                 
-                if getattr(mop, field) != new_value:
-                    old_values[field] = getattr(mop, field)
+                old_value = getattr(mop, field)
+                if old_value != new_value:
+                    old_values[field] = old_value
                     changes[field] = new_value
                     setattr(mop, field, new_value)
         
@@ -303,7 +313,8 @@ def update_mop(mop_id):
     except Exception as e:
         db.session.rollback()
         logger.error(f"Update MOP error: {str(e)}")
-        return api_error('Failed to update MOP', 500)
+        error_message = f"Failed to update MOP: {str(e)}"
+        return api_error(error_message, 500)
 
 @mops_bp.route('/<int:mop_id>', methods=['DELETE'])
 @jwt_required()
@@ -411,7 +422,8 @@ def add_mop_commands_bulk(mop_id):
             return api_error('Insufficient permissions', 403)
         
         # Check if MOP can be edited
-        if mop.status in ['approved', 'in_progress', 'completed']:
+        # Allow editing commands for approved MOPs, but not for in_progress or completed
+        if mop.status in ['in_progress', 'completed']:
             return api_error('Cannot edit MOP in current status', 400)
         
         json_data = request.get_json()
@@ -430,8 +442,14 @@ def add_mop_commands_bulk(mop_id):
             # Map frontend fields to backend fields
             command = Command(
                 mop_id=mop_id,
+                command_id_ref=cmd_data.get('command_id_ref', ''),
+                title=cmd_data.get('title', cmd_data.get('description', '')),
+                command=cmd_data.get('command', cmd_data.get('command_text', '')),
                 command_text=cmd_data.get('command', cmd_data.get('command_text', '')),
                 description=cmd_data.get('title', cmd_data.get('description', '')),
+                extract_method=cmd_data.get('extract_method', ''),
+                comparator_method=cmd_data.get('comparator_method', ''),
+                reference_value=cmd_data.get('reference_value', ''),
                 order_index=idx + 1,
                 is_critical=cmd_data.get('is_critical', False),
                 timeout_seconds=cmd_data.get('timeout_seconds'),
@@ -473,7 +491,8 @@ def add_mop_command(mop_id):
             return api_error('Insufficient permissions', 403)
         
         # Check if MOP can be edited
-        if mop.status in ['approved', 'in_progress', 'completed']:
+        # Allow editing commands for approved MOPs, but not for in_progress or completed
+        if mop.status in ['in_progress', 'completed']:
             return api_error('Cannot edit MOP in current status', 400)
         
         json_data = request.get_json()
@@ -512,8 +531,9 @@ def add_mop_command(mop_id):
         
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Add command error: {str(e)}")
-        return api_error('Failed to add command', 500)
+        logger.error(f"Add commands error: {str(e)}")
+        error_message = f"Failed to add commands: {str(e)}"
+        return api_error(error_message, 500)
 
 @mops_bp.route('/<int:mop_id>/commands/<int:command_id>', methods=['PUT'])
 @jwt_required()
@@ -537,7 +557,8 @@ def update_mop_command(mop_id, command_id):
             return api_error('Insufficient permissions', 403)
         
         # Check if MOP can be edited
-        if mop.status in ['approved', 'in_progress', 'completed']:
+        # Allow editing commands for approved MOPs, but not for in_progress or completed
+        if mop.status in ['in_progress', 'completed']:
             return api_error('Cannot edit MOP in current status', 400)
         
         json_data = request.get_json()
@@ -587,7 +608,8 @@ def delete_mop_command(mop_id, command_id):
             return api_error('Insufficient permissions', 403)
         
         # Check if MOP can be edited
-        if mop.status in ['approved', 'in_progress', 'completed']:
+        # Allow editing commands for approved MOPs, but not for in_progress or completed
+        if mop.status in ['in_progress', 'completed']:
             return api_error('Cannot edit MOP in current status', 400)
         
         db.session.delete(command)

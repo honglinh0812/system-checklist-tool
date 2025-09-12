@@ -62,7 +62,7 @@ export const storage = {
       history[mopId] = [];
     }
     history[mopId].push({
-      ...(executionData as any),
+      ...(executionData as Record<string, unknown>),
       timestamp: new Date().toISOString()
     });
     return this.saveState('mop_history', history);

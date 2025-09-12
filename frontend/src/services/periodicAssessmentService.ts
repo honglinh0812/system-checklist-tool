@@ -8,7 +8,7 @@ export interface PeriodicAssessment {
   assessment_type: 'risk' | 'handover';
   frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly';
   execution_time: string;
-  server_info: any[];
+  server_info: Record<string, unknown>[];
   status: 'active' | 'paused' | 'inactive' | 'completed';
   created_by: number;
   created_at: string;
@@ -29,7 +29,7 @@ export interface PeriodicAssessmentExecution {
   execution_logs?: string;
   created_at: string;
   duration?: number;
-  assessment_result?: any;
+  assessment_result?: Record<string, unknown>;
 }
 
 export interface CreatePeriodicAssessmentRequest {
@@ -37,7 +37,7 @@ export interface CreatePeriodicAssessmentRequest {
   assessment_type: 'risk' | 'handover';
   frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly';
   execution_time: string;
-  servers: any[];
+  servers: Record<string, unknown>[];
 }
 
 export interface UpdatePeriodicAssessmentRequest {

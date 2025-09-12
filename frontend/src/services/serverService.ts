@@ -2,17 +2,24 @@ import { apiService } from './api';
 import { API_ENDPOINTS } from '../utils/constants';
 
 export interface Server {
+  id?: number;
   ip: string;
+  ssh_port?: number;
   admin_username: string;
   admin_password: string;
   root_username: string;
   root_password: string;
+  name?: string;
+  description?: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ServerValidationResult {
   valid: boolean;
   message: string;
-  details?: any;
+  details?: Record<string, unknown>;
 }
 
 export interface ServerConnectionResult {
@@ -32,8 +39,8 @@ export interface ServerUploadResult {
 class ServerService {
   async getServers(): Promise<Server[]> {
     try {
-      const response = await apiService.get<any>(API_ENDPOINTS.SERVERS.LIST);
-      return response.servers || [];
+      const response = await apiService.get<{ data: { servers: Server[] } }>(API_ENDPOINTS.SERVERS.LIST);
+      return response.data?.servers || [];
     } catch (error) {
       console.error('Error fetching servers:', error);
       throw error;
@@ -87,6 +94,74 @@ class ServerService {
       );
     } catch (error) {
       console.error('Error uploading servers:', error);
+      throw error;
+    }
+  }
+
+  // New server management methods
+  async getSavedServers(): Promise<{ servers: Server[]; total: number }> {
+    try {
+      const response = await apiService.get<{ data: { servers: Server[]; pagination: { total: number } } }>('/api/servers');
+      return {
+        servers: response.data?.servers || [],
+        total: response.data?.pagination?.total || 0
+      };
+    } catch (error) {
+      console.error('Error fetching saved servers:', error);
+      throw error;
+    }
+  }
+
+  async saveServer(server: Omit<Server, 'id' | 'created_at' | 'updated_at'>): Promise<{ success: boolean; message: string; server: Server }> {
+    try {
+      return await apiService.post<{ success: boolean; message: string; server: Server }>(
+        '/api/servers',
+        server
+      );
+    } catch (error) {
+      console.error('Error saving server:', error);
+      throw error;
+    }
+  }
+
+  async updateServer(id: number, server: Partial<Server>): Promise<{ success: boolean; message: string; server: Server }> {
+    try {
+      return await apiService.put<{ success: boolean; message: string; server: Server }>(
+        `/api/servers/${id}`,
+        server
+      );
+    } catch (error) {
+      console.error('Error updating server:', error);
+      throw error;
+    }
+  }
+
+  async deleteServer(id: number): Promise<{ success: boolean; message: string }> {
+    try {
+      return await apiService.delete<{ success: boolean; message: string }>(
+        `/api/servers/${id}`
+      );
+    } catch (error) {
+      console.error('Error deleting server:', error);
+      throw error;
+    }
+  }
+
+  async bulkSaveServers(servers: Omit<Server, 'id' | 'created_at' | 'updated_at'>[]): Promise<{ success: boolean; message: string; saved_count: number; error_count?: number; errors?: string[]; servers: Server[] }> {
+    try {
+      const response = await apiService.post<{ success: boolean; message: string; saved_count: number; error_count?: number; errors?: string[]; servers: Server[] }>(
+        '/api/servers/bulk-save',
+        { servers }
+      );
+      
+      // Ensure we have the success field
+      if (typeof response.success === 'undefined') {
+        response.success = true;
+      }
+      
+      return response;
+    } catch (error) {
+      console.error('Error bulk saving servers:', error);
       throw error;
     }
   }

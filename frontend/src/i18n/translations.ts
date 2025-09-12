@@ -477,7 +477,7 @@ export const translations = {
     viewMOP: 'View MOP',
     selectServer: 'Chọn Server',
     uploadFileServer: 'Upload File Server',
-    manualInput: 'Nhập Thủ Công',
+    manualInput: 'Nhập thông tin thủ công',
     assessment: 'Đánh giá',
     serverList: 'Danh sách Server',
     selectAll: 'Chọn tất cả',

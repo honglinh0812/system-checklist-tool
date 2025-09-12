@@ -35,7 +35,7 @@ export const useClearModalsOnPageChange = () => {
         setPageState(currentPageKey, updatedState);
       }
     }
-  }, [location.pathname]); // Chạy khi pathname thay đổi
+  }, [location.pathname, getPageState, setPageState]); // Chạy khi pathname thay đổi
 };
 
 /**

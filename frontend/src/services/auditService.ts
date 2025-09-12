@@ -9,7 +9,7 @@ export interface AuditLog {
   resource_type: string;
   resource_id?: number;
   resource_name?: string;
-  details?: any;
+  details?: Record<string, unknown>;
   ip_address?: string;
   user_agent?: string;
   created_at: string;

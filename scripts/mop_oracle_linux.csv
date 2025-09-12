@@ -2,7 +2,7 @@ ID,Name,Command,Extract,Comparator,Reference Value
 1p,detect VMware/RDO vendor,dmidecode -t system | grep -w "VMware\|RDO",raw,non_empty,
 1a,[SKIP_IF:1p:non_empty] tach_var_ra_khoi_source - /var must appear in fstab,cat /etc/fstab | grep -w /var,raw,non_empty,
 2a,phan_vung_ud_ko_nam_chung_source - find app partitions (exclude system mounts),cat /etc/fstab | grep -vw "#\|/\|/var\|/dev/shm\|/home\|/usr\|/proc\|/sys\|/dev/pts\|/opt\|swap\|/boot\|/boot/efi",raw,non_empty,
-3a,timezone offset must be +0700,date +"%Z %z",regex:([+\-]\d{4}),eq,+0700
+3a,timezone offset must be +0700,date +"%z",regex:([+\-]\d{4}),eq,+0700
 4a,sudoers1 - %wheel ALL=(ALL) ALL must NOT exist,cat /etc/sudoers | grep -v ^# | grep -F "%wheel	ALL=(ALL)	ALL",raw,empty,
 5a,sudoers2 - list bash users (uid>=400),awk -F: '($3>=400 && $7~/\/bin\/bash/ && $1!="nfsnobody"){print $1}' /etc/passwd,per_line:raw,per_line:non_empty,
 5b,sudoers2 - {{user}} must NOT have ALL=(ALL) ALL,cat /etc/sudoers | grep -v ^# | grep -w {{user}} | grep -F "ALL=(ALL)	ALL",raw,empty,
