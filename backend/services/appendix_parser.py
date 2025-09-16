@@ -12,8 +12,9 @@ class AppendixParser:
     """Service to parse MOP appendix files and extract commands"""
     
     def __init__(self):
-        self.required_columns = ['ID', 'Name', 'Command', 'Extract', 'Comparator', 'Reference Value']
-        self.legacy_columns = ['Command Name', 'Command', 'Reference Value']  # For backward compatibility
+        # New 5-column strict format (no Extract/Status, no legacy support)
+        self.required_columns = ['ID', 'Command name', 'Command', 'Comparator', 'Reference Value']
+        self.legacy_columns = []
         self.allowed_extensions = ['xlsx', 'xls', 'csv', 'txt']
         self.sanitizer = CommandSanitizer()
     
@@ -109,8 +110,8 @@ class AppendixParser:
         # Check if required columns exist (case-insensitive)
         df_columns = [col.strip() for col in df.columns]
         
-        # Check for 6-column format first
-        missing_6col = []
+        # Enforce strict 5-column format
+        missing = []
         for required_col in self.required_columns:
             found = False
             for df_col in df_columns:
@@ -118,31 +119,13 @@ class AppendixParser:
                     found = True
                     break
             if not found:
-                missing_6col.append(required_col)
+                missing.append(required_col)
         
-        # If 6-column format is complete, use it
-        if not missing_6col:
-            logger.info("Detected 6-column format")
+        if not missing:
+            logger.info("Detected strict 5-column format")
             return True, ""
         
-        # Check for legacy 3-column format
-        missing_3col = []
-        for required_col in self.legacy_columns:
-            found = False
-            for df_col in df_columns:
-                if df_col.lower() == required_col.lower():
-                    found = True
-                    break
-            if not found:
-                missing_3col.append(required_col)
-        
-        # If 3-column format is complete, use it
-        if not missing_3col:
-            logger.info("Detected legacy 3-column format")
-            return True, ""
-        
-        # Neither format is complete
-        return False, f"File must have either 6-column format {self.required_columns} or legacy 3-column format {self.legacy_columns}. Missing columns: 6-col: {missing_6col}, 3-col: {missing_3col}"
+        return False, f"File must have exact 5 columns {self.required_columns}. Missing: {missing}"
     
     def _validate_content(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
@@ -154,23 +137,20 @@ class AppendixParser:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Normalize column names for easier access
+        # Normalize column names for strict 5-column format
         column_mapping = {}
         for col in df.columns:
             col_lower = col.strip().lower()
-            # Handle both 6-column and 3-column formats
-            if col_lower in ['command name', 'name']:
+            if col_lower == 'command name':
                 column_mapping['title'] = col
             elif col_lower == 'command':
-                column_mapping['command'] = col
+                column_mapping['command_text'] = col
             elif col_lower == 'reference value':
                 column_mapping['reference_value'] = col
             elif col_lower == 'id':
-                column_mapping['id'] = col
-            elif col_lower == 'extract':
-                column_mapping['extract'] = col
+                column_mapping['command_id_ref'] = col
             elif col_lower == 'comparator':
-                column_mapping['comparator'] = col
+                column_mapping['comparator_method'] = col
         
         errors = []
         valid_rows = 0
@@ -179,17 +159,20 @@ class AppendixParser:
             row_num = index + 1
             row_errors = []
             
-            # Check Command Name (if exists) - validation removed per user request
+            # Command name required (non-empty after strip)
             if 'title' in column_mapping:
                 title = row[column_mapping['title']] if pd.notna(row[column_mapping['title']]) else ""
                 if isinstance(title, str):
                     title = title.strip()
-                    # Validation for invalid characters removed
+                    if not title:
+                        row_errors.append("Command name is empty")
+                else:
+                    row_errors.append("Command name must be text")
             
-            # Check Command
+            # Check Command (required)
             command = ""
-            if 'command' in column_mapping:
-                command = row[column_mapping['command']] if pd.notna(row[column_mapping['command']]) else ""
+            if 'command_text' in column_mapping:
+                command = row[column_mapping['command_text']] if pd.notna(row[column_mapping['command_text']]) else ""
                 if isinstance(command, str):
                     command = command.strip()
                     if not command:
@@ -207,7 +190,18 @@ class AppendixParser:
                 else:
                     row_errors.append("Command must be text")
             
-            # Check Reference Value
+            # Check Comparator (required)
+            comparator = ""
+            if 'comparator_method' in column_mapping:
+                comparator = row[column_mapping['comparator_method']] if pd.notna(row[column_mapping['comparator_method']]) else ""
+                if isinstance(comparator, str):
+                    comparator = comparator.strip()
+                    if not comparator:
+                        row_errors.append("Comparator is empty")
+                else:
+                    row_errors.append("Comparator must be text")
+
+            # Check Reference Value (may be optional depending on comparator, validate length)
             ref_value = ""
             if 'reference_value' in column_mapping:
                 ref_value = row[column_mapping['reference_value']] if pd.notna(row[column_mapping['reference_value']]) else ""
@@ -219,7 +213,7 @@ class AppendixParser:
             
             # Skip completely empty rows
             title = row[column_mapping['title']] if 'title' in column_mapping and pd.notna(row[column_mapping['title']]) else ""
-            if not title and not command and not ref_value:
+            if not title and not command and not comparator and not ref_value:
                 continue
             
             if row_errors:
@@ -241,8 +235,7 @@ class AppendixParser:
     
     def _extract_commands(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """
-        Extract commands from DataFrame
-        Supports both 6-column format and legacy 3-column format
+        Extract commands from DataFrame (strict 5-column format only)
         
         Args:
             df: DataFrame containing command data
@@ -254,31 +247,19 @@ class AppendixParser:
         
         # Detect format and normalize column names (case-insensitive mapping)
         column_mapping = {}
-        is_6_column_format = False
         
         for col in df.columns:
             col_lower = col.strip().lower()
-            # 6-column format mapping
             if col_lower == 'id':
                 column_mapping['command_id_ref'] = col
-                is_6_column_format = True
-            elif col_lower == 'name':
-                column_mapping['title'] = col
-                is_6_column_format = True
-            elif col_lower == 'extract':
-                column_mapping['extract_method'] = col
-                is_6_column_format = True
-            elif col_lower == 'comparator':
-                column_mapping['comparator_method'] = col
-                is_6_column_format = True
-            # Common columns
-            elif col_lower == 'command':
-                column_mapping['command'] = col
-            elif col_lower == 'reference value':
-                column_mapping['reference_value'] = col
-            # Legacy 3-column format mapping
             elif col_lower == 'command name':
                 column_mapping['title'] = col
+            elif col_lower == 'command':
+                column_mapping['command_text'] = col
+            elif col_lower == 'comparator':
+                column_mapping['comparator_method'] = col
+            elif col_lower == 'reference value':
+                column_mapping['reference_value'] = col
         
         for index, row in df.iterrows():
             try:
@@ -288,63 +269,53 @@ class AppendixParser:
                 
                 if 'title' in column_mapping:
                     title_empty = pd.isna(row[column_mapping['title']])
-                if 'command' in column_mapping:
-                    command_empty = pd.isna(row[column_mapping['command']])
+                if 'command_text' in column_mapping:
+                    command_empty = pd.isna(row[column_mapping['command_text']])
                     
                 if title_empty and command_empty:
                     continue
                 
                 title = str(row[column_mapping['title']]).strip() if 'title' in column_mapping and pd.notna(row[column_mapping['title']]) else f"Command_{index + 1}"
-                command = str(row[column_mapping['command']]).strip() if 'command' in column_mapping and pd.notna(row[column_mapping['command']]) else ""
+                command_text = str(row[column_mapping['command_text']]).strip() if 'command_text' in column_mapping and pd.notna(row[column_mapping['command_text']]) else ""
                 reference_value = str(row[column_mapping['reference_value']]).strip() if 'reference_value' in column_mapping and pd.notna(row[column_mapping['reference_value']]) else ""
+                comparator_method = str(row[column_mapping['comparator_method']]).strip() if 'comparator_method' in column_mapping and pd.notna(row[column_mapping['comparator_method']]) else "eq"
                 
                 # Skip condition parsing moved to new smart execution system
                 
                 # Skip rows with empty command
-                if not command:
+                if not command_text:
                     logger.warning(f"Skipping row {index + 1}: empty command")
                     continue
                 
                 # Sanitize command
-                sanitize_result = self.sanitizer.sanitize_command(command)
+                sanitize_result = self.sanitizer.sanitize_command(command_text)
                 sanitized_command = sanitize_result['sanitized']
                 sanitize_warnings = sanitize_result['warnings']
                 
                 # Dynamic reference detection moved to new smart execution system
                 
+                # Build strict 5-column command object
+                if 'command_id_ref' not in column_mapping or pd.isna(row[column_mapping['command_id_ref']]):
+                    logger.error(f"Row {index + 1} is missing required ID column. Skipping row.")
+                    continue
+                command_id_ref = str(row[column_mapping['command_id_ref']]).strip()
+                if not command_id_ref:
+                    logger.error(f"Row {index + 1} has empty ID after strip. Skipping row.")
+                    continue
+
                 command_dict = {
+                    'command_id_ref': command_id_ref,
                     'title': title,
-                    'command': sanitized_command,
-                    'original_command': command,
+                    'command_text': sanitized_command,
+                    'original_command': command_text,
                     'reference_value': reference_value,
-                    'validation_type': self._determine_validation_type(reference_value) if not is_6_column_format else 'extract_compare',
+                    'comparator_method': comparator_method,
                     'order_index': len(commands) + 1,
-                    'is_critical': False,  # Default to non-critical
-                    'timeout_seconds': 30,  # Default timeout
+                    'is_critical': False,
+                    'timeout_seconds': 30,
                     'sanitized': sanitize_result['is_modified'],
                     'sanitize_warnings': sanitize_warnings
-                    # skip_condition and dynamic_reference moved to smart execution
                 }
-                
-                # Add 6-column format specific fields
-                if is_6_column_format:
-                    # ALWAYS use the ID column from CSV. Do NOT generate new IDs.
-                    if 'command_id_ref' not in column_mapping or pd.isna(row[column_mapping['command_id_ref']]):
-                        logger.error(f"Row {index + 1} is missing required ID column. Aborting parse for this row.")
-                        continue
-                    command_dict['command_id_ref'] = str(row[column_mapping['command_id_ref']]).strip()
-                    command_dict['extract_method'] = str(row[column_mapping['extract_method']]).strip() if 'extract_method' in column_mapping and pd.notna(row[column_mapping['extract_method']]) else 'raw'
-                    command_dict['comparator_method'] = str(row[column_mapping['comparator_method']]).strip() if 'comparator_method' in column_mapping and pd.notna(row[column_mapping['comparator_method']]) else 'eq'
-                else:
-                    # Legacy format (no ID column). Do NOT invent new IDs.
-                    # Try to extract from title; if not possible, skip row to avoid inconsistent IDs.
-                    extracted_id = self._extract_command_id_from_title(title, index + 1)
-                    if not extracted_id:
-                        logger.error(f"Cannot determine command ID for row {index + 1} (title='{title}'). Skipping this row.")
-                        continue
-                    command_dict['command_id_ref'] = str(extracted_id)
-                    command_dict['extract_method'] = 'raw'
-                    command_dict['comparator_method'] = 'eq'
                 
                 commands.append(command_dict)
                 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { debounce } from '../../utils/helpers';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface SearchInputProps {
   value: string;
@@ -15,13 +16,14 @@ interface SearchInputProps {
 const SearchInput: React.FC<SearchInputProps> = ({
   value,
   onChange,
-  placeholder = 'Search...',
+  placeholder,
   delay = 300,
   className = '',
   size = 'md',
   disabled = false,
   onClear,
 }) => {
+  const { t } = useTranslation();
   const [localValue, setLocalValue] = useState(value);
 
   // Create debounced function
@@ -62,7 +64,7 @@ const SearchInput: React.FC<SearchInputProps> = ({
         <input
           type="text"
           className={`form-control ${sizeClass}`}
-          placeholder={placeholder}
+          placeholder={placeholder || t('searchPlaceholder')}
           value={localValue}
           onChange={handleInputChange}
           disabled={disabled}

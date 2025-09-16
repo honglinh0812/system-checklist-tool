@@ -98,6 +98,15 @@ const RiskAssessment: React.FC = () => {
   const [showDeleteSavedServerConfirm, setShowDeleteSavedServerConfirm] = useState(false);
   const [deleteSavedServerId, setDeleteSavedServerId] = useState<number | null>(null);
   
+  // New "Select from saved list" modal states
+  const [showSelectFromSavedModal, setShowSelectFromSavedModal] = useState(false);
+  const [savedListTab, setSavedListTab] = useState<'recent' | 'uploads'>('recent');
+  const [recentServers, setRecentServers] = useState<any[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
+  const [selectedSavedEntries, setSelectedSavedEntries] = useState<boolean[]>([]);
+  const [previewServers, setPreviewServers] = useState<any[]>([]);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  
   // Periodic assessment states
   const [periodicAssessments, setPeriodicAssessments] = useState<PeriodicAssessment[]>([]);
   const [recentExecutions, setRecentExecutions] = useState<PeriodicAssessmentExecution[]>([]);
@@ -463,6 +472,17 @@ const RiskAssessment: React.FC = () => {
                 try {
                   console.log('Fetching final results for assessment ID:', response.data.assessment_id);
                   const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.RISK_RESULTS(response.data.assessment_id));
+                  
+                  // Debug: Kiểm tra cấu trúc data và recommendations
+                  console.log('API Response structure:', resultsResponse.data);
+                  if (resultsResponse.data.test_results) {
+                    console.log('First few test results:', resultsResponse.data.test_results.slice(0, 3));
+                    resultsResponse.data.test_results.forEach((result: any, index: number) => {
+                      if (result.recommendations && result.recommendations.length > 0) {
+                        console.log(`Result ${index} has recommendations:`, result.recommendations);
+                      }
+                    });
+                  }
                   
                   updateState({ 
                     assessmentResults: {
@@ -837,6 +857,101 @@ const RiskAssessment: React.FC = () => {
       fetchSavedServers();
     }
   }, [showSavedServersModal]);
+
+  // Load recent servers for "Select from saved list" modal
+  const loadRecentServers = async () => {
+    try {
+      const result = await serverService.getRiskRecentServers(false, 20);
+      setRecentServers(result.entries || []);
+      setSelectedSavedEntries(new Array(result.entries?.length || 0).fill(false));
+    } catch (error) {
+      console.error('Error loading recent servers:', error);
+      setAlert({ type: 'error', message: 'Failed to load recent servers' });
+    }
+  };
+
+  // Load uploaded files for "Select from saved list" modal
+  const loadUploadedFiles = async () => {
+    try {
+      const result = await serverService.getServerUploads();
+      setUploadedFiles(result.entries || []);
+      if (savedListTab === 'uploads') {
+        setSelectedSavedEntries(new Array(result.entries?.length || 0).fill(false));
+      }
+    } catch (error) {
+      console.error('Error loading uploaded files:', error);
+      setAlert({ type: 'error', message: 'Failed to load uploaded files' });
+    }
+  };
+
+  // Preview servers from selected entries
+  const previewSelectedServers = async () => {
+    const selectedEntries = savedListTab === 'recent' 
+      ? recentServers.filter((_, index) => selectedSavedEntries[index])
+      : uploadedFiles.filter((_, index) => selectedSavedEntries[index]);
+    
+    if (selectedEntries.length === 0) {
+      setAlert({ type: 'error', message: 'Please select at least one entry to preview' });
+      return;
+    }
+
+    try {
+      // For now, we'll show basic info. In a real implementation, 
+      // you'd fetch detailed server lists from the backend
+      setPreviewServers(selectedEntries);
+      setShowPreviewModal(true);
+    } catch (error) {
+      console.error('Error previewing servers:', error);
+      setAlert({ type: 'error', message: 'Failed to preview servers' });
+    }
+  };
+
+  // Apply selected servers to assessment
+  const applySelectedServers = () => {
+    const selectedEntries = savedListTab === 'recent' 
+      ? recentServers.filter((_, index) => selectedSavedEntries[index])
+      : uploadedFiles.filter((_, index) => selectedSavedEntries[index]);
+    
+    if (selectedEntries.length === 0) {
+      setAlert({ type: 'error', message: 'Please select at least one entry' });
+      return;
+    }
+
+    // Convert selected entries to server format and add to assessment
+    const newServers = selectedEntries.map((entry, index) => ({
+      name: entry.description || `Server ${index + 1}`,
+      ip: entry.server_info?.ip || 'Unknown',
+      serverIP: entry.server_info?.ip || 'Unknown',
+      sshPort: entry.server_info?.ssh_port || '22',
+      sshUser: entry.server_info?.admin_username || '',
+      sshPassword: entry.server_info?.admin_password || '',
+      sudoUser: entry.server_info?.root_username || '',
+      sudoPassword: entry.server_info?.root_password || ''
+    }));
+
+    // Add to existing servers
+    const updatedServers = [...servers, ...newServers];
+    const updatedSelectedServers = [...selectedServers, ...new Array(newServers.length).fill(true)];
+    
+    updateState({ 
+      servers: updatedServers, 
+      selectedServers: updatedSelectedServers 
+    });
+
+    setShowSelectFromSavedModal(false);
+    setAlert({ type: 'success', message: `Added ${newServers.length} servers from saved list` });
+  };
+
+  // Load data when "Select from saved list" modal opens
+  useEffect(() => {
+    if (showSelectFromSavedModal) {
+      if (savedListTab === 'recent') {
+        loadRecentServers();
+      } else {
+        loadUploadedFiles();
+      }
+    }
+  }, [showSelectFromSavedModal, savedListTab]);
 
   return (
     <div>
@@ -1697,6 +1812,11 @@ const RiskAssessment: React.FC = () => {
                       </button>
                     </div>
                     <div className="col-md-4">
+                      <button type="button" className="btn btn-outline-success btn-block mb-2" onClick={() => setShowSelectFromSavedModal(true)}>
+                        <i className="fas fa-history mr-2"></i>Chọn từ danh sách đã lưu
+                      </button>
+                    </div>
+                    <div className="col-md-4">
                       <button type="button" className="btn btn-outline-info btn-block mb-2">
                         <i className="fas fa-plug mr-2"></i>Test Connection
                       </button>
@@ -2048,6 +2168,218 @@ const RiskAssessment: React.FC = () => {
           <button type="button" className="close" onClick={() => setNotification(null)}>
             <span>&times;</span>
           </button>
+        </div>
+      )}
+
+      {/* Select from Saved List Modal */}
+      {showSelectFromSavedModal && (
+        <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-xl">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Chọn từ danh sách đã lưu</h5>
+                <button type="button" className="close" onClick={() => setShowSelectFromSavedModal(false)}>
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                {/* Tab Navigation */}
+                <ul className="nav nav-tabs mb-3">
+                  <li className="nav-item">
+                    <button 
+                      className={`nav-link ${savedListTab === 'recent' ? 'active' : ''}`}
+                      onClick={() => setSavedListTab('recent')}
+                    >
+                      Assessment gần đây
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button 
+                      className={`nav-link ${savedListTab === 'uploads' ? 'active' : ''}`}
+                      onClick={() => setSavedListTab('uploads')}
+                    >
+                      File đã tải lên
+                    </button>
+                  </li>
+                </ul>
+
+                {/* Content based on selected tab */}
+                {savedListTab === 'recent' ? (
+                  <div>
+                    <h6>Danh sách Assessment Risk gần đây</h6>
+                    {recentServers.length === 0 ? (
+                      <p className="text-muted">Không có assessment nào gần đây</p>
+                    ) : (
+                      <div className="table-responsive">
+                        <table className="table table-striped">
+                          <thead>
+                            <tr>
+                              <th>
+                                <input 
+                                  type="checkbox" 
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSelectedSavedEntries(new Array(recentServers.length).fill(checked));
+                                  }}
+                                />
+                              </th>
+                              <th>ID</th>
+                              <th>Thời gian</th>
+                              <th>Số server</th>
+                              <th>Mô tả</th>
+                              <th>Trạng thái</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recentServers.map((entry, index) => (
+                              <tr key={entry.id || index}>
+                                <td>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedSavedEntries[index] || false}
+                                    onChange={(e) => {
+                                      const newSelected = [...selectedSavedEntries];
+                                      newSelected[index] = e.target.checked;
+                                      setSelectedSavedEntries(newSelected);
+                                    }}
+                                  />
+                                </td>
+                                <td>{entry.id || entry.source_id}</td>
+                                <td>{new Date(entry.created_at).toLocaleString()}</td>
+                                <td>{entry.total_servers || 'N/A'}</td>
+                                <td>{entry.description || 'Không có mô tả'}</td>
+                                <td>
+                                  <span className={`badge ${entry.status === 'completed' ? 'badge-success' : 'badge-warning'}`}>
+                                    {entry.status || 'Unknown'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <h6>Danh sách File Server đã tải lên</h6>
+                    {uploadedFiles.length === 0 ? (
+                      <p className="text-muted">Không có file nào đã tải lên</p>
+                    ) : (
+                      <div className="table-responsive">
+                        <table className="table table-striped">
+                          <thead>
+                            <tr>
+                              <th>
+                                <input 
+                                  type="checkbox" 
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSelectedSavedEntries(new Array(uploadedFiles.length).fill(checked));
+                                  }}
+                                />
+                              </th>
+                              <th>Tên file</th>
+                              <th>Thời gian</th>
+                              <th>Số server</th>
+                              <th>Mô tả</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {uploadedFiles.map((file, index) => (
+                              <tr key={file.id || index}>
+                                <td>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedSavedEntries[index] || false}
+                                    onChange={(e) => {
+                                      const newSelected = [...selectedSavedEntries];
+                                      newSelected[index] = e.target.checked;
+                                      setSelectedSavedEntries(newSelected);
+                                    }}
+                                  />
+                                </td>
+                                <td>{file.file_name || 'Unknown'}</td>
+                                <td>{new Date(file.created_at).toLocaleString()}</td>
+                                <td>{file.total_servers || 'N/A'}</td>
+                                <td>{file.description || 'Không có mô tả'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-info" 
+                  onClick={previewSelectedServers}
+                  disabled={!selectedSavedEntries.some(selected => selected)}
+                >
+                  <i className="fas fa-eye mr-2"></i>Preview
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-success" 
+                  onClick={applySelectedServers}
+                  disabled={!selectedSavedEntries.some(selected => selected)}
+                >
+                  <i className="fas fa-check mr-2"></i>Áp dụng
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowSelectFromSavedModal(false)}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Servers Modal */}
+      {showPreviewModal && (
+        <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Preview Servers</h5>
+                <button type="button" className="close" onClick={() => setShowPreviewModal(false)}>
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="table-responsive">
+                  <table className="table table-striped">
+                    <thead>
+                      <tr>
+                        <th>IP</th>
+                        <th>SSH Port</th>
+                        <th>Admin User</th>
+                        <th>Root User</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewServers.map((server, index) => (
+                        <tr key={index}>
+                          <td>{server.server_info?.ip || 'Unknown'}</td>
+                          <td>{server.server_info?.ssh_port || '22'}</td>
+                          <td>{server.server_info?.admin_username || 'N/A'}</td>
+                          <td>{server.server_info?.root_username || 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowPreviewModal(false)}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

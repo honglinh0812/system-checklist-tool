@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface AssessmentResult {
   server_ip: string;
@@ -43,6 +44,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
   results, 
   onServerFilterChange 
 }) => {
+  const { t } = useTranslation();
 
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -334,7 +336,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                            <i className="fas fa-list-alt fa-2x"></i>
                          </div>
                          <span className="h3 mb-0 text-primary font-weight-bold">{stats.total}</span>
-                         <div className="small text-muted mt-1">Total Commands</div>
+                         <div className="small text-muted mt-1">{t('totalCommands')}</div>
                        </div>
                      </div>
                     <div className="col-lg-2 col-md-4 col-sm-6 mb-3">
@@ -345,7 +347,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                            <i className="fas fa-check-circle fa-2x"></i>
                          </div>
                          <span className="h3 mb-0 text-success font-weight-bold">{stats.ok}</span>
-                         <div className="small text-muted mt-1">OK</div>
+                         <div className="small text-muted mt-1">{t('ok')}</div>
                          <div className="progress mt-2" style={{height: '4px'}}>
                            <div className="progress-bar bg-success" style={{width: `${stats.total > 0 ? (stats.ok / stats.total * 100) : 0}%`}}></div>
                          </div>
@@ -359,7 +361,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                            <i className="fas fa-times-circle fa-2x"></i>
                          </div>
                          <span className="h3 mb-0 text-danger font-weight-bold">{stats.notOk}</span>
-                         <div className="small text-muted mt-1">Not OK</div>
+                         <div className="small text-muted mt-1">{t('notOk')}</div>
                          <div className="progress mt-2" style={{height: '4px'}}>
                            <div className="progress-bar bg-danger" style={{width: `${stats.total > 0 ? (stats.notOk / stats.total * 100) : 0}%`}}></div>
                          </div>
@@ -387,7 +389,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                            <i className="fas fa-question-circle fa-2x"></i>
                          </div>
                          <span className="h3 mb-0 text-secondary font-weight-bold">{stats.na}</span>
-                          <div className="small text-muted mt-1">Unknown</div>
+                          <div className="small text-muted mt-1">{t('unknown')}</div>
                           <div className="progress mt-2" style={{height: '4px'}}>
                             <div className="progress-bar bg-secondary" style={{width: `${stats.total > 0 ? (stats.na / stats.total * 100) : 0}%`}}></div>
                          </div>
@@ -401,7 +403,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                            <i className="fas fa-server fa-2x"></i>
                          </div>
                          <span className="h3 mb-0 text-info font-weight-bold">{uniqueServers.length}</span>
-                         <div className="small text-muted mt-1">Active Servers</div>
+                         <div className="small text-muted mt-1">{t('activeServers')}</div>
                        </div>
                      </div>
                   </div>
@@ -544,7 +546,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                 <div className="card-body p-3">
                   <div className="row">
                     <div className="col-md-6 mb-2">
-                      <label className="font-weight-bold text-muted small">Items per page</label>
+                      <label className="font-weight-bold text-muted small">{t('itemsPerPage')}</label>
                       <select 
                         className="form-control form-control-sm" 
                         value={itemsPerPage}
@@ -561,7 +563,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                       </select>
                     </div>
                     <div className="col-md-6 mb-2">
-                      <label className="font-weight-bold text-muted small">Sort by</label>
+                      <label className="font-weight-bold text-muted small">{t('sortBy')}</label>
                       <select 
                         className="form-control form-control-sm" 
                         value={`${sortBy}-${sortOrder}`}
@@ -600,14 +602,14 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
           <div className="card-body text-center py-5">
             <div className="mb-4">
               <i className="fas fa-server fa-4x text-muted mb-3"></i>
-              <h5 className="text-muted">No Servers Selected</h5>
-              <p className="text-muted mb-4">Please select at least one server from the filter above to view assessment results.</p>
+              <h5 className="text-muted">{t('noServersSelected')}</h5>
+              <p className="text-muted mb-4">{t('pleaseSelectServer')}</p>
               <button 
                 className="btn btn-primary"
                 onClick={() => setSelectedServers(uniqueServers)}
               >
                 <i className="fas fa-check-double mr-2"></i>
-                Select All Servers
+                {t('selectAllServers')}
               </button>
             </div>
           </div>
@@ -726,14 +728,14 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                           <td className="align-middle py-3">
                             <div className="d-flex align-items-center">
                               {getStatusBadge(result)}
-                              {status === 'not_ok' && result.recommendations && result.recommendations.length > 0 && (
+                              {getResultStatus(result) === 'not_ok' && result.recommendations && result.recommendations.length > 0 && (
                                 <button
                                   type="button"
                                   className="btn btn-sm btn-outline-info ml-2"
                                   onClick={() => handleShowRecommendations(result)}
                                   title="Xem gợi ý khắc phục"
                                 >
-                                  <i className="fas fa-lightbulb"></i>
+                                  <i className="fas fa-tools"></i>
                                 </button>
                               )}
                             </div>
@@ -742,7 +744,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                             <div className="output-cell">
                               <div style={{ wordWrap: 'break-word', whiteSpace: 'normal' }}>
                                 {result.status === 'SKIPPED' ? (
-                                  <span className="text-warning font-italic">Skipped</span>
+                                  <span className="text-warning font-italic">{t('skipped')}</span>
                                 ) : (result.output || result.actual_output) ? (
                                   <span className={`${status === 'ok' ? 'text-success' : status === 'not_ok' ? 'text-danger' : 'text-muted'}`} style={{ wordWrap: 'break-word', whiteSpace: 'normal' }}>
                                     {result.output || result.actual_output}
@@ -830,7 +832,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                           <div className="bg-light p-3 rounded border" style={{ fontSize: '12px', minHeight: '60px' }}>
                                             {result.reference_value || result.expected_output ? (
                                               <div>
-                                                <span className="badge badge-info mb-2">Reference</span>
+                                                <span className="badge badge-info mb-2">{t('reference')}</span>
                                                 <div className="text-dark">{result.reference_value || result.expected_output}</div>
                                               </div>
                                             ) : (
@@ -859,7 +861,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                                 <div className="d-flex align-items-start">
                                                   <i className="fas fa-exclamation-triangle text-warning mr-2 mt-1"></i>
                                                   <div>
-                                                    <strong className="text-warning d-block">Skip Condition</strong>
+                                                    <strong className="text-warning d-block">{t('skipCondition')}</strong>
                                                     <small className="text-dark">{result.skip_reason}</small>
                                                   </div>
                                                 </div>
@@ -870,7 +872,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                                 <div className="d-flex align-items-start">
                                                   <i className="fas fa-check-circle text-info mr-2 mt-1"></i>
                                                   <div>
-                                                    <strong className="text-info d-block">Validation Result</strong>
+                                                    <strong className="text-info d-block">{t('validationResult')}</strong>
                                                     <small className="text-dark">{result.validation_result}</small>
                                                   </div>
                                                 </div>
@@ -881,7 +883,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                                 <div className="d-flex align-items-start">
                                                   <i className="fas fa-gavel text-primary mr-2 mt-1"></i>
                                                   <div>
-                                                    <strong className="text-primary d-block">Final Decision</strong>
+                                                    <strong className="text-primary d-block">{t('finalDecision')}</strong>
                                                     <small className="text-dark">{result.decision}</small>
                                                   </div>
                                                 </div>
@@ -897,10 +899,10 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                                   <table className="table table-sm table-bordered mb-0">
                                                     <thead className="thead-light">
                                                       <tr>
-                                                        <th style={{width:'25%'}}>Server</th>
-                                                        <th style={{width:'20%'}}>Variables</th>
-                                                        <th style={{width:'15%'}}>Status</th>
-                                                        <th style={{width:'40%'}}>Output</th>
+                                                        <th style={{width:'25%'}}>{t('server')}</th>
+                                                        <th style={{width:'20%'}}>{t('variables')}</th>
+                                                        <th style={{width:'15%'}}>{t('status')}</th>
+                                                        <th style={{width:'40%'}}>{t('output')}</th>
                                                       </tr>
                                                     </thead>
                                                     <tbody>
@@ -936,7 +938,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                             {!result.skip_reason && !result.validation_result && !result.decision && (!result.consolidated_results || result.consolidated_results.length === 0) && (
                                               <div className="text-muted font-italic text-center py-4">
                                                 <i className="fas fa-info-circle fa-2x mb-2"></i>
-                                                <div>No additional assessment details available</div>
+                                                <div>{t('noAdditionalDetails')}</div>
                                               </div>
                                             )}
                                           </div>
@@ -965,12 +967,12 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                 <div className="d-flex align-items-center mb-3 mb-lg-0">
                   <div className="text-muted mr-4">
                     <i className="fas fa-info-circle mr-2"></i>
-                    Showing <strong>{startIndex + 1}</strong> to <strong>{Math.min(startIndex + itemsPerPage, filteredResults.length)}</strong> of <strong>{filteredResults.length}</strong> results
+                    {t('showing')} <strong>{startIndex + 1}</strong> {t('to')} <strong>{Math.min(startIndex + itemsPerPage, filteredResults.length)}</strong> {t('of')} <strong>{filteredResults.length}</strong> {t('results')}
                   </div>
                   <div className="d-flex align-items-center">
                     <label className="text-muted mr-2 mb-0">
                       <i className="fas fa-list mr-1"></i>
-                      Items per page:
+                      {t('itemsPerPage')}:
                     </label>
                     <select 
                       className="form-control form-control-sm" 
@@ -1084,7 +1086,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">
-                  <i className="fas fa-lightbulb text-warning mr-2"></i>
+                  <i className="fas fa-tools text-warning mr-2"></i>
                   Gợi ý khắc phục - {selectedCommandTitle}
                 </h5>
                 <button

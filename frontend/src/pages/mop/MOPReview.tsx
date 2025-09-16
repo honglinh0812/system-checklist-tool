@@ -902,11 +902,10 @@ const MOPReview: React.FC = () => {
                             <tr>
                               <th style={{ width: '5%' }}>STT</th>
                               <th style={{ width: '10%' }}>ID Ref</th>
-                              <th style={{ width: '20%' }}>Tên Command</th>
-                              <th style={{ width: '25%' }}>Câu lệnh</th>
-                              <th style={{ width: '12%' }}>Extract</th>
-                              <th style={{ width: '12%' }}>Comparator</th>
-                              <th style={{ width: '16%' }}>Reference Value</th>
+                              <th style={{ width: '25%' }}>Command name</th>
+                              <th style={{ width: '30%' }}>Command</th>
+                              <th style={{ width: '15%' }}>Comparator</th>
+                              <th style={{ width: '15%' }}>Reference Value</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -916,7 +915,6 @@ const MOPReview: React.FC = () => {
                                 <td><small className="text-muted">{cmd.command_id_ref || '-'}</small></td>
                                 <td><strong>{cmd.title}</strong></td>
                                 <td><code className="text-wrap">{cmd.command}</code></td>
-                                <td><small className="text-muted">{cmd.extract_method || '-'}</small></td>
                                 <td><small className="text-muted">{cmd.comparator_method || '-'}</small></td>
                                 <td><small className="text-muted">{cmd.reference_value || '-'}</small></td>
                               </tr>

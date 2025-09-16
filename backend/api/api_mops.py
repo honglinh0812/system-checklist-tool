@@ -1356,24 +1356,24 @@ def upload_mop():
             
             command = Command(
                 mop_id=mop.id,
-                command_text=cmd_data['command'],  # Map to required field
-                description=cmd_data['title'],     # Map title to description
-                expected_output=cmd_data['reference_value'],  # Map to expected_output
-                order_index=cmd_data['order_index'],
-                is_critical=cmd_data['is_critical'],
-                timeout_seconds=cmd_data['timeout_seconds'],
-                # New 6-column format fields
-                extract_method=cmd_data.get('extract_method'),
-                comparator_method=cmd_data.get('comparator_method'),
+                # Strict 5-column mapping
+                command_text=cmd_data['command_text'],
+                description=cmd_data['title'],
+                comparator_method=cmd_data.get('comparator_method', ''),
                 command_id_ref=cmd_data.get('command_id_ref'),
-                # Skip condition fields
+                reference_value=cmd_data.get('reference_value', ''),
+                # Order/flags
+                order_index=cmd_data.get('order_index', 0),
+                is_critical=cmd_data.get('is_critical', False),
+                timeout_seconds=cmd_data.get('timeout_seconds'),
+                # Skip condition fields (kept for future use, if provided)
                 skip_condition_id=skip_condition_id,
                 skip_condition_type=skip_condition_type,
                 skip_condition_value=skip_condition_value,
-                # Keep legacy fields for backward compatibility
+                # Legacy compatibility (optional fill)
                 title=cmd_data['title'],
-                command=cmd_data['command'],
-                reference_value=cmd_data['reference_value']
+                command=cmd_data['original_command'] if 'original_command' in cmd_data else cmd_data['command_text'],
+                expected_output=cmd_data.get('reference_value', '')
             )
             db.session.add(command)
         

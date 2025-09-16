@@ -330,6 +330,139 @@ def download_assessment_report(report_id):
         logger.error(f"Error downloading report {report_id}: {str(e)}")
         return api_error('Failed to download report', 500)
 
+# =========================
+# Saved Servers Endpoints
+# =========================
+
+@assessments_bp.route('/risk/recent-servers', methods=['GET'])
+@jwt_required()
+def get_risk_recent_servers():
+    """Return recent server entries from risk assessments.
+
+    Query params:
+      - limit: number of entries (default 20, max 100)
+      - include: 'detail' to include full servers array
+    """
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+
+        limit = min(request.args.get('limit', 20, type=int), 100)
+        include_detail = request.args.get('include') == 'detail'
+
+        q = AssessmentResult.query.filter_by(assessment_type='risk').order_by(AssessmentResult.created_at.desc())
+        # Users only see their own entries
+        if current_user.role == 'user':
+            q = q.filter(AssessmentResult.executed_by == current_user.id)
+
+        results = []
+        for ar in q.limit(limit).all():
+            servers = ar.server_info or []
+            results.append({
+                'id': ar.id,
+                'source_type': 'assessment',
+                'created_at': ar.created_at.isoformat() if getattr(ar, 'created_at', None) else None,
+                'total_servers': len(servers),
+                'description': f"Risk assessment #{ar.id}",
+                'servers': servers if include_detail else None
+            })
+
+        return api_response({'entries': results, 'total': len(results)})
+    except Exception as e:
+        logger.error(f"Error fetching risk recent servers: {str(e)}")
+        return api_error('Failed to fetch recent servers', 500)
+
+
+@assessments_bp.route('/handover/recent-servers', methods=['GET'])
+@jwt_required()
+def get_handover_recent_servers():
+    """Return recent server entries from handover assessments.
+
+    Query params:
+      - limit: number of entries (default 20, max 100)
+      - include: 'detail' to include full servers array
+    """
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+
+        limit = min(request.args.get('limit', 20, type=int), 100)
+        include_detail = request.args.get('include') == 'detail'
+
+        q = AssessmentResult.query.filter_by(assessment_type='handover').order_by(AssessmentResult.created_at.desc())
+        if current_user.role == 'user':
+            q = q.filter(AssessmentResult.executed_by == current_user.id)
+
+        results = []
+        for ar in q.limit(limit).all():
+            servers = ar.server_info or []
+            results.append({
+                'id': ar.id,
+                'source_type': 'assessment',
+                'created_at': ar.created_at.isoformat() if getattr(ar, 'created_at', None) else None,
+                'total_servers': len(servers),
+                'description': f"Handover assessment #{ar.id}",
+                'servers': servers if include_detail else None
+            })
+
+        return api_response({'entries': results, 'total': len(results)})
+    except Exception as e:
+        logger.error(f"Error fetching handover recent servers: {str(e)}")
+        return api_error('Failed to fetch recent servers', 500)
+
+
+@assessments_bp.route('/servers/uploads', methods=['GET'])
+@jwt_required()
+def get_uploaded_server_lists():
+    """List uploaded server files and basic metadata.
+
+    Assumes server lists are kept under uploads/servers/*.csv|*.txt|*.xlsx|*.xls
+    Return: id (path hash), file_name, created_at (mtime), size, total_lines (if applicable)
+    """
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+
+        base_dir = os.path.join('uploads', 'servers')
+        if not os.path.isdir(base_dir):
+            return api_response({'entries': [], 'total': 0})
+
+        allowed_exts = {'.csv', '.txt', '.xlsx', '.xls'}
+        entries = []
+        for fname in os.listdir(base_dir):
+            fpath = os.path.join(base_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            _, ext = os.path.splitext(fname)
+            if ext.lower() not in allowed_exts:
+                continue
+            stat = os.stat(fpath)
+            total_lines = None
+            if ext.lower() in {'.csv', '.txt'}:
+                try:
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as fh:
+                        total_lines = sum(1 for _ in fh)
+                except Exception:
+                    total_lines = None
+            entries.append({
+                'id': fpath,
+                'source_type': 'upload',
+                'file_name': fname,
+                'created_at': datetime.fromtimestamp(stat.st_mtime, tz=GMT_PLUS_7).isoformat(),
+                'size': stat.st_size,
+                'total_lines': total_lines
+            })
+
+        # Sort by mtime desc
+        entries.sort(key=lambda e: e['created_at'], reverse=True)
+        return api_response({'entries': entries, 'total': len(entries)})
+    except Exception as e:
+        logger.error(f"Error listing uploaded server files: {str(e)}")
+        return api_error('Failed to list uploaded server files', 500)
+
 # New Assessment Endpoints
 
 def test_ssh_connection(server_ip, username, password, port=22, timeout=10):

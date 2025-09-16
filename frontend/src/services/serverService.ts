@@ -165,6 +165,42 @@ class ServerService {
       throw error;
     }
   }
+
+  // ===== Saved servers sources for Assessment (Risk/Handover) =====
+  async getRiskRecentServers(includeDetail: boolean = false, limit: number = 20): Promise<{ entries: any[]; total: number }> {
+    try {
+      const qs = new URLSearchParams();
+      if (includeDetail) qs.set('include', 'detail');
+      if (limit) qs.set('limit', String(limit));
+      const url = `${API_ENDPOINTS.ASSESSMENTS.RISK_RECENT_SERVERS}?${qs.toString()}`;
+      return await apiService.get<{ entries: any[]; total: number }>(url);
+    } catch (error) {
+      console.error('Error fetching risk recent servers:', error);
+      throw error;
+    }
+  }
+
+  async getHandoverRecentServers(includeDetail: boolean = false, limit: number = 20): Promise<{ entries: any[]; total: number }> {
+    try {
+      const qs = new URLSearchParams();
+      if (includeDetail) qs.set('include', 'detail');
+      if (limit) qs.set('limit', String(limit));
+      const url = `${API_ENDPOINTS.ASSESSMENTS.HANDOVER_RECENT_SERVERS}?${qs.toString()}`;
+      return await apiService.get<{ entries: any[]; total: number }>(url);
+    } catch (error) {
+      console.error('Error fetching handover recent servers:', error);
+      throw error;
+    }
+  }
+
+  async getServerUploads(): Promise<{ entries: any[]; total: number }> {
+    try {
+      return await apiService.get<{ entries: any[]; total: number }>(API_ENDPOINTS.ASSESSMENTS.SERVER_UPLOADS);
+    } catch (error) {
+      console.error('Error fetching server uploads:', error);
+      throw error;
+    }
+  }
 }
 
 export const serverService = new ServerService();
