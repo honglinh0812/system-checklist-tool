@@ -26,7 +26,6 @@ interface Command {
   command: string; // Command column
   command_text?: string;
   description?: string;
-  extract_method?: string; // Extract column
   comparator_method?: string; // Comparator column
   reference_value?: string; // Reference Value column
   expected_output?: string;

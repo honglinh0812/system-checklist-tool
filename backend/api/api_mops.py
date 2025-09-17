@@ -447,7 +447,6 @@ def add_mop_commands_bulk(mop_id):
                 command=cmd_data.get('command', cmd_data.get('command_text', '')),
                 command_text=cmd_data.get('command', cmd_data.get('command_text', '')),
                 description=cmd_data.get('title', cmd_data.get('description', '')),
-                extract_method=cmd_data.get('extract_method', ''),
                 comparator_method=cmd_data.get('comparator_method', ''),
                 reference_value=cmd_data.get('reference_value', ''),
                 order_index=idx + 1,
@@ -1037,7 +1036,7 @@ def upload_mop_files(mop_id):
             return api_error('No file selected', 400)
         
         # Validate file type
-        allowed_extensions = {'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg'}
+        allowed_extensions = {'pdf', 'doc', 'docx', 'xls', 'xlsx'}
         if not ('.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in allowed_extensions):
             return api_error('File type not allowed', 400)
         
@@ -1192,9 +1191,9 @@ def get_mop_file(mop_id, file_type):
         if file_type == 'pdf':
             mop_file = MOPFile.query.filter_by(mop_id=mop_id, file_type='pdf').first()
         elif file_type == 'appendix':
-            # Appendix can be xlsx, xls, csv, txt
+            # Appendix can be xlsx, xls, csv
             mop_file = MOPFile.query.filter_by(mop_id=mop_id).filter(
-                MOPFile.file_type.in_(['xlsx', 'xls', 'csv', 'txt'])
+                MOPFile.file_type.in_(['xlsx', 'xls', 'csv'])
             ).first()
         else:
             return api_error('Invalid file type', 400)
@@ -1285,8 +1284,8 @@ def upload_mop():
             return api_error('PDF file must have .pdf extension', 400)
         
         appendix_ext = appendix_file.filename.rsplit('.', 1)[1].lower()
-        if appendix_ext not in ['xlsx', 'xls', 'csv', 'txt']:
-            return api_error('Appendix file must be Excel, CSV, or TXT', 400)
+        if appendix_ext not in ['xlsx', 'xls', 'csv']:
+            return api_error('Appendix file must be Excel or CSV', 400)
         
         # Validate appendix file structure before saving
         from services.appendix_parser import AppendixParser

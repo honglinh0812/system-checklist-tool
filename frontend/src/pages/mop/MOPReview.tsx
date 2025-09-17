@@ -35,7 +35,6 @@ interface MOP {
     xlsx?: boolean;
     xls?: boolean;
     csv?: boolean;
-    txt?: boolean;
   };
   commands?: Command[];
 }
@@ -240,7 +239,7 @@ const MOPReview: React.FC = () => {
       }
       
       setFileViewerContent(content);
-    } else if (['appendix', 'xlsx', 'xls', 'csv', 'txt'].includes(fileType)) {
+    } else if (['appendix', 'xlsx', 'xls', 'csv'].includes(fileType)) {
       let icon = 'fas fa-file fa-4x text-primary mb-3';
       let description = 'This file cannot be previewed directly';
       
@@ -250,9 +249,6 @@ const MOPReview: React.FC = () => {
       } else if (fileType === 'csv') {
         icon = 'fas fa-file-csv fa-4x text-info mb-3';
         description = t('csvCannotPreview');
-      } else if (fileType === 'txt') {
-        icon = 'fas fa-file-alt fa-4x text-secondary mb-3';
-        description = t('textCannotPreview');
       } else if (fileType === 'appendix') {
         icon = 'fas fa-file-excel fa-4x text-success mb-3';
         description = t('appendixCannotPreview');
@@ -678,7 +674,7 @@ const MOPReview: React.FC = () => {
                   <div className="col-md-6">
                     <h6><strong>{t('files')}:</strong></h6>
                     <ul className="list-unstyled">
-                      {currentMop.files && (currentMop.files.pdf || currentMop.files.appendix || currentMop.files.xlsx || currentMop.files.xls || currentMop.files.csv || currentMop.files.txt) ? (
+                      {currentMop.files && (currentMop.files.pdf || currentMop.files.appendix || currentMop.files.xlsx || currentMop.files.xls || currentMop.files.csv) ? (
                         <>
                           {currentMop.files.pdf && (
                             <li className="mb-2">
@@ -841,40 +837,6 @@ const MOPReview: React.FC = () => {
                               {!isAdmin && (
                                 <a 
                                   href={`/api/mops/${currentMop.id}/files/csv?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
-                                  className="btn btn-sm btn-outline-secondary ml-2"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  <i className="fas fa-download mr-1"></i>Download
-                                </a>
-                              )}
-                            </li>
-                          )}
-                          {currentMop.files.txt && (
-                            <li className="mb-2">
-                              <i className="fas fa-file-alt mr-2"></i>
-                              Text File
-                              {isAdmin && (
-                                <div className="btn-group btn-group-sm ml-2">
-                                  <button 
-                                    className="btn btn-sm btn-outline-primary" 
-                                    onClick={() => viewMOPFile(currentMop.id, 'txt')}
-                                  >
-                                    <i className="fas fa-eye mr-1"></i>View
-                                  </button>
-                                  <a 
-                                    href={`/api/mops/${currentMop.id}/files/txt?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
-                                    className="btn btn-sm btn-outline-secondary" 
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    <i className="fas fa-download mr-1"></i>Download
-                                  </a>
-                                </div>
-                              )}
-                              {!isAdmin && (
-                                <a 
-                                  href={`/api/mops/${currentMop.id}/files/txt?token=${encodeURIComponent(localStorage.getItem('token') || '')}`} 
                                   className="btn btn-sm btn-outline-secondary ml-2"
                                   target="_blank"
                                   rel="noopener noreferrer"

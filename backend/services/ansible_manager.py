@@ -789,55 +789,43 @@ class AnsibleRunner:
                 # Append once after attempting to bind outputs (ok/failed)
                 server_results[ip]['commands'].append(cmd_result)
                 
-                # Perform validation against reference value using AdvancedValidator
+                # Perform validation against reference value using ExtractProcessor
                 try:
-                    from .advanced_validator import AdvancedValidator
-                    validator = AdvancedValidator()
+                    from .extract_processor import ExtractProcessor
+                    processor = ExtractProcessor()
                     
                     # Skip validation for skipped commands
                     if cmd_result.get('skipped', False):
                         logger.info(f"Skipping validation for skipped command: {cmd_result.get('title', '')}")
                         logger.info(f"Preserving skipped status for command: {cmd_result.get('title', '')}")
                     else:
-                        # Check if this is 6-column format (has extract_method and comparator_method)
-                        if cmd.get('extract_method') and cmd.get('comparator_method'):
-                            # New 6-column format validation
-                            expected_value = cmd.get('reference_value', '')
-                            validation_options = {
-                                'extract_method': cmd.get('extract_method'),
-                                'comparator_method': cmd.get('comparator_method')
-                            }
-                            
-                            validation = validator.validate_output(
-                                cmd_result.get('output', ''),
-                                expected_value,
-                                'extract_compare',
-                                validation_options
-                            )
+                        # Use validation based on comparator_method from command
+                        expected_value = cmd.get('reference_value', '')
+                        comparator_method = cmd.get('comparator_method', 'eq')
                         
-                            # Use formatted_result from validation details for display
-                            formatted_result = validation.get('details', {}).get('formatted_result', 'Not OK')
-                            cmd_result['validation_result'] = formatted_result
-                        else:
-                            # Fallback to basic validation for commands without extract/comparator methods
-                            expected_value = cmd.get('reference_value', '')
-                            validation_logic = 'exact_match'  # Default validation method
-                            
-                            validation = validator.validate_output(
-                                cmd_result.get('output', ''),
-                                expected_value,
-                                validation_logic
-                            )
-                            
-                            # Convert legacy PASS/FAIL to OK/Not OK format
-                            is_valid = validation.get('is_valid', False)
-                            cmd_result['validation_result'] = 'OK' if is_valid else 'Not OK'
+                        # Validate using ExtractProcessor
+                        is_valid = processor._compare_single(
+                            cmd_result.get('output', ''),
+                            comparator_method,
+                            expected_value
+                        )
+                        
+                        # Create validation result in expected format
+                        validation = {
+                            'is_valid': is_valid,
+                            'validation_type': comparator_method,
+                            'message': f"Validation using {comparator_method} comparator"
+                        }
+                        
+                        # Convert legacy PASS/FAIL to OK/Not OK format
+                        is_valid = validation.get('is_valid', False)
+                        cmd_result['validation_result'] = 'OK' if is_valid else 'Not OK'
                     
                         cmd_result['is_valid'] = validation.get('is_valid', False)
                         cmd_result['validation_details'] = validation
                         cmd_result['expected_value'] = expected_value
-                        cmd_result['validation_type'] = validation.get('validation_type', 'extract_compare' if cmd.get('extract_method') else 'exact_match')
-                        cmd_result['validation_method'] = cmd.get('extract_method', 'exact_match')
+                        cmd_result['validation_type'] = validation.get('validation_type', 'exact_match')
+                        cmd_result['validation_method'] = 'exact_match'
                         # Don't override decision for skipped commands
                         cmd_result['decision'] = 'APPROVED' if validation.get('is_valid', False) else 'REJECTED'
                             
@@ -855,11 +843,8 @@ class AnsibleRunner:
                                 logger.warning(f"Failed to generate recommendations for command {i+1}: {str(e)}")
                                 cmd_result['recommendations'] = []
                         
-                        # Add 6-column specific fields
-                        if cmd.get('extract_method'):
-                            cmd_result['extract_method'] = cmd.get('extract_method')
-                            cmd_result['comparator_method'] = cmd.get('comparator_method')
-                            cmd_result['command_id_ref'] = cmd.get('command_id_ref', '')
+                        # Add command reference field
+                        cmd_result['command_id_ref'] = cmd.get('command_id_ref', '')
                     
                 except Exception as e:
                     logger.warning(f"Validation error for {ip} cmd {i}: {str(e)}")
@@ -959,8 +944,7 @@ class AnsibleRunner:
                                 'is_valid': cmd_result.get('is_valid', False),
                                 'skipped': cmd_result.get('skipped', False),
                                 'skip_reason': cmd_result.get('skip_reason', ''),
-                                'extract_method': cmd_result.get('extract_method', ''),
-                                'comparator_method': cmd_result.get('comparator_method', ''),
+
                                 'command_id_ref': cmd_result.get('command_id_ref', ''),
                                 'skip_condition': cmd_result.get('skip_condition_result', '')
                             })
@@ -1000,8 +984,8 @@ class AnsibleRunner:
                                 'skipped': all(s.get('skipped', False) for s in sub),
                                 'skip_reason': '; '.join([s.get('skip_reason','') for s in sub if s.get('skip_reason')]),
                                 'title': base['title'],
-                                'extract_method': '',
-                                'comparator_method': '',
+
+
                                 'command_id_ref': sub[0].get('command_id_ref', '') if sub else '',
                                 'command_index': (display_idx - 1),
                                 'skip_condition': '',

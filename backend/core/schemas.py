@@ -185,7 +185,7 @@ class FilterSchema(Schema):
 
 # File Upload Schemas
 class FileUploadSchema(Schema):
-    file_type = fields.Str(required=True, validate=validate.OneOf(['pdf', 'xls', 'xlsx', 'txt']))
+    file_type = fields.Str(required=True, validate=validate.OneOf(['pdf', 'xls', 'xlsx']))
     description = fields.Str()
 
 # Dashboard Schemas

@@ -34,7 +34,7 @@ const MOPSubmission: React.FC = () => {
   });
   const [fileNames, setFileNames] = usePersistedState('submission_fileNames', {
     pdfFile: 'Choose PDF file',
-    appendixFile: 'Choose Excel/CSV/TXT file'
+    appendixFile: 'Choose Excel/CSV file'
   });
   const [submissionStatus, setSubmissionStatus] = usePersistedState<SubmissionStatus>('submission_submissionStatus', { type: null, message: '' });
   const [showStatusModal, setShowStatusModal] = useModalState(false);
@@ -44,7 +44,7 @@ const MOPSubmission: React.FC = () => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, fileType: 'pdfFile' | 'appendixFile') => {
     const file = e.target.files?.[0] || null;
-    const fileName = file?.name || (fileType === 'pdfFile' ? 'Choose PDF file' : 'Choose Excel/CSV/TXT file');
+    const fileName = file?.name || (fileType === 'pdfFile' ? 'Choose PDF file' : 'Choose Excel/CSV file');
     
     setFormData(prev => ({ ...prev, [fileType]: file }));
     setFileNames(prev => ({ ...prev, [fileType]: fileName }));
@@ -108,7 +108,7 @@ const MOPSubmission: React.FC = () => {
         });
         // Reset form
         setFormData({ mopName: '', assessmentType: 'handover_assessment', pdfFile: null, appendixFile: null, description: '' });
-        setFileNames({ pdfFile: 'Choose PDF file', appendixFile: 'Choose Excel/CSV/TXT file' });
+        setFileNames({ pdfFile: 'Choose PDF file', appendixFile: 'Choose Excel/CSV file' });
       } else {
         setSubmissionStatus({
           type: 'error',
@@ -300,7 +300,7 @@ const MOPSubmission: React.FC = () => {
                                 type="file" 
                                 className="custom-file-input" 
                                 id="appendixFile" 
-                                accept=".xlsx,.xls,.csv,.txt" 
+                                accept=".xlsx,.xls,.csv" 
                                 required
                                 onChange={(e) => handleFileChange(e, 'appendixFile')}
                               />

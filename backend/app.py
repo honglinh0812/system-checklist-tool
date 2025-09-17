@@ -62,7 +62,9 @@ def create_app(config_name='development'):
     
     # Force DB URI to use system_checklist database
     Config.init_app(app)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:postgres@localhost/system_checklist'
+    # Use DATABASE_URL from environment if available, otherwise use config default
+    if os.getenv('DATABASE_URL'):
+        app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     logger.info(f"[BOOT] Using DB URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
     
     # Initialize extensions
@@ -460,7 +462,7 @@ def get_command_templates():
 
 @app.route('/api/upload/servers', methods=['POST'])
 def upload_servers():
-    """Upload server list file (xls, xlsx, txt)"""
+    """Upload server list file (xls, xlsx)"""
     global current_servers
     
     try:
@@ -475,7 +477,7 @@ def upload_servers():
             return jsonify({'error': 'Invalid file'}), 400
         
         # Check file extension
-        allowed_extensions = {'xls', 'xlsx', 'txt', 'csv'}
+        allowed_extensions = {'xls', 'xlsx', 'csv'}
         file_extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
         
         if file_extension not in allowed_extensions:
@@ -491,7 +493,7 @@ def upload_servers():
         try:
             if file_extension in ['xls', 'xlsx']:
                 df = pd.read_excel(filepath)
-            elif file_extension in ['txt', 'csv']:
+            elif file_extension in ['csv']:
                 df = pd.read_csv(filepath)
             else:
                 return jsonify({'error': 'Unsupported file format'}), 400

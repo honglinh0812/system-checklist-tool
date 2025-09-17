@@ -24,8 +24,7 @@ class AdvancedValidator:
             'regex': self._validate_regex,
             'comparison': self._validate_comparison,
             'json': self._validate_json,
-            'custom': self._validate_custom,
-            'extract_compare': self._validate_extract_compare  # New for 6-column format
+            'custom': self._validate_custom
         }
         self.extract_processor = ExtractProcessor()
         self.variable_expander = VariableExpander()
@@ -325,75 +324,7 @@ class AdvancedValidator:
             else:
                 return output_json == expected_json
 
-    def _validate_extract_compare(self, output: str, expected: str, options: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        New validation method for 6-column format using ExtractProcessor
-        
-        Args:
-            output: The actual command output
-            expected: The expected value (reference value)
-            options: Must contain 'extract_method' and 'comparator_method'
-            
-        Returns:
-            Dict containing validation results
-        """
-        try:
-            extract_method = options.get('extract_method', 'raw')
-            comparator_method = options.get('comparator_method', 'eq')
-            
-            # Extract data using ExtractProcessor
-            extracted_data = self.extract_processor.process_extract(output, extract_method)
-            
-            # Apply comparator
-            comparison_result = self.extract_processor.apply_comparator(
-                extracted_data, comparator_method, expected
-            )
-            
-            # Format result based on comparison_result structure
-            if isinstance(comparison_result, dict) and 'overall_result' in comparison_result:
-                # Result from apply_comparator
-                overall_result = comparison_result.get('overall_result', 'Not OK')
-                is_valid = overall_result == 'OK'
-                details = {
-                    'extracted_data': extracted_data,
-                    'expected': expected,
-                    'extract_method': extract_method,
-                    'comparator_method': comparator_method,
-                    'comparison_result': comparison_result,
-                    'formatted_result': overall_result
-                }
-            else:
-                # Single result (boolean)
-                is_valid = bool(comparison_result)
-                details = {
-                    'extracted_data': extracted_data,
-                    'expected': expected,
-                    'extract_method': extract_method,
-                    'comparator_method': comparator_method,
-                    'comparison_result': comparison_result,
-                    'formatted_result': "OK" if is_valid else "Not OK"
-                }
-            
-            return {
-                'is_valid': is_valid,
-                'score': 1.0 if is_valid else 0.0,
-                'details': details,
-                'message': f"Extract method '{extract_method}' with comparator '{comparator_method}' {'passed' if is_valid else 'failed'}"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in extract_compare validation: {str(e)}")
-            return {
-                'is_valid': False,
-                'score': 0.0,
-                'details': {
-                    'error': str(e),
-                    'extract_method': options.get('extract_method', 'unknown'),
-                    'comparator_method': options.get('comparator_method', 'unknown'),
-                    'formatted_result': "Not OK"
-                },
-                'message': f"Validation error: {str(e)}"
-            }
+
 
     # Backward compatibility methods
     def validate_command(self, command: str) -> Dict[str, Any]:

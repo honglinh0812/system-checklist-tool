@@ -418,7 +418,7 @@ def get_handover_recent_servers():
 def get_uploaded_server_lists():
     """List uploaded server files and basic metadata.
 
-    Assumes server lists are kept under uploads/servers/*.csv|*.txt|*.xlsx|*.xls
+    Assumes server lists are kept under uploads/servers/*.csv|*.xlsx|*.xls
     Return: id (path hash), file_name, created_at (mtime), size, total_lines (if applicable)
     """
     try:
@@ -430,7 +430,7 @@ def get_uploaded_server_lists():
         if not os.path.isdir(base_dir):
             return api_response({'entries': [], 'total': 0})
 
-        allowed_exts = {'.csv', '.txt', '.xlsx', '.xls'}
+        allowed_exts = {'.csv', '.xlsx', '.xls'}
         entries = []
         for fname in os.listdir(base_dir):
             fpath = os.path.join(base_dir, fname)
@@ -441,7 +441,7 @@ def get_uploaded_server_lists():
                 continue
             stat = os.stat(fpath)
             total_lines = None
-            if ext.lower() in {'.csv', '.txt'}:
+            if ext.lower() in {'.csv'}:
                 try:
                     with open(fpath, 'r', encoding='utf-8', errors='ignore') as fh:
                         total_lines = sum(1 for _ in fh)
@@ -636,7 +636,7 @@ def start_risk_assessment():
                             'title': command.title or command.description or f'Command {command.order_index}',
                             'command': command.command or command.command_text,
                             'reference_value': command.reference_value or command.expected_output or '',
-                            'extract_method': command.extract_method or 'raw',
+
                             'comparator_method': command.comparator_method or 'eq',
                             'validation_type': 'exact_match',
                             'command_id_ref': str(cmd_id) if cmd_id is not None else None,
@@ -742,7 +742,7 @@ def start_risk_assessment():
                                         'skipped': is_skipped,
                                         'skip_reason': cmd_result.get('skip_reason', ''),
                                         'title': cmd_result.get('title', ''),
-                                        'extract_method': cmd_result.get('extract_method', ''),
+
                                         'comparator_method': cmd_result.get('comparator_method', ''),
                                         'command_id_ref': cmd_result.get('command_id_ref', ''),
                                         'skip_condition': cmd_result.get('skip_condition_result', ''),
@@ -986,7 +986,7 @@ def start_handover_assessment():
                             'title': command.title or command.description or f'Command {command.order_index}',
                             'command': command.command or command.command_text,
                             'reference_value': command.reference_value or command.expected_output or '',
-                            'extract_method': command.extract_method or 'raw',
+
                             'comparator_method': command.comparator_method or 'eq',
                             'validation_type': 'exact_match',
                             'command_id_ref': str(cmd_id) if cmd_id is not None else None,
@@ -1070,7 +1070,6 @@ def start_handover_assessment():
                                         'skipped': cmd_result.get('skipped', False),
                                         'skip_reason': cmd_result.get('skip_reason', ''),
                                         'title': cmd_result.get('title', ''),
-                                        'extract_method': cmd_result.get('extract_method', ''),
                                         'comparator_method': cmd_result.get('comparator_method', ''),
                                         'command_id_ref': cmd_result.get('command_id_ref', ''),
                                         'skip_condition': cmd_result.get('skip_condition_result', ''),

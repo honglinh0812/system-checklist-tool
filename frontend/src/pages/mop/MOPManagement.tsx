@@ -13,7 +13,6 @@ interface Command {
   command: string; // Command column
   command_text?: string;
   description?: string;
-  extract_method?: string; // Extract column
   comparator_method?: string; // Comparator column
   reference_value?: string; // Reference Value column
   expected_output?: string;
@@ -871,10 +870,12 @@ const MOPManagement: React.FC = () => {
                                     <option value="in">in</option>
                                     <option value="not_in">not_in</option>
                                     <option value="int_eq">int_eq</option>
+                                    <option value="int_neq">int_neq</option>
                                     <option value="int_ge">int_ge</option>
                                     <option value="int_gt">int_gt</option>
                                     <option value="int_le">int_le</option>
                                     <option value="int_lt">int_lt</option>
+                                    <option value="wc_eq">wc_eq</option>
                                     <option value="empty">empty</option>
                                     <option value="non_empty">non_empty</option>
                                   </select>
