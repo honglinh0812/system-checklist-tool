@@ -90,6 +90,15 @@ const HandoverAssessment: React.FC = () => {
   const [notification, setNotification] = useState<{type: 'success' | 'error' | 'warning' | 'info'; message: string} | null>(null);
   const [savedServersLoading, setSavedServersLoading] = useState(false);
   
+  // New "Select from saved list" modal states
+  const [showSelectFromSavedModal, setShowSelectFromSavedModal] = useState(false);
+  const [savedListTab, setSavedListTab] = useState<'recent' | 'uploads'>('recent');
+  const [recentServers, setRecentServers] = useState<any[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
+  const [selectedSavedEntries, setSelectedSavedEntries] = useState<boolean[]>([]);
+  const [previewServers, setPreviewServers] = useState<any[]>([]);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  
   // Assessment readiness check
   const assessmentReadiness = {
     mopSelected: !!selectedMOP,
@@ -272,6 +281,21 @@ const HandoverAssessment: React.FC = () => {
         const jobId = response.data.job_id;
         const assessmentId = response.data.assessment_id;
         
+        // Initialize assessment progress with start time
+        updateState({
+          assessmentProgress: {
+            currentCommand: 'Đang khởi tạo...',
+            currentServer: 'Đang chuẩn bị...',
+            completedCommands: 0,
+            totalCommands: selectedMOPData.commands?.length || 0,
+            completedServers: 0,
+            totalServers: mappedServers.length,
+            logs: [],
+            startTime: new Date(),
+            estimatedTimeRemaining: 'Đang tính toán...'
+          }
+        });
+        
         // Polling for job status and progress
         const pollJobStatus = async () => {
           try {
@@ -323,16 +347,17 @@ const HandoverAssessment: React.FC = () => {
                 const startTime = assessmentProgress?.startTime || new Date();
                 const estimatedTimeRemaining = calculateEstimatedTime(detailedProgress, startTime);
                 
-                updateState({
+                updateState({ 
                   assessmentProgress: {
+                    ...assessmentProgress,
                     currentCommand: `Đang thực hiện command ${detailedProgress.current_command || 1}/${detailedProgress.total_commands || selectedMOPData.commands?.length || 0}`,
                     currentServer: `Đang xử lý server ${detailedProgress.current_server || 1}/${detailedProgress.total_servers || mappedServers.length}`,
                     completedCommands: detailedProgress.current_command || 0,
                     totalCommands: detailedProgress.total_commands || selectedMOPData.commands?.length || 0,
                     completedServers: detailedProgress.current_server || 0,
                     totalServers: detailedProgress.total_servers || mappedServers.length,
-                    logs: logs || [],
-                    startTime,
+                    logs: logs ? logs.slice(-20) : [],
+                    startTime: assessmentProgress?.startTime || new Date(),
                     estimatedTimeRemaining
                   }
                 });
@@ -349,22 +374,35 @@ const HandoverAssessment: React.FC = () => {
                 setTimeout(pollJobStatus, 1000);
               } else if (status === 'completed' || status === 'failed') {
                 // Job completed, get final results
-                try {
-                  const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_RESULTS(assessmentId));
-                  
-                  setAssessmentLoading(false);
-                  
-                  updateState({
-                    assessmentResults: {
-                      ...resultsResponse.data,
-                      mop_name: selectedMOPData.name,
-                      commands: selectedMOPData.commands || []
-                    },
-                    assessmentProgress: null,
-                    assessmentCompleted: true,
-                    hasResults: true,
-                    currentStep: 'view-results'
-                  });
+                  try {
+                    const resultsResponse = await apiService.get<any>(API_ENDPOINTS.ASSESSMENTS.HANDOVER_RESULTS(assessmentId));
+                    
+                    // Debug: Kiểm tra cấu trúc data và recommendations
+                    console.log('Handover API Response structure:', resultsResponse.data);
+                    if (resultsResponse.data.test_results) {
+                      console.log('First few handover test results:', resultsResponse.data.test_results.slice(0, 3));
+                      resultsResponse.data.test_results.forEach((result: any, index: number) => {
+                        if (result.recommendations && result.recommendations.length > 0) {
+                          console.log(`Handover Result ${index} has recommendations:`, result.recommendations);
+                        } else {
+                          console.log(`Handover Result ${index} has no recommendations`);
+                        }
+                      });
+                    }
+                    
+                    setAssessmentLoading(false);
+                    
+                    updateState({
+                      assessmentResults: {
+                        ...resultsResponse.data,
+                        mop_name: selectedMOPData.name,
+                        commands: selectedMOPData.commands || []
+                      },
+                      assessmentProgress: null,
+                      assessmentCompleted: true,
+                      hasResults: true,
+                      currentStep: 'view-results'
+                    });
                   
                   if (status === 'failed') {
                     setNotification({type: 'error', message: t('assessmentFailed')});
@@ -623,6 +661,97 @@ const HandoverAssessment: React.FC = () => {
       fetchSavedServers();
     }
   }, [showSavedServersModal]);
+
+  // Load recent servers for "Select from saved list" modal
+  const loadRecentServers = async () => {
+    try {
+      const result = await serverService.getHandoverRecentServers(false, 20);
+      setRecentServers(result.entries || []);
+      setSelectedSavedEntries(new Array(result.entries?.length || 0).fill(false));
+    } catch (error) {
+      console.error('Error loading recent servers:', error);
+      setAlert({ type: 'error', message: 'Failed to load recent servers' });
+    }
+  };
+
+  // Load uploaded files for "Select from saved list" modal
+  const loadUploadedFiles = async () => {
+    try {
+      const result = await serverService.getServerUploads();
+      setUploadedFiles(result.entries || []);
+      if (savedListTab === 'uploads') {
+        setSelectedSavedEntries(new Array(result.entries?.length || 0).fill(false));
+      }
+    } catch (error) {
+      console.error('Error loading uploaded files:', error);
+      setAlert({ type: 'error', message: 'Failed to load uploaded files' });
+    }
+  };
+
+  // Preview servers from selected entries
+  const previewSelectedServers = async () => {
+    const selectedEntries = savedListTab === 'recent' 
+      ? recentServers.filter((_, index) => selectedSavedEntries[index])
+      : uploadedFiles.filter((_, index) => selectedSavedEntries[index]);
+    
+    if (selectedEntries.length === 0) {
+      setAlert({ type: 'error', message: 'Please select at least one entry to preview' });
+      return;
+    }
+
+    try {
+      setPreviewServers(selectedEntries);
+      setShowPreviewModal(true);
+    } catch (error) {
+      console.error('Error previewing servers:', error);
+      setAlert({ type: 'error', message: 'Failed to preview servers' });
+    }
+  };
+
+  // Apply selected servers to assessment
+  const applySelectedServers = () => {
+    const selectedEntries = savedListTab === 'recent' 
+      ? recentServers.filter((_, index) => selectedSavedEntries[index])
+      : uploadedFiles.filter((_, index) => selectedSavedEntries[index]);
+    
+    if (selectedEntries.length === 0) {
+      setAlert({ type: 'error', message: 'Please select at least one entry' });
+      return;
+    }
+
+    // Convert selected entries to server format and add to assessment
+    const newServers = selectedEntries.map((entry, index) => ({
+      name: entry.description || `Server ${index + 1}`,
+      ip: entry.server_info?.ip || 'Unknown',
+      serverIP: entry.server_info?.ip || 'Unknown',
+      sshPort: entry.server_info?.ssh_port || '22',
+      sshUser: entry.server_info?.admin_username || '',
+      sshPassword: entry.server_info?.admin_password || '',
+      sudoUser: entry.server_info?.root_username || '',
+      sudoPassword: entry.server_info?.root_password || ''
+    }));
+
+    // Add to existing servers
+    const updatedServers = [...servers, ...newServers];
+    const updatedSelectedServers = [...selectedServers, ...new Array(newServers.length).fill(true)];
+    
+    setServers(updatedServers);
+    setSelectedServers(updatedSelectedServers);
+
+    setShowSelectFromSavedModal(false);
+    setAlert({ type: 'success', message: `Added ${newServers.length} servers from saved list` });
+  };
+
+  // Load data when "Select from saved list" modal opens
+  useEffect(() => {
+    if (showSelectFromSavedModal) {
+      if (savedListTab === 'recent') {
+        loadRecentServers();
+      } else {
+        loadUploadedFiles();
+      }
+    }
+  }, [showSelectFromSavedModal, savedListTab]);
 
   const handleSaveCurrentServers = async () => {
     // Check if any servers are selected
@@ -1132,7 +1261,7 @@ const HandoverAssessment: React.FC = () => {
                                                 <div 
                                                   className="progress-bar bg-primary" 
                                                   style={{
-                                                    width: `${(assessmentProgress.completedServers / assessmentProgress.totalServers) * 100}%`
+                                                    width: `${assessmentProgress.totalServers > 0 ? (assessmentProgress.completedServers / assessmentProgress.totalServers) * 100 : 0}%`
                                                   }}
                                                 ></div>
                                               </div>
@@ -1154,7 +1283,7 @@ const HandoverAssessment: React.FC = () => {
                                                 <div 
                                                   className="progress-bar bg-success" 
                                                   style={{
-                                                    width: `${(assessmentProgress.completedCommands / assessmentProgress.totalCommands) * 100}%`
+                                                    width: `${assessmentProgress.totalCommands > 0 ? (assessmentProgress.completedCommands / assessmentProgress.totalCommands) * 100 : 0}%`
                                                   }}
                                                 ></div>
                                               </div>
@@ -1163,19 +1292,6 @@ const HandoverAssessment: React.FC = () => {
                                                 Đang thực hiện: {assessmentProgress.currentCommand}
                                               </small>
                                             </div>
-                                            
-                                            {/* Time Estimation */}
-                                            {assessmentProgress.estimatedTimeRemaining && (
-                                              <div className="mb-3">
-                                                <div className="d-flex justify-content-between align-items-center mb-2">
-                                                  <span><strong>Thời gian ước tính:</strong></span>
-                                                  <span className="text-muted">
-                                                    <i className="fas fa-clock mr-1"></i>
-                                                    Còn lại: {assessmentProgress.estimatedTimeRemaining}
-                                                  </span>
-                                                </div>
-                                              </div>
-                                            )}
                                           
                                           </div>
                                         ) : (
@@ -1324,6 +1440,7 @@ const HandoverAssessment: React.FC = () => {
                                                   actual_output: result.actual_output,
                                                   reference_value: result.reference_value || result.expected_output,
                                                   expected_output: result.expected_output,
+                                                  comparator_method: result.comparator_method,
                                                   skip_reason: result.skip_reason,
                                                   skipped: result.skipped || result.status === 'SKIPPED',
                                                   validation_result: result.validation_result,
@@ -1412,6 +1529,15 @@ const HandoverAssessment: React.FC = () => {
                         onClick={() => setShowManualInputModal(true)}
                       >
                         <i className="fas fa-edit mr-2"></i>{t('manualInputButton')}
+                      </button>
+                    </div>
+                    <div className="col-md-4">
+                      <button 
+                        type="button" 
+                        className="btn btn-outline-success btn-block mb-2"
+                        onClick={() => setShowSelectFromSavedModal(true)}
+                      >
+                        <i className="fas fa-history mr-2"></i>Chọn từ danh sách đã lưu
                       </button>
                     </div>
                     <div className="col-md-4">
@@ -1786,6 +1912,218 @@ const HandoverAssessment: React.FC = () => {
         cancelText={t('cancel')}
         confirmVariant="danger"
       />
+
+      {/* Select from Saved List Modal */}
+      {showSelectFromSavedModal && (
+        <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-xl">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Chọn từ danh sách đã lưu</h5>
+                <button type="button" className="close" onClick={() => setShowSelectFromSavedModal(false)}>
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                {/* Tab Navigation */}
+                <ul className="nav nav-tabs mb-3">
+                  <li className="nav-item">
+                    <button 
+                      className={`nav-link ${savedListTab === 'recent' ? 'active' : ''}`}
+                      onClick={() => setSavedListTab('recent')}
+                    >
+                      Assessment gần đây
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button 
+                      className={`nav-link ${savedListTab === 'uploads' ? 'active' : ''}`}
+                      onClick={() => setSavedListTab('uploads')}
+                    >
+                      File đã tải lên
+                    </button>
+                  </li>
+                </ul>
+
+                {/* Content based on selected tab */}
+                {savedListTab === 'recent' ? (
+                  <div>
+                    <h6>Danh sách Assessment Handover gần đây</h6>
+                    {recentServers.length === 0 ? (
+                      <p className="text-muted">Không có assessment nào gần đây</p>
+                    ) : (
+                      <div className="table-responsive">
+                        <table className="table table-striped">
+                          <thead>
+                            <tr>
+                              <th>
+                                <input 
+                                  type="checkbox" 
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSelectedSavedEntries(new Array(recentServers.length).fill(checked));
+                                  }}
+                                />
+                              </th>
+                              <th>ID</th>
+                              <th>Thời gian</th>
+                              <th>Số server</th>
+                              <th>Mô tả</th>
+                              <th>Trạng thái</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recentServers.map((entry, index) => (
+                              <tr key={entry.id || index}>
+                                <td>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedSavedEntries[index] || false}
+                                    onChange={(e) => {
+                                      const newSelected = [...selectedSavedEntries];
+                                      newSelected[index] = e.target.checked;
+                                      setSelectedSavedEntries(newSelected);
+                                    }}
+                                  />
+                                </td>
+                                <td>{entry.id || entry.source_id}</td>
+                                <td>{new Date(entry.created_at).toLocaleString()}</td>
+                                <td>{entry.total_servers || 'N/A'}</td>
+                                <td>{entry.description || 'Không có mô tả'}</td>
+                                <td>
+                                  <span className={`badge ${entry.status === 'completed' ? 'badge-success' : 'badge-warning'}`}>
+                                    {entry.status || 'Unknown'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <h6>Danh sách File Server đã tải lên</h6>
+                    {uploadedFiles.length === 0 ? (
+                      <p className="text-muted">Không có file nào đã tải lên</p>
+                    ) : (
+                      <div className="table-responsive">
+                        <table className="table table-striped">
+                          <thead>
+                            <tr>
+                              <th>
+                                <input 
+                                  type="checkbox" 
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSelectedSavedEntries(new Array(uploadedFiles.length).fill(checked));
+                                  }}
+                                />
+                              </th>
+                              <th>Tên file</th>
+                              <th>Thời gian</th>
+                              <th>Số server</th>
+                              <th>Mô tả</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {uploadedFiles.map((file, index) => (
+                              <tr key={file.id || index}>
+                                <td>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedSavedEntries[index] || false}
+                                    onChange={(e) => {
+                                      const newSelected = [...selectedSavedEntries];
+                                      newSelected[index] = e.target.checked;
+                                      setSelectedSavedEntries(newSelected);
+                                    }}
+                                  />
+                                </td>
+                                <td>{file.file_name || 'Unknown'}</td>
+                                <td>{new Date(file.created_at).toLocaleString()}</td>
+                                <td>{file.total_servers || 'N/A'}</td>
+                                <td>{file.description || 'Không có mô tả'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-info" 
+                  onClick={previewSelectedServers}
+                  disabled={!selectedSavedEntries.some(selected => selected)}
+                >
+                  <i className="fas fa-eye mr-2"></i>Preview
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-success" 
+                  onClick={applySelectedServers}
+                  disabled={!selectedSavedEntries.some(selected => selected)}
+                >
+                  <i className="fas fa-check mr-2"></i>Áp dụng
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowSelectFromSavedModal(false)}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Servers Modal */}
+      {showPreviewModal && (
+        <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Preview Servers</h5>
+                <button type="button" className="close" onClick={() => setShowPreviewModal(false)}>
+                  <span>&times;</span>
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="table-responsive">
+                  <table className="table table-striped">
+                    <thead>
+                      <tr>
+                        <th>IP</th>
+                        <th>SSH Port</th>
+                        <th>Admin User</th>
+                        <th>Root User</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewServers.map((server, index) => (
+                        <tr key={index}>
+                          <td>{server.server_info?.ip || 'Unknown'}</td>
+                          <td>{server.server_info?.ssh_port || '22'}</td>
+                          <td>{server.server_info?.admin_username || 'N/A'}</td>
+                          <td>{server.server_info?.root_username || 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowPreviewModal(false)}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

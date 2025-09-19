@@ -10,140 +10,14 @@ class ExtractProcessor:
     """
     
     def __init__(self):
-        self.supported_extracts = [
-            'raw', 'first_line', 'lines_count', 'regex', 'field', 'per_line', 'user', 'iface'
-        ]
         self.supported_comparators = [
             # String comparators
             'eq', 'neq', 'contains', 'not_contains', 'regex', 'in', 'not_in', 'contains_any',
             # Numeric comparators
-            'int_eq', 'int_ge', 'int_gt', 'int_le', 'int_lt',
+            'int_eq', 'int_neq', 'int_ge', 'int_gt', 'int_le', 'int_lt',
             # Special comparators
-            'empty', 'non_empty'
+            'empty', 'non_empty', 'wc_eq'
         ]
-    
-    def process_extract(self, output: str, method: str) -> Any:
-        """
-        Process extract method on command output
-        
-        Args:
-            output: Raw command output
-            method: Extract method (e.g., 'raw', 'first_line', 'regex:(...)', etc.)
-            
-        Returns:
-            Extracted data based on method
-        """
-        try:
-            output = output.strip() if output else ""
-            
-            if method == 'raw':
-                return output
-            
-            elif method == 'first_line':
-                lines = output.split('\n')
-                return lines[0].strip() if lines else ""
-            
-            elif method == 'lines_count':
-                lines = output.split('\n')
-                return len([line for line in lines if line.strip()])
-            
-            elif method.startswith('regex:'):
-                # Extract regex pattern from method
-                pattern_match = re.match(r'regex:\((.+)\)', method)
-                if pattern_match:
-                    pattern = pattern_match.group(1)
-                    match = re.search(pattern, output)
-                    return match.group(1) if match and match.groups() else ""
-                return ""
-            
-            elif method.startswith('field:'):
-                # Extract field number from method
-                field_match = re.match(r'field:(\d+)', method)
-                if field_match:
-                    field_num = int(field_match.group(1))
-                    lines = output.split('\n')
-                    if lines:
-                        fields = lines[0].split()
-                        return fields[field_num - 1] if len(fields) >= field_num else ""
-                return ""
-            
-            elif method.startswith('per_line:'):
-                # Extract sub-method for per-line processing
-                sub_method = method[9:]  # Remove 'per_line:' prefix
-                lines = output.split('\n')
-                results = []
-                for line in lines:
-                    if line.strip():
-                        result = self.process_extract(line, sub_method)
-                        results.append(result)
-                return results
-            
-            
-            else:
-                logger.warning(f"Unsupported extract method: {method}")
-                return output
-                
-        except Exception as e:
-            logger.error(f"Error processing extract method '{method}': {str(e)}")
-            return output
-    
-    def apply_comparator(self, extracted_data: Any, method: str, reference: str) -> Dict:
-        """
-        Apply comparator method to extracted data
-        
-        Args:
-            extracted_data: Data extracted from command output
-            method: Comparator method
-            reference: Reference value to compare against
-            
-        Returns:
-            Dict with overall_result, details, and individual_results
-        """
-        try:
-            # Handle per_line comparator
-            if method.startswith('per_line:'):
-                sub_method = method[9:]  # Remove 'per_line:' prefix
-                if isinstance(extracted_data, list):
-                    results = []
-                    details = []
-                    for i, item in enumerate(extracted_data):
-                        result = self._compare_single(item, sub_method, reference)
-                        results.append(result)
-                        status = "OK" if result else "Not OK"
-                        details.append(f"{item} - {status}")
-                    
-                    overall_result = "OK" if all(results) else "Not OK"
-                    return {
-                        'overall_result': overall_result,
-                        'details': details,
-                        'individual_results': results
-                    }
-                else:
-                    # Single item, treat as single comparison
-                    result = self._compare_single(extracted_data, sub_method, reference)
-                    status = "OK" if result else "Not OK"
-                    return {
-                        'overall_result': status,
-                        'details': [f"{extracted_data} - {status}"],
-                        'individual_results': [result]
-                    }
-            
-            # Regular single comparison
-            result = self._compare_single(extracted_data, method, reference)
-            status = "OK" if result else "Not OK"
-            return {
-                'overall_result': status,
-                'details': [status],
-                'individual_results': [result]
-            }
-            
-        except Exception as e:
-            logger.error(f"Error applying comparator '{method}': {str(e)}")
-            return {
-                'overall_result': "Not OK",
-                'details': [f"Error: {str(e)}"],
-                'individual_results': [False]
-            }
     
     def _compare_single_value(self, value: str, comparator: str, reference: str) -> bool:
         """
@@ -251,6 +125,8 @@ class ExtractProcessor:
                     
                     if method == 'int_eq':
                         return data_int == ref_int
+                    elif method == 'int_neq':
+                        return data_int != ref_int
                     elif method == 'int_ge':
                         return data_int >= ref_int
                     elif method == 'int_gt':
@@ -270,6 +146,15 @@ class ExtractProcessor:
                 return data_str == ""
             elif method == 'non_empty':
                 return data_str != ""
+            elif method == 'wc_eq':
+                # Word count equal - count lines in output
+                try:
+                    line_count = len([line for line in data_str.split('\n') if line.strip()])
+                    expected_count = int(reference_str)
+                    return line_count == expected_count
+                except ValueError:
+                    logger.warning(f"Cannot convert reference to int for wc_eq: '{reference_str}'")
+                    return False
             
             else:
                 logger.warning(f"Unsupported comparator method: {method}")
@@ -278,30 +163,6 @@ class ExtractProcessor:
         except Exception as e:
             logger.error(f"Error in single comparison: {str(e)}")
             return False
-    
-    def validate_extract_method(self, method: str) -> bool:
-        """
-        Validate if extract method is supported
-        
-        Args:
-            method: Extract method to validate
-            
-        Returns:
-            True if method is valid
-        """
-        if method in self.supported_extracts:
-            return True
-        
-        # Check pattern-based methods
-        if method.startswith('regex:') and method.endswith(')'):
-            return True
-        if method.startswith('field:') and method[6:].isdigit():
-            return True
-        if method.startswith('per_line:'):
-            sub_method = method[9:]
-            return self.validate_extract_method(sub_method)
-        
-        return False
     
     def validate_comparator_method(self, method: str) -> bool:
         """

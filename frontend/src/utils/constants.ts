@@ -46,6 +46,10 @@ export const API_ENDPOINTS = {
     HANDOVER_RESULTS: (assessmentId: number) => `/api/assessments/handover/results/${assessmentId}`,
     HANDOVER_DOWNLOAD: (assessmentId: number) => `/api/assessments/handover/download/${assessmentId}`,
     TEMPLATE_DOWNLOAD: '/api/assessments/template/download',
+    RISK_RECENT_SERVERS: '/api/assessments/risk/recent-servers',
+    HANDOVER_RECENT_SERVERS: '/api/assessments/handover/recent-servers',
+    SERVER_UPLOADS: '/api/assessments/servers/uploads',
+    HISTORY: '/api/assessments/history',
   },
   EXECUTIONS: {
     LIST: '/api/executions',

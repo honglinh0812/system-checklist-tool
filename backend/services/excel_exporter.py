@@ -23,6 +23,28 @@ class ExcelExporter:
             bottom=Side(style='thin')
         )
         self.center_alignment = Alignment(horizontal='center', vertical='center')
+        # Locale for localized text in exports
+        self.locale = 'en'
+
+    def set_locale(self, locale_code: str):
+        try:
+            if locale_code:
+                self.locale = locale_code.split('-')[0].lower()
+        except Exception:
+            self.locale = 'en'
+
+    def _format_reference_value(self, value: Any, comparator_method: str = '') -> str:
+        text = '' if value is None else str(value)
+        comp = (comparator_method or '').strip().lower()
+        if comp == 'empty':
+            return 'Rỗng' if self.locale == 'vi' else 'Empty'
+        if comp in ('non_empty', 'not_empty'):
+            return 'Không rỗng' if self.locale == 'vi' else 'Not empty'
+        # fallback: show raw or Empty when truly blank
+        is_empty = len(text.strip()) == 0
+        if self.locale == 'vi':
+            return 'Rỗng' if is_empty else text
+        return 'Empty' if is_empty else text
     
     def export_execution_results(self, execution_data: Dict[str, Any], filename: str = None) -> str:
         """
@@ -184,7 +206,7 @@ class ExcelExporter:
                 result.get('server_ip', ''),
                 result.get('command_title', ''),
                 result.get('command', ''),
-                result.get('expected_output', ''),
+                self._format_reference_value(result.get('expected_output', ''), result.get('comparator_method', '')),
                 result.get('actual_output', ''),
                 result.get('validation_type', ''),
                 result_status,

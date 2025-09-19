@@ -29,7 +29,9 @@ def create_admin_user():
         # Create admin user per requirement: username=admin, password=admin
         admin = User(
             username='admin',
-            password='admin',
+            password='admin123',
+            email='admin@example.com',
+            full_name='System Administrator',
             role='admin'
         )
         

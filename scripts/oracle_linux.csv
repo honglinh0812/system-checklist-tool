@@ -1,0 +1,82 @@
+ID,Command Name,Command,Comparator,Reference Value
+1,tach_var_ra_khoi_source,dmidecode -t system | grep -qw RDO && echo 1 || (grep -qw /var /etc/fstab && echo 1 || echo 0),int_eq,1
+2,phan_vung_ud_ko_nam_chung_source,grep -v ^# /etc/fstab | grep -vw "/\|/var\|/dev/shm\|/home\|/usr\|/proc\|/sys\|/dev/pts\|/opt\|swap\|/boot\|/boot/efi" | head -n1,non_empty,
+3,timezone,date +"%Z %z",contains,0700
+4,sudoers1,grep -v ^# /etc/sudoers | grep -x "%wheel\tALL=(ALL)\tALL",empty,
+5,sudoers2,awk -F: '($3>=400)&&($1!="nfsnobody")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} grep -w {} /etc/sudoers | grep "ALL=(ALL)\tALL",empty,
+6,sudoers3,awk -F: '($3>=400)&&($1!="nfsnobody")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} grep -w {} /etc/sudoers | grep "ALL=(ALL)  NOPASSWD: ALL",empty,
+7,ud_ko_dung_root,ps -ef | awk '$1=="root" && $8 ~ /(java|tomcat|jre|jdk|kubelet)/{print $8}',empty,
+8,duphong_bond1,dmidecode -t system | grep -Eq "VMware|RDO" && echo 1 || (ip -o link show | awk -F': ' '$2~/^bond[0-9]$/{print $2}' | xargs -r -I{} awk '/Slave Interface/ {s++} /MII Status:/ && $3!="up"{d++} END{print (s>=2 && d==0)?1:0}' /proc/net/bonding/{}),int_eq,1
+9,duphong_bond2,dmidecode -t system | grep -Eq "VMware|RDO" && echo 1 || (bonds=$(ip -o link show | awk -F': ' '$2~/^bond[0-9]$/{print $2}'); [ -z "$bonds" ] && echo 0 || awk -v cfg="$(grep -o 'mode=[0-9]' /etc/sysconfig/network-scripts/ifcfg-$bonds | cut -d= -f2)" '/Bonding Mode/ {m=$0} END{ok=(cfg=="0"&&m~"round-robin")||(cfg=="1"&&m~"active-backup")||(cfg=="2"&&m~"xor")||(cfg=="4"&&m~"802.3ad")||(cfg=="5"&&m~"transmit load balancing"); print ok?1:0}' /proc/net/bonding/$bonds),int_eq,1
+10,san_multipath,list=$(dmsetup status | awk '$3!="linear"{print $1}' | sed 's/://g' | grep -vE 'p[0-9]$|No'); [ -z "$list" ] && echo 4 || multipath -ll $list | grep -c "running$",int_ge,4
+11,kdump_service,systemctl is-active kdump,eq,active
+12,sendmail_off,systemctl is-active sendmail,neq,active
+13,postfix_off,systemctl is-active postfix,neq,active
+14,hearbeat_port,ip -o link show | awk -F': ' '$3 ~ /UP/ {print $2}' | xargs -r -I{} sh -c "ip link show {} | grep -qw 'mtu 9000' || echo {}",empty,
+15,bo_card_mang_ao,ifconfig -a | grep virbr,empty,
+16,disable_selinux,sestatus | awk -F: '/Current mode/ {print $2}' | xargs,neq,enforcing
+17,nf_conntrack_max,[ -f /proc/sys/net/netfilter/nf_conntrack_max ] && cat /proc/sys/net/netfilter/nf_conntrack_max || echo 0,int_ge,524288
+18,hashsize,[ -f /sys/module/nf_conntrack/parameters/hashsize ] && cat /sys/module/nf_conntrack/parameters/hashsize || echo 0,int_ge,131072
+19,pass_never_expired,awk -F: '($3>=1000)&&($1!="nobody")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} sh -c "chage -l {} | awk -F: '/Password expires/ {print \$2}' | grep -vw never && echo {}",wc_eq,0
+20,max_open_file_user,awk -F: '($3>=400)&&($1!="nfsnobody")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} sh -c "grep -v ^# /etc/security/limits.conf | grep -w {} | grep -vw soft | grep -qw nofile || echo {}",wc_eq,0
+21,max_process_user,awk -F: '($3>=400)&&($1!="nfsnobody")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} sh -c "grep -v ^# /etc/security/limits.conf | grep -w {} | grep -vw soft | grep -qw nproc || echo {}",wc_eq,0
+22,max_open_file_server,[ -f /proc/sys/fs/file-max ] && cat /proc/sys/fs/file-max || echo 0,int_ge,1
+23,bluetooth_off,systemctl is-active bluetooth,neq,active
+24,cupsd_off,systemctl is-active cups,neq,active
+25,per_user_trong_groupsudo1,grep -v ^# /etc/pam.d/su | grep -x "auth[[:space:]]\+required[[:space:]]\+pam_wheel.so",non_empty,
+26,per_user_trong_groupsudo2,awk -F: '($3>=400)&&($1!="nfsnobody")&&($1!="monitor")&&($1!="vt_admin")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} sh -c "id -nG {} | grep -qw wheel && echo {}",wc_eq,0
+27,password1,grep -v ^# /etc/security/pwquality.conf | grep -w "minlen = 8",non_empty,
+28,password2,grep -v ^# /etc/security/pwquality.conf | grep -w "dcredit = -1",non_empty,
+29,password3,grep -v ^# /etc/security/pwquality.conf | grep -w "ucredit = -1",non_empty,
+30,password4,grep -v ^# /etc/security/pwquality.conf | grep -w "lcredit = -1",non_empty,
+31,password5,grep -v ^# /etc/security/pwquality.conf | grep -w "ocredit = -1",non_empty,
+32,password6,grep -v ^# /etc/security/pwquality.conf | grep -w "maxrepeat = 3",non_empty,
+33,password7,grep -v ^# /etc/security/pwquality.conf | grep -w "enforcing = 1",non_empty,
+34,password8,grep -v ^# /etc/security/pwquality.conf | grep -w "retry = 3",non_empty,
+35,password9,grep -v ^# /etc/security/pwquality.conf | grep -w "enforce_for_root",non_empty,
+36,pass_encryp_1,grep -v ^# /etc/pam.d/password-auth | grep -w password | grep -w sha512,non_empty,
+37,pass_encryp_2,grep -v ^# /etc/security/pwhistory.conf | grep -w "remember = 5",non_empty,
+38,thuat_toan_mahoa,grep -v ^# /etc/login.defs | grep -w "ENCRYPT_METHOD" | grep -w SHA512,non_empty,
+39,cau_hinh_ssh_protocol,grep -v ^# /etc/ssh/sshd_config | grep -w "Protocol 2",non_empty,
+40,cau_hinh_ssh_permitrootlogin,grep -v ^# /etc/ssh/sshd_config | grep -w "PermitRootLogin no",non_empty,
+41,cau_hinh_ssh_allowusers,awk -F: '($3>=400)&&($1!="nfsnobody")&&($7=="/bin/bash"){print $1}' /etc/passwd | xargs -r -I{} sh -c "grep -v ^# /etc/ssh/sshd_config | grep -w AllowUsers | grep -qw {} || echo {}",wc_eq,0
+42,tudong_off_ssh_1,grep -v ^# /etc/profile | grep -A2 "TMOUT=300" | grep -A1 "readonly TMOUT" | grep -w "export TMOUT",non_empty,
+43,tudong_off_ssh_2,grep -v ^# /etc/profile | grep "TMOUT=300" | wc -l,int_eq,1
+44,bandwidth_net,ip -o link show | awk -F': ' '$3 ~ /UP/{print $2}' | xargs -r -I{} sh -c "ethtool {} | grep Speed | awk '{print \$2}' | awk -FM '{print \$1}'" | awk '{if($1<1000) bad++} END{print bad+0}',int_eq,0
+45,openssl_ver,openssl version -a | grep -E "1.0.1e|1.0.2k|1.0.1u|1.0.2j|1.1.0a|1.1.0g|1.0.2n|1.1.1k|3.2.2",non_empty,
+46,file_unowner,find / -xdev \( -nouser -o -nogroup \) -print,empty,
+47,bien_moitruong,echo $PATH | grep "\./\|::\|/tmp",empty,
+48,cau_hinh_crontab1,ls /etc/ | grep cron.deny,empty,
+49,cau_hinh_crontab2,ls /etc/ | grep cron.allow,non_empty,
+50,cau_hinh_crontab_min,(crontab -l | grep -v ^# | grep -v "sd_agent" | grep -v "scms-agent"; crontab -l | grep -v ^# | grep sd_agent | grep sd_agent_monitor.sh; crontab -l | grep -v ^# | grep scms-agent | grep scms-mon) | wc -l,int_eq,2
+51,rsyslog1_1,grep -v ^# /etc/logrotate.conf | grep -E "weekly|rotate 12|create|dateext|compress|include /etc/logrotate.d",non_empty,
+52,rsyslog1_2,grep -v ^# /etc/logrotate.d/syslog | grep -E "/var/log/cron|/var/log/maillog|/var/log/messages|/var/log/secure|/var/log/spooler|/var/log/cmdlog.log|\\{|compress|sharedscripts|postrotate|/usr/bin/systemctl -s HUP kill rsyslog.service >/dev/null 2>&1 || true|endscript|\\}",non_empty,
+53,rsyslog1_3,grep -v ^# /etc/logrotate.d/iptables | grep -E "/var/log/iptables/iptables.log|\\{|daily|rotate 30|copytruncate|compress|notifempty|missingok|\\}",non_empty,
+54,rsyslog1_4,grep -v ^# /etc/logrotate.d/btmp | grep -E "/var/log/btmp|missingok|weekly|create 0660 root utmp|rotate 12",non_empty,
+55,rsyslog1_5,grep -v ^# /etc/logrotate.d/wtmp | grep -E "/var/log/wtmp|missingok|weekly|create 0664 root utmp|minsize 1M|rotate 12",non_empty,
+56,rsyslog2_1,grep -v ^# /etc/bashrc | grep "local6.debug" | grep ctty,non_empty,
+57,rsyslog2_2,grep -v ^# /etc/rsyslog.conf | grep -E "/var/log/cmdlog.log|/var/log/iptables/iptables.log",non_empty,
+58,rsyslog2_3,tail -100 /var/log/cmdlog.log | grep $value,non_empty,
+59,rsyslog3_1,grep -v ^# /etc/bashrc | grep "export PROMPT_COMMAND" | grep "local6.debug" | wc -l,int_eq,1
+60,rsyslog3_2,grep -v ^# /etc/rsyslog.conf | grep "local6" | grep "/var/log/cmdlog.log" | wc -l,int_eq,1
+61,rsyslog3_3,grep -v ^# /etc/rsyslog.conf | grep "kern.debug" | grep "/var/log/iptables/iptables.log" | wc -l,int_eq,1
+62,iptables_status,systemctl is-active iptables,eq,active
+63,zone_reclaim_mode,cat /proc/sys/vm/zone_reclaim_mode,int_eq,0
+64,mysql_not_active,ps -ef | grep mysql | grep -v ^root,empty,
+65,phan_vung_swap,tail -n+2 /proc/swaps,non_empty,
+66,oracle_scan_order,[ -e /etc/sysconfig/oracleasm ] && awk -F= '/^ORACLEASM_SCANORDER/ && /dm/{o++} /^ORACLEASM_SCANEXCLUDE/ && /sd/{x++} END{print (o>0 && x>0)?1:0}' /etc/sysconfig/oracleasm || echo 1,int_eq,1
+67,haveged_service_on,dmidecode -t system | grep -iE "Vmware|OpenStack" >/dev/null && (rpm -qa | grep -q haveged && service haveged status 2>/dev/null | grep -qw running && echo 1 || echo 0) || echo 1,int_eq,1
+68,basic_package,rpm -qa | grep -E "^(telnet|sysstat|lsof|dmidecode|net-tools|pciutils|iptables-services|chrony|ftp|nmap|iotop|wget|zip|unzip|sysfsutils|traceroute|e2fsprogs)-",non_empty,
+69,swappiness,cat /proc/sys/vm/swappiness,int_le,10
+70,repo_taptrung,curl --connect-timeout 3 -s -o /dev/null -I -w "%{http_code}" 10.60.129.132,eq,200
+71,chronyd_status,systemctl is-active chronyd,eq,active
+72,chronyd_config,grep -v ^# /etc/chrony.conf | grep "@{chrony_server}",non_empty,
+73,time_synchronization,chronyc sources | grep "@{chrony_server}" | awk '{print $5}',int_eq,377
+74,lldp_service,dmidecode -t system | grep -Eq "VMware|RDO" && echo 1 || (rpm -qa | grep -q ^lldpd- && echo 1 || echo 0),int_eq,1
+75,lldp_show_neighbor,dmidecode -t system | grep -Eq "VMware|RDO" && echo 1 || (lldpcli show neighbors | grep -q "LLDP neighbors:" && echo 1 || echo 0),int_eq,1
+76,ipx_installed,which ipx | grep "/bin/ipx",non_empty,
+77,iptables1,iptables -S INPUT | tail -1 | grep -E "\-A INPUT \-j (DROP|REJECT)",non_empty,
+78,iptables2,iptables -S INPUT | tail -2 | head -1 | grep "\-A INPUT \-j LOG",non_empty,
+79,iptables3,iptables -S OUTPUT | tail -1 | grep -E "\-A OUTPUT \-j (DROP|REJECT)",non_empty,
+80,iptables4,iptables -S OUTPUT | tail -2 | head -1 | grep "\-A OUTPUT \-j LOG",non_empty,
+

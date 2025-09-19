@@ -371,30 +371,7 @@ def run_commands():
                 
                 return api_error(error_msg, 400, validation_result)
             
-            # Additional validation for 6-column format
-            if cmd.get('extract_method') or cmd.get('comparator_method'):
-                # Validate extract method
-                extract_method = cmd.get('extract_method', '').strip()
-                if not extract_method:
-                    return api_error(f'Extract method is required for command: {cmd.get("name", "Không xác định")}', 400)
-                
-                valid_extract_methods = ['raw', 'first_line', 'lines_count', 'regex', 'field', 'per_line']
-                if extract_method not in valid_extract_methods:
-                    return api_error(f'Invalid extract method "{extract_method}" for command: {cmd.get("name", "Không xác định")}. Valid methods: {", ".join(valid_extract_methods)}', 400)
-                
-                # Validate comparator method
-                comparator_method = cmd.get('comparator_method', '').strip()
-                if not comparator_method:
-                    return api_error(f'Comparator method is required for command: {cmd.get("name", "Không xác định")}', 400)
-                
-                valid_comparator_methods = ['eq', 'ne', 'in', 'not_in', 'int_eq', 'int_ge', 'int_le', 'empty', 'non_empty', 'per_line:in']
-                if comparator_method not in valid_comparator_methods:
-                    return api_error(f'Invalid comparator method "{comparator_method}" for command: {cmd.get("name", "Không xác định")}. Valid methods: {", ".join(valid_comparator_methods)}', 400)
-                
-                # Validate reference value for certain comparators
-                reference_value = cmd.get('reference_value', '').strip()
-                if comparator_method in ['eq', 'ne', 'in', 'not_in', 'int_eq', 'int_ge', 'int_le', 'per_line:in'] and not reference_value:
-                    return api_error(f'Reference value is required for comparator "{comparator_method}" in command: {cmd.get("name", "Không xác định")}', 400)
+
         
         # Get current servers from global storage
         servers_to_run = []
@@ -1059,8 +1036,6 @@ def execute_mop(mop_id):
                     # Add 6-column format fields if available
                     if hasattr(cmd, 'command_id_ref') and cmd.command_id_ref:
                         command_dict['command_id_ref'] = cmd.command_id_ref
-                    if hasattr(cmd, 'extract_method') and cmd.extract_method:
-                        command_dict['extract_method'] = cmd.extract_method
                     if hasattr(cmd, 'comparator_method') and cmd.comparator_method:
                         command_dict['comparator_method'] = cmd.comparator_method
                     if hasattr(cmd, 'reference_value') and cmd.reference_value:

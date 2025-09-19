@@ -185,16 +185,14 @@ const MOPSubmission: React.FC = () => {
                     <h5><i className="fas fa-info-circle mr-2"></i>{t('fileRequirements')}:</h5>
                     <ul className="mb-0">
                       <li><strong>{t('pdfFile')}:</strong> {t('pdfFileRequirement')}</li>
-                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')} (6 cột mới):
+                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')}
                         <ul>
                           <li><strong>ID:</strong> Mã định danh duy nhất</li>
                           <li><strong>Name:</strong> Mô tả ngắn gọn có thể chèn biến hiển thị</li>
                           <li><strong>Command:</strong> Lệnh thuần pipeline, không dùng if/then/||/&&</li>
-                          <li><strong>Extract:</strong> Cách lấy giá trị từ stdout (raw, first_line, lines_count, regex:(...), field:N, per_line:&lt;sub-extract&gt;)</li>
                           <li><strong>Comparator:</strong> Kiểu so sánh (eq, neq, contains, int_eq, int_ge, empty, non_empty, v.v.)</li>
                           <li><strong>Reference Value:</strong> Giá trị chuẩn để so sánh</li>
                         </ul>
-                        <small className="text-muted">Hỗ trợ tương thích ngược với định dạng 3 cột cũ</small>
                       </li>
                     </ul>
                   </div>

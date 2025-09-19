@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface PaginationProps {
   currentPage: number;
@@ -19,6 +20,7 @@ const Pagination: React.FC<PaginationProps> = ({
   itemsPerPage,
   className = '',
 }) => {
+  const { t } = useTranslation();
   if (totalPages <= 1) return null;
 
   const getVisiblePages = () => {
@@ -61,7 +63,7 @@ const Pagination: React.FC<PaginationProps> = ({
       {showInfo && totalItems && itemsPerPage && (
         <div className="pagination-info">
           <small className="text-muted">
-            Showing {startItem} to {endItem} of {totalItems} entries
+            {t('showing')} {startItem} {t('to')} {endItem} {t('of')} {totalItems} {t('entries')}
           </small>
         </div>
       )}

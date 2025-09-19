@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { debounce } from '../../utils/helpers';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface SearchInputProps {
   value: string;
@@ -15,20 +15,33 @@ interface SearchInputProps {
 const SearchInput: React.FC<SearchInputProps> = ({
   value,
   onChange,
-  placeholder = 'Search...',
+  placeholder,
   delay = 300,
   className = '',
   size = 'md',
   disabled = false,
   onClear,
 }) => {
+  const { t } = useTranslation();
   const [localValue, setLocalValue] = useState(value);
 
-  // Create debounced function
-  const debouncedOnChange = debounce(onChange, delay);
+  const timeoutRef = useRef<number | undefined>(undefined);
+
+  const debouncedOnChange = useCallback((newValue: string) => {
+    if (timeoutRef.current !== undefined) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      onChange(newValue);
+    }, delay);
+  }, [onChange, delay]);
 
   useEffect(() => {
     setLocalValue(value);
+    if (timeoutRef.current !== undefined) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = undefined;
+    }
   }, [value]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -38,6 +51,10 @@ const SearchInput: React.FC<SearchInputProps> = ({
   };
 
   const handleClear = () => {
+    if (timeoutRef.current !== undefined) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = undefined;
+    }
     setLocalValue('');
     onChange('');
     if (onClear) {
@@ -62,7 +79,7 @@ const SearchInput: React.FC<SearchInputProps> = ({
         <input
           type="text"
           className={`form-control ${sizeClass}`}
-          placeholder={placeholder}
+          placeholder={placeholder || t('searchPlaceholder')}
           value={localValue}
           onChange={handleInputChange}
           disabled={disabled}

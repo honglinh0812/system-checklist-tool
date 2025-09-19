@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface HeaderProps {
   onToggleSidebar?: () => void;
@@ -10,6 +11,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarCollapsed }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   const handleLogout = async () => {
     try {
@@ -30,7 +32,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarCollapsed }) =>
               className="nav-link btn btn-link"
               onClick={onToggleSidebar}
               style={{ border: 'none', background: 'none', color: '#495057' }}
-              title="Show sidebar"
+              title={t('showSidebar')}
             >
               <i className="fas fa-bars"></i>
             </button>
@@ -79,7 +81,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarCollapsed }) =>
                 navigate('/settings');
               }}
             >
-              <i className="fas fa-cog mr-2"></i> Settings
+              <i className="fas fa-cog mr-2"></i> {t('settings')}
             </a>
             <a
               className="dropdown-item"
@@ -89,7 +91,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarCollapsed }) =>
                 handleLogout();
               }}
             >
-              <i className="fas fa-sign-out-alt mr-2"></i> Logout
+              <i className="fas fa-sign-out-alt mr-2"></i> {t('logout')}
             </a>
           </div>
         </li>

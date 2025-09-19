@@ -1,5 +1,6 @@
 import React from 'react';
 import Modal from './Modal';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -19,11 +20,13 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   confirmVariant = 'primary',
   isLoading = false,
 }) => {
+  const { t } = useTranslation();
+  
   const handleConfirm = () => {
     onConfirm();
   };
@@ -36,7 +39,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         onClick={onClose}
         disabled={isLoading}
       >
-        {cancelText}
+        {cancelText || t('cancel')}
       </button>
       <button
         type="button"
@@ -47,7 +50,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         {isLoading && (
           <span className="spinner-border spinner-border-sm mr-2" role="status" aria-hidden="true"></span>
         )}
-        {confirmText}
+        {confirmText || t('confirm')}
       </button>
     </>
   );

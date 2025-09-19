@@ -62,7 +62,9 @@ def create_app(config_name='development'):
     
     # Force DB URI to use system_checklist database
     Config.init_app(app)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:postgres@localhost/system_checklist'
+    # Use DATABASE_URL from environment if available, otherwise use config default
+    if os.getenv('DATABASE_URL'):
+        app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     logger.info(f"[BOOT] Using DB URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
     
     # Initialize extensions

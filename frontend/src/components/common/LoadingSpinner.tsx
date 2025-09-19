@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg';
@@ -15,6 +16,7 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   overlay = false,
   className = '',
 }) => {
+  const { t } = useTranslation();
   const sizeClasses = {
     sm: 'spinner-border-sm',
     md: '',
@@ -28,7 +30,7 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
         role="status"
         aria-hidden="true"
       >
-        <span className="sr-only">Loading...</span>
+        <span className="sr-only">{t('loading')}</span>
       </div>
       {text && (
         <span className="ml-2">{text}</span>

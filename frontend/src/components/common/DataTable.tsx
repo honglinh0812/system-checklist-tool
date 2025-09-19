@@ -1,6 +1,7 @@
 import React from 'react';
 import LoadingSpinner from './LoadingSpinner';
 import Pagination from './Pagination';
+import { useTranslation } from '../../i18n/useTranslation';
 
 interface Column<T> {
   key: keyof T | string;
@@ -39,11 +40,12 @@ function DataTable<T extends Record<string, any>>({
   pagination,
   sortConfig,
   onSort,
-  emptyText = 'No data available',
+  emptyText,
   className = '',
   rowKey = 'id' as keyof T,
   onRowClick,
 }: DataTableProps<T>) {
+  const { t } = useTranslation();
   const getRowKey = (record: T, index: number): string | number => {
     if (typeof rowKey === 'function') {
       return rowKey(record);
@@ -115,7 +117,7 @@ function DataTable<T extends Record<string, any>>({
               <tr>
                 <td colSpan={columns.length} className="text-center py-4 text-muted">
                   <i className="fas fa-inbox fa-2x mb-2 d-block"></i>
-                  {emptyText}
+                  {emptyText || t('noDataAvailable')}
                 </td>
               </tr>
             ) : (

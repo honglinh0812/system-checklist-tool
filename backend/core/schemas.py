@@ -137,14 +137,25 @@ class MOPFileSchema(Schema):
 # Command Schemas
 class CommandCreateSchema(Schema):
     command_text = fields.Str(required=True, validate=validate.Length(min=1))
-    description = fields.Str(required=True, validate=validate.Length(min=5))
+    description = fields.Str(required=True, validate=validate.Length(min=1))
     order_index = fields.Int(required=True, validate=validate.Range(min=0))
-    expected_output = fields.Str()
+    comparator_method = fields.Str(required=False, validate=validate.OneOf([
+        'eq', 'neq', 'contains', 'not_contains', 'regex', 'in', 'not_in',
+        'int_eq', 'int_ge', 'int_gt', 'int_le', 'int_lt', 'empty', 'non_empty'
+    ]))
+    reference_value = fields.Str(required=False)
+    command_id_ref = fields.Str(required=False)
 
 class CommandUpdateSchema(Schema):
     command_text = fields.Str(validate=validate.Length(min=1))
-    description = fields.Str(validate=validate.Length(min=5))
+    description = fields.Str(validate=validate.Length(min=1))
     order_index = fields.Int(validate=validate.Range(min=0))
+    comparator_method = fields.Str(validate=validate.OneOf([
+        'eq', 'neq', 'contains', 'not_contains', 'regex', 'in', 'not_in',
+        'int_eq', 'int_ge', 'int_gt', 'int_le', 'int_lt', 'empty', 'non_empty'
+    ]))
+    reference_value = fields.Str()
+    command_id_ref = fields.Str()
 
 class CommandSchema(SQLAlchemyAutoSchema):
     class Meta:
@@ -174,7 +185,7 @@ class FilterSchema(Schema):
 
 # File Upload Schemas
 class FileUploadSchema(Schema):
-    file_type = fields.Str(required=True, validate=validate.OneOf(['pdf', 'xls', 'xlsx', 'txt']))
+    file_type = fields.Str(required=True, validate=validate.OneOf(['pdf', 'xls', 'xlsx']))
     description = fields.Str()
 
 # Dashboard Schemas

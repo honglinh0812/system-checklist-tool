@@ -13,7 +13,6 @@ interface Command {
   command: string; // Command column
   command_text?: string;
   description?: string;
-  extract_method?: string; // Extract column
   comparator_method?: string; // Comparator column
   reference_value?: string; // Reference Value column
   expected_output?: string;
@@ -222,7 +221,6 @@ const MOPManagement: React.FC = () => {
             command_id_ref: cmd.command_id_ref || '',
             title: cmd.title || '',
             command: cmd.command || cmd.command_text || '',
-            extract_method: cmd.extract_method || '',
             comparator_method: cmd.comparator_method || '',
             reference_value: cmd.reference_value || cmd.expected_output || ''
           }))
@@ -280,7 +278,6 @@ const MOPManagement: React.FC = () => {
       command_id_ref: '',
       title: '',
       command: '',
-      extract_method: '',
       comparator_method: '',
       reference_value: ''
     };
@@ -323,7 +320,6 @@ const MOPManagement: React.FC = () => {
       command_id_ref: '',
       title: template.title,
       command: template.command,
-      extract_method: '',
       comparator_method: '',
       reference_value: template.reference_value
     };
@@ -817,12 +813,11 @@ const MOPManagement: React.FC = () => {
                           <thead className="thead-light">
                             <tr>
                               <th style={{ width: '5%' }}>STT</th>
-                              <th style={{ width: '10%' }}>ID</th>
-                              <th style={{ width: '20%' }}>Name</th>
-                              <th style={{ width: '25%' }}>Command</th>
-                              <th style={{ width: '12%' }}>Extract</th>
-                              <th style={{ width: '12%' }}>Comparator</th>
-                              <th style={{ width: '11%' }}>Reference Value</th>
+                              <th style={{ width: '15%' }}>ID</th>
+                              <th style={{ width: '25%' }}>Command name</th>
+                              <th style={{ width: '30%' }}>Command</th>
+                              <th style={{ width: '15%' }}>Comparator</th>
+                              <th style={{ width: '10%' }}>Reference Value</th>
                               <th style={{ width: '5%' }}>Actions</th>
                             </tr>
                           </thead>
@@ -862,61 +857,6 @@ const MOPManagement: React.FC = () => {
                                   />
                                 </td>
                                 <td>
-                                  <div className="extract-method-container">
-                                    <select 
-                                      className="form-control form-control-sm mb-1"
-                                      value={command.extract_method?.split(':')[0] || 'raw'}
-                                      onChange={(e) => {
-                                        const baseMethod = e.target.value;
-                                        if (baseMethod === 'raw' || baseMethod === 'first_line' || baseMethod === 'lines_count') {
-                                          updateCommand(index, 'extract_method', baseMethod);
-                                        } else {
-                                          // For regex, field, per_line - keep existing value or set default
-                                          const currentValue = command.extract_method || '';
-                                          if (!currentValue.startsWith(baseMethod + ':')) {
-                                            updateCommand(index, 'extract_method', baseMethod + ':');
-                                          }
-                                        }
-                                      }}
-                                    >
-                                      <option value="raw">raw</option>
-                                      <option value="first_line">first_line</option>
-                                      <option value="lines_count">lines_count</option>
-                                      <option value="regex">regex</option>
-                                      <option value="field">field</option>
-                                      <option value="per_line">per_line</option>
-                                    </select>
-                                    {(command.extract_method?.startsWith('regex:') || command.extract_method?.split(':')[0] === 'regex') && (
-                                      <input
-                                        type="text"
-                                        className="form-control form-control-sm"
-                                        placeholder="Enter regex pattern"
-                                        value={command.extract_method?.substring(6) || ''}
-                                        onChange={(e) => updateCommand(index, 'extract_method', 'regex:' + e.target.value)}
-                                      />
-                                    )}
-                                    {(command.extract_method?.startsWith('field:') || command.extract_method?.split(':')[0] === 'field') && (
-                                      <input
-                                        type="number"
-                                        className="form-control form-control-sm"
-                                        placeholder="Field number"
-                                        min="1"
-                                        value={command.extract_method?.substring(6) || ''}
-                                        onChange={(e) => updateCommand(index, 'extract_method', 'field:' + e.target.value)}
-                                      />
-                                    )}
-                                    {(command.extract_method?.startsWith('per_line:') || command.extract_method?.split(':')[0] === 'per_line') && (
-                                      <input
-                                        type="text"
-                                        className="form-control form-control-sm"
-                                        placeholder="Sub-method (e.g., in, eq)"
-                                        value={command.extract_method?.substring(9) || ''}
-                                        onChange={(e) => updateCommand(index, 'extract_method', 'per_line:' + e.target.value)}
-                                      />
-                                    )}
-                                  </div>
-                                </td>
-                                <td>
                                   <select 
                                     className="form-control form-control-sm"
                                     value={command.comparator_method || 'eq'}
@@ -927,11 +867,15 @@ const MOPManagement: React.FC = () => {
                                     <option value="contains">contains</option>
                                     <option value="not_contains">not_contains</option>
                                     <option value="regex">regex</option>
+                                    <option value="in">in</option>
+                                    <option value="not_in">not_in</option>
                                     <option value="int_eq">int_eq</option>
+                                    <option value="int_neq">int_neq</option>
                                     <option value="int_ge">int_ge</option>
                                     <option value="int_gt">int_gt</option>
                                     <option value="int_le">int_le</option>
                                     <option value="int_lt">int_lt</option>
+                                    <option value="wc_eq">wc_eq</option>
                                     <option value="empty">empty</option>
                                     <option value="non_empty">non_empty</option>
                                   </select>
@@ -1058,9 +1002,8 @@ const MOPManagement: React.FC = () => {
                           <tr>
                             <th style={{ width: '50px', minWidth: '50px' }}>STT</th>
                             <th style={{ width: '80px', minWidth: '80px' }}>ID</th>
-                            <th style={{ width: '150px', minWidth: '150px' }}>Name</th>
+                            <th style={{ width: '150px', minWidth: '150px' }}>Command name</th>
                             <th style={{ width: '200px', minWidth: '200px' }}>Command</th>
-                            <th style={{ width: '100px', minWidth: '100px' }}>Extract</th>
                             <th style={{ width: '100px', minWidth: '100px' }}>Comparator</th>
                             <th style={{ width: '150px', minWidth: '150px' }}>Reference Value</th>
                           </tr>
@@ -1078,7 +1021,6 @@ const MOPManagement: React.FC = () => {
                                     : (cmd.command || cmd.command_text || '')}
                                 </code>
                               </td>
-                              <td style={{ wordBreak: 'break-word' }}>{cmd.extract_method || 'raw'}</td>
                               <td style={{ wordBreak: 'break-word' }}>{cmd.comparator_method || 'eq'}</td>
                               <td style={{ wordBreak: 'break-word', maxWidth: '150px' }}>
                                 {(cmd.reference_value || cmd.expected_output || ' ').length > 30 
@@ -1185,11 +1127,10 @@ const MOPManagement: React.FC = () => {
                           <tr>
                             <th style={{ width: '5%' }}>STT</th>
                             <th style={{ width: '10%' }}>ID</th>
-                            <th style={{ width: '20%' }}>Name</th>
-                            <th style={{ width: '25%' }}>Command</th>
-                            <th style={{ width: '12%' }}>Extract</th>
-                            <th style={{ width: '12%' }}>Comparator</th>
-                            <th style={{ width: '16%' }}>Reference Value</th>
+                            <th style={{ width: '20%' }}>Command name</th>
+                            <th style={{ width: '30%' }}>Command</th>
+                            <th style={{ width: '15%' }}>Comparator</th>
+                            <th style={{ width: '20%' }}>Reference Value</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1199,7 +1140,6 @@ const MOPManagement: React.FC = () => {
                               <td>{cmd.command_id_ref || 'N/A'}</td>
                               <td>{cmd.title}</td>
                               <td><code>{cmd.command}</code></td>
-                              <td>{cmd.extract_method || 'raw'}</td>
                               <td>{cmd.comparator_method || 'eq'}</td>
                               <td>{cmd.reference_value || ' '}</td>
                             </tr>
