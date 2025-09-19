@@ -14,10 +14,12 @@ import HandoverAssessment from './pages/assessment/HandoverAssessment';
 import ExecutionHistory from './pages/assessment/ExecutionHistory';
 import MOPExecutionHistory from './pages/assessment/MOPExecutionHistory';
 import MOPActionHistory from './pages/assessment/MOPActionHistory';
+import AssessmentResultsHistory from './pages/assessment/AssessmentResultsHistory';
 import AuditLogs from './pages/admin/AuditLogs';
 import AssessmentLogs from './pages/admin/AssessmentLogs';
 import Settings from './pages/Settings';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import AccessDenied from './pages/error/AccessDenied';
 import ModalCleaner from './components/ModalCleaner';
 
 function App() {
@@ -103,6 +105,14 @@ function App() {
                 </Layout>
               </ProtectedRoute>
             } />
+
+            <Route path="/assessment-results" element={
+              <ProtectedRoute>
+                <Layout>
+                  <AssessmentResultsHistory />
+                </Layout>
+              </ProtectedRoute>
+            } />
             
             <Route path="/execution-history/mop-executions" element={
               <ProtectedRoute>
@@ -121,7 +131,7 @@ function App() {
             } />
             
             <Route path="/audit-logs" element={
-              <ProtectedRoute>
+              <ProtectedRoute allowedRoles={['admin','viewer']}>
                 <Layout>
                   <AuditLogs />
                 </Layout>
@@ -129,7 +139,7 @@ function App() {
             } />
             
             <Route path="/assessment-logs" element={
-              <ProtectedRoute>
+              <ProtectedRoute allowedRoles={['admin','viewer']}>
                 <Layout>
                   <AssessmentLogs />
                 </Layout>
@@ -145,6 +155,7 @@ function App() {
             } />
             
             {/* Catch all route */}
+            <Route path="/access-denied" element={<AccessDenied />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Router>

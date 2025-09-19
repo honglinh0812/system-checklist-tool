@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from '../../i18n/useTranslation';
 
 interface AssessmentResult {
@@ -10,6 +10,7 @@ interface AssessmentResult {
   actual_output?: string;
   reference_value: string;
   expected_output?: string;
+  comparator_method?: string;
   skip_reason?: string;
   skipped?: boolean;
   validation_result?: string;
@@ -50,12 +51,15 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState<'server' | 'command' | 'status'>('server');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  type SortBy = 'server' | 'command' | 'status';
+  type SortOrder = 'asc' | 'desc';
+  const [sortBy, setSortBy] = useState<SortBy>('server');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [showRecommendationsModal, setShowRecommendationsModal] = useState(false);
   const [selectedRecommendations, setSelectedRecommendations] = useState<AssessmentResult['recommendations']>([]);
   const [selectedCommandTitle, setSelectedCommandTitle] = useState<string>('');
+  const [isServerDropdownOpen, setIsServerDropdownOpen] = useState(false);
 
   // Get unique servers for dropdown
   const uniqueServers = useMemo(() => {
@@ -120,6 +124,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
     setSelectedServers(newSelection);
     setCurrentPage(1);
     onServerFilterChange?.(newSelection);
+    setIsServerDropdownOpen(false);
   };
 
   // CSS Styles
@@ -147,6 +152,11 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
     setExpandedRows(newExpanded);
   };
 
+  // Clear expanded rows when filters change
+  useEffect(() => {
+    setExpandedRows(new Set());
+  }, [selectedServers, searchTerm, sortBy, sortOrder]);
+
   // Handle recommendations modal
   const handleShowRecommendations = (result: AssessmentResult) => {
     setSelectedRecommendations(result.recommendations || []);
@@ -166,22 +176,22 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
     const validationResult = result.validation_result?.toLowerCase();
     const decision = result.decision?.toLowerCase();
     
-    if (result.skipped || result.skip_reason || result.command_name?.startsWith('skip') || 
+    if (result.skipped || result.skip_reason || result.command_name?.startsWith('skip') ||
         validationResult?.includes('skipped') || decision === 'approved' && result.skipped) {
       return (
         <span className="badge badge-warning d-flex align-items-center">
           <i className="fas fa-forward mr-1"></i>
-          OK (skipped)
+          {t('okSkipped')}
         </span>
       );
     }
     
-    if (validationResult === 'ok' || validationResult === 'pass' || validationResult === 'passed' || 
+    if (validationResult === 'ok' || validationResult === 'pass' || validationResult === 'passed' ||
         decision === 'ok' || decision === 'pass' || decision === 'passed' || decision === 'approved') {
       return (
         <span className="badge badge-success d-flex align-items-center">
           <i className="fas fa-check-circle mr-1"></i>
-          OK
+          {t('ok')}
         </span>
       );
     }
@@ -191,7 +201,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
       return (
         <span className="badge badge-danger d-flex align-items-center">
           <i className="fas fa-times-circle mr-1"></i>
-          Not OK
+          {t('notOk')}
         </span>
       );
     }
@@ -205,7 +215,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
         return (
           <span className="badge badge-success d-flex align-items-center">
             <i className="fas fa-check-circle mr-1"></i>
-            OK
+            {t('ok')}
           </span>
         );
       case 'not ok':
@@ -214,7 +224,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
         return (
           <span className="badge badge-danger d-flex align-items-center">
             <i className="fas fa-times-circle mr-1"></i>
-            Not OK
+            {t('notOk')}
           </span>
         );
       case 'skipped':
@@ -222,17 +232,27 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
         return (
           <span className="badge badge-warning d-flex align-items-center">
             <i className="fas fa-forward mr-1"></i>
-            OK (skipped)
+            {t('okSkipped')}
           </span>
         );
       default:
         return (
           <span className="badge badge-secondary d-flex align-items-center">
             <i className="fas fa-question-circle mr-1"></i>
-            N/A
+            {t('unknown')}
           </span>
         );
     }
+  };
+
+  // Reference value formatter with locale + comparator awareness
+  const formatReference = (result: AssessmentResult): string => {
+    const comparator = (result.comparator_method || '').trim().toLowerCase();
+    if (comparator === 'empty') return t('empty');
+    if (comparator === 'non_empty' || comparator === 'not_empty') return t('notEmpty');
+    const text = (result.reference_value || result.expected_output || '').toString();
+    if (text.trim().length === 0) return t('empty');
+    return text;
   };
 
   // Helper function to get result status
@@ -375,7 +395,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                            <i className="fas fa-forward fa-2x"></i>
                          </div>
                          <span className="h3 mb-0 text-warning font-weight-bold">{stats.skipped}</span>
-                         <div className="small text-muted mt-1">OK (skipped)</div>
+                         <div className="small text-muted mt-1">{t('okSkipped')}</div>
                          <div className="progress mt-2" style={{height: '4px'}}>
                            <div className="progress-bar bg-warning" style={{width: `${stats.total > 0 ? (stats.skipped / stats.total * 100) : 0}%`}}></div>
                          </div>
@@ -424,38 +444,43 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                 </div>
                 <div className="card-body p-3">
                   <div className="dropdown">
-                    <button 
-                      className="btn btn-outline-primary dropdown-toggle w-100 d-flex justify-content-between align-items-center" 
-                      type="button" 
-                      data-toggle="dropdown"
+                    <button
+                      className="btn btn-outline-primary w-100 d-flex justify-content-between align-items-center"
+                      type="button"
+                      onClick={() => setIsServerDropdownOpen(!isServerDropdownOpen)}
                       style={{borderRadius: '8px', padding: '10px 15px'}}
                     >
                       <span>
                         <i className="fas fa-filter mr-2"></i>
-                        {selectedServers.length === 0 ? 'Select Servers' : 
-                         selectedServers.length === uniqueServers.length ? 'All Servers' :
-                         `${selectedServers.length} Server${selectedServers.length > 1 ? 's' : ''} Selected`}
+                        {selectedServers.length === 0 ? t('selectServers') :
+                         selectedServers.length === uniqueServers.length ? t('allServers') :
+                         `${selectedServers.length} ${t('serversSelected')}`}
                       </span>
-                      <i className="fas fa-chevron-down"></i>
+                      <i className={`fas fa-chevron-${isServerDropdownOpen ? 'up' : 'down'}`}></i>
                     </button>
-                    <div className="dropdown-menu w-100 shadow-lg border-0" style={{ maxHeight: '350px', overflowY: 'auto', borderRadius: '8px' }}>
+                    <div className={`dropdown-menu w-100 shadow-lg border-0 ${isServerDropdownOpen ? 'show' : ''}`} style={{
+                      display: isServerDropdownOpen ? 'block' : 'none',
+                      maxHeight: '350px',
+                      overflowY: 'auto',
+                      borderRadius: '8px'
+                    }}>
                       <div className="px-3 py-3 bg-light">
                         <div className="d-flex justify-content-between">
-                          <button 
+                          <button
                             className="btn btn-sm btn-success flex-fill mr-2"
-                            onClick={() => { setSelectedServers(uniqueServers); setCurrentPage(1); onServerFilterChange?.(uniqueServers); }}
+                            onClick={() => { setSelectedServers(uniqueServers); setCurrentPage(1); onServerFilterChange?.(uniqueServers); setIsServerDropdownOpen(false); }}
                             style={{borderRadius: '6px'}}
                           >
                             <i className="fas fa-check-double mr-1"></i>
-                            Select All
+                            {t('selectAll')}
                           </button>
-                          <button 
+                          <button
                             className="btn btn-sm btn-outline-danger flex-fill"
-                            onClick={() => { setSelectedServers([]); setCurrentPage(1); onServerFilterChange?.([]); }}
+                            onClick={() => { setSelectedServers([]); setCurrentPage(1); onServerFilterChange?.([]); setIsServerDropdownOpen(false); }}
                             style={{borderRadius: '6px'}}
                           >
                             <i className="fas fa-times mr-1"></i>
-                            Clear All
+                            {t('clearAll')}
                           </button>
                         </div>
                       </div>
@@ -502,7 +527,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                     <input 
                       type="text" 
                       className="form-control border-left-0" 
-                      placeholder="Search commands, servers, output..."
+                      placeholder={t('searchPlaceholder')}
                       value={searchTerm}
                       onChange={(e) => {
                         setSearchTerm(e.target.value);
@@ -529,7 +554,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                   {searchTerm && (
                     <small className="text-muted mt-2 d-block">
                       <i className="fas fa-info-circle mr-1"></i>
-                      Found {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''}
+                      {t('foundResults', { count: filteredResults.length })}
                     </small>
                   )}
                 </div>
@@ -568,9 +593,9 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                         className="form-control form-control-sm" 
                         value={`${sortBy}-${sortOrder}`}
                         onChange={(e) => {
-                          const [newSortBy, newSortOrder] = e.target.value.split('-');
-                          setSortBy(newSortBy as any);
-                          setSortOrder(newSortOrder as any);
+                          const [newSortBy, newSortOrder] = e.target.value.split('-') as [SortBy, SortOrder];
+                          setSortBy(newSortBy);
+                          setSortOrder(newSortOrder);
                         }}
                         style={{borderRadius: '6px'}}
                       >
@@ -586,7 +611,10 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                   <div className="mt-2">
                     <small className="text-muted">
                       <i className="fas fa-info-circle mr-1"></i>
-                      Showing {Math.min(itemsPerPage, filteredResults.length)} of {filteredResults.length} results
+                      {t('showingItems', {
+                        start: Math.min(itemsPerPage, filteredResults.length),
+                        total: filteredResults.length
+                      })}
                     </small>
                   </div>
                 </div>
@@ -712,7 +740,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                               {result.skip_reason && (
                                 <small className="text-warning d-block mt-1">
                                   <i className="fas fa-info-circle mr-1"></i>
-                                  Skip condition detected
+                                  {t('skipConditionDetected')}
                                 </small>
                               )}
                             </div>
@@ -733,7 +761,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                   type="button"
                                   className="btn btn-sm btn-outline-info ml-2"
                                   onClick={() => handleShowRecommendations(result)}
-                                  title="Xem gợi ý khắc phục"
+                                  title={t('viewRecommendations')}
                                 >
                                   <i className="fas fa-tools"></i>
                                 </button>
@@ -743,7 +771,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                           <td className="align-middle py-3">
                             <div className="output-cell">
                               <div style={{ wordWrap: 'break-word', whiteSpace: 'normal' }}>
-                                {result.status === 'SKIPPED' ? (
+                                {getResultStatus(result) === 'skipped' ? (
                                   <span className="text-warning font-italic">{t('skipped')}</span>
                                 ) : (result.output || result.actual_output) ? (
                                   <span className={`${status === 'ok' ? 'text-success' : status === 'not_ok' ? 'text-danger' : 'text-muted'}`} style={{ wordWrap: 'break-word', whiteSpace: 'normal' }}>
@@ -758,13 +786,9 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                           <td className="align-middle py-3">
                             <div className="reference-cell">
                               <div style={{ wordWrap: 'break-word', whiteSpace: 'normal' }}>
-                                {result.reference_value || result.expected_output ? (
-                                  <span className="badge badge-info" style={{ wordWrap: 'break-word', whiteSpace: 'normal', maxWidth: 'none' }}>
-                                    {result.reference_value || result.expected_output}
-                                  </span>
-                                ) : (
-                                  <span className="badge badge-secondary">""</span>
-                                )}
+                                <span className="badge badge-info" style={{ wordWrap: 'break-word', whiteSpace: 'normal', maxWidth: 'none' }}>
+                                  {formatReference(result)}
+                                </span>
                               </div>
                             </div>
                           </td>
@@ -772,7 +796,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                             <button 
                               className="btn btn-sm btn-outline-primary rounded-circle"
                               onClick={() => toggleRowExpansion(globalIndex)}
-                              title={isExpanded ? 'Collapse details' : 'Expand details'}
+                              title={isExpanded ? t('collapseDetails') : t('expandDetails')}
                               style={{
                                 width: '32px',
                                 height: '32px',
@@ -804,7 +828,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                         <div className="card-header bg-primary text-white py-2">
                                           <h6 className="mb-0">
                                             <i className="fas fa-terminal mr-2"></i>
-                                            Command Output
+                                            {t('commandOutput')}
                                           </h6>
                                         </div>
                                         <div className="card-body p-3">
@@ -825,23 +849,15 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                         <div className="card-header bg-info text-white py-2">
                                           <h6 className="mb-0">
                                             <i className="fas fa-bullseye mr-2"></i>
-                                            Expected Value
+                                            {t('expectedValue')}
                                           </h6>
                                         </div>
                                         <div className="card-body p-3">
                                           <div className="bg-light p-3 rounded border" style={{ fontSize: '12px', minHeight: '60px' }}>
-                                            {result.reference_value || result.expected_output ? (
-                                              <div>
-                                                <span className="badge badge-info mb-2">{t('reference')}</span>
-                                                <div className="text-dark">{result.reference_value || result.expected_output}</div>
-                                              </div>
-                                            ) : (
-                                              <div className="d-flex align-items-center justify-content-center h-100">
-                                                <div className="text-center">
-                                                  <span className="badge badge-secondary">""</span>
-                                                </div>
-                                              </div>
-                                            )}
+                                            <div>
+                                              <span className="badge badge-info mb-2">{t('reference')}</span>
+                                              <div className="text-dark">{formatReference(result)}</div>
+                                            </div>
                                           </div>
                                         </div>
                                       </div>
@@ -851,7 +867,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                         <div className="card-header bg-secondary text-white py-2">
                                           <h6 className="mb-0">
                                             <i className="fas fa-info-circle mr-2"></i>
-                                            Assessment Details
+                                            {t('assessmentDetails')}
                                           </h6>
                                         </div>
                                         <div className="card-body p-3">
@@ -893,7 +909,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                                               <div className="mb-3">
                                                 <h6 className="text-dark mb-2">
                                                   <i className="fas fa-list mr-2"></i>
-                                                  Detailed Results by Server
+                                                  {t('detailedResultsByServer')}
                                                 </h6>
                                                 <div className="table-responsive">
                                                   <table className="table table-sm table-bordered mb-0">
@@ -998,7 +1014,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                         onClick={() => setCurrentPage(1)}
                         disabled={currentPage === 1}
                         style={{ transition: 'all 0.2s ease' }}
-                        title="First page"
+                        title={t('firstPage')}
                       >
                         <i className="fas fa-angle-double-left"></i>
                       </button>
@@ -1009,7 +1025,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                         onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                         disabled={currentPage === 1}
                         style={{ transition: 'all 0.2s ease' }}
-                        title="Previous page"
+                        title={t('previousPage')}
                       >
                         <i className="fas fa-angle-left"></i>
                       </button>
@@ -1050,7 +1066,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                         onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                         disabled={currentPage === totalPages}
                         style={{ transition: 'all 0.2s ease' }}
-                        title="Next page"
+                        title={t('nextPage')}
                       >
                         <i className="fas fa-angle-right"></i>
                       </button>
@@ -1061,7 +1077,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                         onClick={() => setCurrentPage(totalPages)}
                         disabled={currentPage === totalPages}
                         style={{ transition: 'all 0.2s ease' }}
-                        title="Last page"
+                        title={t('lastPage')}
                       >
                         <i className="fas fa-angle-double-right"></i>
                       </button>
@@ -1075,19 +1091,19 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
       ) : selectedServers.length > 0 ? (
           <div className="alert alert-light text-center">
             <i className="fas fa-search mr-2"></i>
-            Không tìm thấy kết quả nào cho các tiêu chí đã chọn.
+            {t('noResultsFound')}
           </div>
       ) : null}
 
       {/* Recommendations Modal */}
       {showRecommendationsModal && (
-        <div className="modal fade show d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <div className="modal fade show d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={(e) => { if (e.target === e.currentTarget) handleCloseRecommendations(); }}>
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">
                   <i className="fas fa-tools text-warning mr-2"></i>
-                  Gợi ý khắc phục - {selectedCommandTitle}
+                  Recommendations - {selectedCommandTitle}
                 </h5>
                 <button
                   type="button"
@@ -1102,7 +1118,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                   <div>
                     <div className="alert alert-info">
                       <i className="fas fa-info-circle mr-2"></i>
-                      Dưới đây là các gợi ý để khắc phục lệnh không thành công. Hãy thử các lệnh theo thứ tự ưu tiên.
+                      Below are suggestions to fix the failed command. Try the commands in order of priority.
                     </div>
                     
                     {selectedRecommendations?.map((rec, index) => (
@@ -1122,24 +1138,32 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                           
                           <h6 className="text-secondary mb-2">
                             <i className="fas fa-terminal mr-1"></i>
-                            Các lệnh gợi ý:
+                            Suggested commands:
                           </h6>
                           
                           {rec.commands.map((cmd, cmdIndex) => (
                             <div key={cmdIndex} className="mb-2">
                               <div className="d-flex align-items-center">
-                                <code 
+                                <code
                                   className="bg-dark text-light p-2 rounded flex-grow-1"
                                   style={{ fontSize: '12px', cursor: 'pointer' }}
-                                  onClick={() => navigator.clipboard.writeText(cmd)}
-                                  title="Click để copy"
+                                  onClick={() => {
+                                    if (navigator.clipboard) {
+                                      navigator.clipboard.writeText(cmd);
+                                    }
+                                  }}
+                                  title="Click to copy"
                                 >
                                   {cmd}
                                 </code>
                                 <button
                                   type="button"
                                   className="btn btn-sm btn-outline-secondary ml-2"
-                                  onClick={() => navigator.clipboard.writeText(cmd)}
+                                  onClick={() => {
+                                    if (navigator.clipboard) {
+                                      navigator.clipboard.writeText(cmd);
+                                    }
+                                  }}
                                   title="Copy command"
                                 >
                                   <i className="fas fa-copy"></i>
@@ -1153,13 +1177,13 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                     
                     <div className="alert alert-warning">
                       <i className="fas fa-exclamation-triangle mr-2"></i>
-                      <strong>Lưu ý:</strong> Hãy kiểm tra và điều chỉnh các lệnh cho phù hợp với môi trường của bạn trước khi thực thi.
+                      <strong>Note:</strong> Please check and adjust the commands to suit your environment before executing.
                     </div>
                   </div>
                 ) : (
                   <div className="alert alert-warning">
                     <i className="fas fa-exclamation-triangle mr-2"></i>
-                    Không có gợi ý khắc phục cho lệnh này.
+                    No recommendations for this command.
                   </div>
                 )}
               </div>
@@ -1170,7 +1194,7 @@ const AssessmentResultsTable: React.FC<AssessmentResultsTableProps> = ({
                   onClick={handleCloseRecommendations}
                 >
                   <i className="fas fa-times mr-2"></i>
-                  Đóng
+                  Close
                 </button>
               </div>
             </div>

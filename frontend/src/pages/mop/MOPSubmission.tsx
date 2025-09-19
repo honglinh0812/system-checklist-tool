@@ -34,7 +34,7 @@ const MOPSubmission: React.FC = () => {
   });
   const [fileNames, setFileNames] = usePersistedState('submission_fileNames', {
     pdfFile: 'Choose PDF file',
-    appendixFile: 'Choose Excel/CSV file'
+    appendixFile: 'Choose Excel/CSV/TXT file'
   });
   const [submissionStatus, setSubmissionStatus] = usePersistedState<SubmissionStatus>('submission_submissionStatus', { type: null, message: '' });
   const [showStatusModal, setShowStatusModal] = useModalState(false);
@@ -44,7 +44,7 @@ const MOPSubmission: React.FC = () => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, fileType: 'pdfFile' | 'appendixFile') => {
     const file = e.target.files?.[0] || null;
-    const fileName = file?.name || (fileType === 'pdfFile' ? 'Choose PDF file' : 'Choose Excel/CSV file');
+    const fileName = file?.name || (fileType === 'pdfFile' ? 'Choose PDF file' : 'Choose Excel/CSV/TXT file');
     
     setFormData(prev => ({ ...prev, [fileType]: file }));
     setFileNames(prev => ({ ...prev, [fileType]: fileName }));
@@ -108,7 +108,7 @@ const MOPSubmission: React.FC = () => {
         });
         // Reset form
         setFormData({ mopName: '', assessmentType: 'handover_assessment', pdfFile: null, appendixFile: null, description: '' });
-        setFileNames({ pdfFile: 'Choose PDF file', appendixFile: 'Choose Excel/CSV file' });
+        setFileNames({ pdfFile: 'Choose PDF file', appendixFile: 'Choose Excel/CSV/TXT file' });
       } else {
         setSubmissionStatus({
           type: 'error',
@@ -185,16 +185,14 @@ const MOPSubmission: React.FC = () => {
                     <h5><i className="fas fa-info-circle mr-2"></i>{t('fileRequirements')}:</h5>
                     <ul className="mb-0">
                       <li><strong>{t('pdfFile')}:</strong> {t('pdfFileRequirement')}</li>
-                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')} (6 cột mới):
+                      <li><strong>{t('appendixFile')}:</strong> {t('appendixFileRequirement')}
                         <ul>
                           <li><strong>ID:</strong> Mã định danh duy nhất</li>
                           <li><strong>Name:</strong> Mô tả ngắn gọn có thể chèn biến hiển thị</li>
                           <li><strong>Command:</strong> Lệnh thuần pipeline, không dùng if/then/||/&&</li>
-                          <li><strong>Extract:</strong> Cách lấy giá trị từ stdout (raw, first_line, lines_count, regex:(...), field:N, per_line:&lt;sub-extract&gt;)</li>
                           <li><strong>Comparator:</strong> Kiểu so sánh (eq, neq, contains, int_eq, int_ge, empty, non_empty, v.v.)</li>
                           <li><strong>Reference Value:</strong> Giá trị chuẩn để so sánh</li>
                         </ul>
-                        <small className="text-muted">Hỗ trợ tương thích ngược với định dạng 3 cột cũ</small>
                       </li>
                     </ul>
                   </div>
@@ -300,7 +298,7 @@ const MOPSubmission: React.FC = () => {
                                 type="file" 
                                 className="custom-file-input" 
                                 id="appendixFile" 
-                                accept=".xlsx,.xls,.csv" 
+                                accept=".xlsx,.xls,.csv,.txt" 
                                 required
                                 onChange={(e) => handleFileChange(e, 'appendixFile')}
                               />

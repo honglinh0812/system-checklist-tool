@@ -7,7 +7,6 @@ import re
 from datetime import datetime, timezone, timedelta
 import logging
 from typing import Dict, List, Any, Optional
-from .variable_expander import VariableExpander
 from .recommendation_engine import RecommendationEngine
 
 # GMT+7 timezone
@@ -24,7 +23,6 @@ class AnsibleRunner:
         self.job_logs = {}
         self.job_progress = {}
         self.recommendation_engine = RecommendationEngine()
-        self.variable_expander = VariableExpander()
     
     def _safe_yaml_string(self, command: str) -> str:
         """
@@ -139,7 +137,7 @@ class AnsibleRunner:
         logger.info(f"Created playbook: {playbook_path}")
         return temp_dir
     
-    def run_playbook(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str, execution_id: int = None, assessment_type: str = None):
+    def run_playbook(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str, execution_id: int = None, assessment_type: str = None, user_id: int = None, mop_id: int = None):
         """
         Main entry point - unified execution with smart analysis
         """
@@ -147,7 +145,7 @@ class AnsibleRunner:
         
         try:
             # Initialize job tracking (commands will be expanded later)
-            self._initialize_job_tracking(job_id, commands, servers)
+            self._initialize_job_tracking(job_id, commands, servers, user_id=user_id, mop_id=mop_id, job_type=assessment_type)
             
             # Luôn sử dụng smart execution để đảm bảo xử lý skip/biến đúng
             logger.info(f"Using smart execution for job {job_id} (forced unified path)")
@@ -157,31 +155,58 @@ class AnsibleRunner:
             self._handle_job_failure(job_id, str(e))
             raise
     
-    def _initialize_job_tracking(self, job_id: str, commands: List[Dict], servers: List[Dict]):
-        """Initialize job tracking data (common for all execution types)"""
-        # Use actual expanded commands count for tracking
+    def _initialize_job_tracking(self, job_id: str, commands: List[Dict], servers: List[Dict], user_id: int = None, mop_id: int = None, job_type: str = None):
+        """Initialize job tracking in both memory and database"""
+        from models.job_tracking import JobTracking
+        
+        # Calculate actual expanded commands count
         actual_commands_count = len(commands)
         
-        self.running_jobs[job_id] = {
+        status_data = {
             'status': 'running',
             'start_time': datetime.now(GMT_PLUS_7).isoformat(),
-            'commands_count': actual_commands_count,  # Use actual expanded count
+            'commands_count': actual_commands_count,
             'servers_count': len(servers),
-            'progress': 5  # Start with 5% to show initial progress
+            'progress': 5
         }
         
-        # Initialize progress tracking
-        self.job_progress[job_id] = {
+        progress_data = {
             'current_command': 1,
-            'total_commands': actual_commands_count,  # Use actual expanded count
+            'total_commands': actual_commands_count,
             'current_server': 1,
             'total_servers': len(servers),
             'percentage': 5
         }
+        
+        # Store in memory (for backward compatibility)
+        self.running_jobs[job_id] = status_data
+        self.job_progress[job_id] = progress_data
+        
+        # Store in database
+        JobTracking.create_or_update(
+            job_id=job_id,
+            status='running',
+            progress=5.0,
+            current_command=1,
+            total_commands=actual_commands_count,
+            current_server=1,
+            total_servers=len(servers),
+            job_type=job_type,
+            user_id=user_id,
+            mop_id=mop_id,
+            started_at=datetime.now(GMT_PLUS_7)
+        )
+        
+        # Update Redis (for real-time access)
+        self._update_job_status_redis(job_id, status_data)
+        self._update_job_progress_redis(job_id, progress_data)
+        
         logger.info(f"Initialized job tracking for {job_id}: {actual_commands_count} commands, {len(servers)} servers")
     
     def _handle_job_failure(self, job_id: str, error_message: str):
         """Handle job failure (common for all execution types)"""
+        from models.job_tracking import JobTracking
+        
         if job_id in self.running_jobs:
             self.running_jobs[job_id].update({
                 'status': 'failed',
@@ -193,6 +218,19 @@ class AnsibleRunner:
             self.job_progress[job_id].update({
                 'percentage': 0
             })
+        
+        # Update database
+        JobTracking.create_or_update(
+            job_id=job_id,
+            status='failed',
+            progress=0.0,
+            completed_at=datetime.now(GMT_PLUS_7),
+            error_message=error_message
+        )
+        
+        # Update both status and progress in Redis
+        self._update_job_status_redis(job_id, self.running_jobs[job_id])
+        self._update_job_progress_redis(job_id, self.job_progress[job_id])
     
     def _execute_with_smart_analysis(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str, execution_id: int = None, assessment_type: str = None):
         """
@@ -203,29 +241,9 @@ class AnsibleRunner:
         logger.info(f"Commands: {len(commands)}")
         logger.info(f"Servers: {len(servers)}")
         
-        # Store original commands count for UI display
         original_commands_count = len(commands)
         
-        # Step 1: expand variables (so we have final task list)
-        expanded_commands = self._expand_command_variables(commands, servers)
-        logger.info(f"Expanded template variables: {len(commands)} -> {len(expanded_commands)} commands (preprocess for when)")
-        
-        # Update job tracking with actual expanded commands count
-        if job_id in self.job_progress:
-            self.job_progress[job_id]['total_commands'] = len(expanded_commands)
-        if job_id in self.running_jobs:
-            self.running_jobs[job_id]['commands_count'] = len(expanded_commands)
-        logger.info(f"Updated job tracking for {job_id}: {len(expanded_commands)} expanded commands")
-        
-        # Step 2: annotate display index so tasks keep original numbering for progress/mapping
-        annotated_commands = self._annotate_display_index(commands, expanded_commands)
-        
-        # Step 3: convert skip markers to 'when' conditions AFTER expand, using stable result_id_<id>
-        preprocessed_commands = self._preprocess_commands_for_single_playbook(annotated_commands)
-        logger.info(f"Preprocessed commands for single playbook: {len(preprocessed_commands)} tasks")
-
-        return self._execute_standard_playbook(job_id, preprocessed_commands, servers, timestamp, execution_id, assessment_type, original_commands_count)
-    
+        return self._execute_standard_playbook(job_id, commands, servers, timestamp, execution_id, assessment_type, original_commands_count)
     
     def _execute_standard_playbook(self, job_id: str, commands: List[Dict], servers: List[Dict], timestamp: str, execution_id: int = None, assessment_type: str = None, original_commands_count: int = None):
         """Run playbook with detailed monitoring and progress tracking"""
@@ -370,17 +388,24 @@ class AnsibleRunner:
                                                     
                                                     logger.info(f"Real-time Task Start: '{task_name}' -> Command {current_command}/{total_expanded_commands}, Server {current_server}/{len(servers)}, Progress: {progress_percentage}% (Task position: {completed_tasks}/{total_tasks})")
                                                     
-                                                    # Update progress immediately
+                                                    # Update progress immediately - ensure values never go backwards
                                                     if job_id in self.running_jobs:
-                                                        self.running_jobs[job_id]['progress'] = progress_percentage
+                                                        current_progress = self.running_jobs[job_id].get('progress', 5)
+                                                        self.running_jobs[job_id]['progress'] = max(current_progress, progress_percentage)
+                                                        self._update_job_status_redis(job_id, self.running_jobs[job_id])
                                                         
                                                     if job_id in self.job_progress:
+                                                        current_cmd = self.job_progress[job_id].get('current_command', 1)
+                                                        current_srv = self.job_progress[job_id].get('current_server', 1)
+                                                        current_pct = self.job_progress[job_id].get('percentage', 5)
+                                                        
                                                         self.job_progress[job_id].update({
-                                                            'percentage': progress_percentage,
-                                                            'current_command': current_command,
-                                                            'current_server': current_server,
+                                                            'percentage': max(current_pct, progress_percentage),
+                                                            'current_command': max(current_cmd, current_command),
+                                                            'current_server': max(current_srv, current_server),
                                                             'total_commands': total_expanded_commands
                                                         })
+                                                        self._update_job_progress_redis(job_id, self.job_progress[job_id])
                                             
                                             # Also track completion events for more accurate progress
                                             elif event_type in ['runner_on_ok', 'runner_on_failed']:
@@ -420,17 +445,24 @@ class AnsibleRunner:
                                                     last_progress_update = progress_percentage
                                                     logger.info(f"Progress updated from completion: task {current_command}/{total_expanded_commands}, server {current_server}/{len(servers)}, percentage: {progress_percentage}%")
                                                         
-                                                    # Update progress
+                                                    # Update progress - ensure values never go backwards
                                                     if job_id in self.running_jobs:
-                                                        self.running_jobs[job_id]['progress'] = progress_percentage
+                                                        current_progress = self.running_jobs[job_id].get('progress', 5)
+                                                        self.running_jobs[job_id]['progress'] = max(current_progress, progress_percentage)
+                                                        self._update_job_status_redis(job_id, self.running_jobs[job_id])
                                                             
                                                     if job_id in self.job_progress:
+                                                        current_cmd = self.job_progress[job_id].get('current_command', 1)
+                                                        current_srv = self.job_progress[job_id].get('current_server', 1)
+                                                        current_pct = self.job_progress[job_id].get('percentage', 5)
+                                                        
                                                         self.job_progress[job_id].update({
-                                                            'percentage': progress_percentage,
-                                                            'current_command': current_command,
-                                                            'current_server': current_server,
+                                                            'percentage': max(current_pct, progress_percentage),
+                                                            'current_command': max(current_cmd, current_command),
+                                                            'current_server': max(current_srv, current_server),
                                                             'total_commands': total_expanded_commands
                                                         })
+                                                        self._update_job_progress_redis(job_id, self.job_progress[job_id])
                                                     
                                     except Exception as e:
                                         logger.debug(f"Error parsing event file {event_file_path}: {e}")
@@ -469,17 +501,24 @@ class AnsibleRunner:
                                     
                                     logger.info(f"Time-based progress simulation: Command {current_command}/{total_expanded_commands}, Server {current_server}/{len(servers)}, Progress: {progress_percentage}% (elapsed: {elapsed_time:.1f}s, estimated tasks: {estimated_completed_tasks}/{total_tasks})")
                                     
-                                    # Update progress
+                                    # Update progress - ensure values never go backwards
                                     if job_id in self.running_jobs:
-                                        self.running_jobs[job_id]['progress'] = progress_percentage
+                                        current_progress = self.running_jobs[job_id].get('progress', 5)
+                                        self.running_jobs[job_id]['progress'] = max(current_progress, progress_percentage)
+                                        self._update_job_status_redis(job_id, self.running_jobs[job_id])
                                         
                                     if job_id in self.job_progress:
+                                        current_cmd = self.job_progress[job_id].get('current_command', 1)
+                                        current_srv = self.job_progress[job_id].get('current_server', 1)
+                                        current_pct = self.job_progress[job_id].get('percentage', 5)
+                                        
                                         self.job_progress[job_id].update({
-                                            'percentage': progress_percentage,
-                                            'current_command': current_command,
-                                            'current_server': current_server,
+                                            'percentage': max(current_pct, progress_percentage),
+                                            'current_command': max(current_cmd, current_command),
+                                            'current_server': max(current_srv, current_server),
                                             'total_commands': total_expanded_commands
                                         })
+                                        self._update_job_progress_redis(job_id, self.job_progress[job_id])
                             
                             # Debug logging every 5 seconds with more details
                             if int(elapsed_time) % 5 == 0 and elapsed_time > 2:
@@ -534,7 +573,25 @@ class AnsibleRunner:
                     'percentage': 100
                 })
             
+            # Update database
+            from models.job_tracking import JobTracking
+            JobTracking.create_or_update(
+                job_id=job_id,
+                status='completed',
+                progress=100.0,
+                current_command=len(commands),
+                current_server=len(servers),
+                completed_at=datetime.now(GMT_PLUS_7)
+            )
+            
+            # Update both status and progress in Redis
+            self._update_job_status_redis(job_id, self.running_jobs[job_id])
+            self._update_job_progress_redis(job_id, self.job_progress[job_id])
+            
             self.job_results[job_id] = results
+            
+            # Update AssessmentResult in database if this is an assessment job
+            self._update_assessment_result_in_db(job_id, results, 'success')
             
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -549,6 +606,8 @@ class AnsibleRunner:
                 if 'result' in locals():
                     results = self._process_results(result, final_commands, servers, job_id, timestamp, execution_id, assessment_type)
                     self.job_results[job_id] = results
+                    # Update AssessmentResult in database even if there was an exception
+                    self._update_assessment_result_in_db(job_id, results, 'success')
                 else:
                     # Create minimal log when no result is available
                     log_content = [
@@ -581,6 +640,9 @@ class AnsibleRunner:
                             'error': str(e)
                         }
                     }
+                    
+                    # Update AssessmentResult in database for failed job
+                    self._update_assessment_result_in_db(job_id, self.job_results[job_id], 'fail')
             except Exception as log_error:
                 logger.error(f"Error creating logs for failed job {job_id}: {str(log_error)}")
             
@@ -596,6 +658,20 @@ class AnsibleRunner:
                     self.job_progress[job_id].update({
                         'percentage': 0
                     })
+                
+            # Update database
+            from models.job_tracking import JobTracking
+            JobTracking.create_or_update(
+                job_id=job_id,
+                status='failed',
+                progress=0.0,
+                completed_at=datetime.now(GMT_PLUS_7),
+                error_message=str(e)
+            )
+            
+            # Update both status and progress in Redis
+            self._update_job_status_redis(job_id, self.running_jobs[job_id])
+            self._update_job_progress_redis(job_id, self.job_progress[job_id])
             
             if 'temp_dir' in locals():
                 import shutil
@@ -699,6 +775,7 @@ class AnsibleRunner:
                     'is_valid': False,
                     'expected': cmd.get('reference_value', ''),
                     'reference_value': cmd.get('reference_value', ''),  # Add for frontend compatibility
+                    'comparator_method': cmd.get('comparator_method', 'eq'),  # Add comparator method
                     'validation_type': cmd.get('validation_type', 'exact_match'),
                     'skip_condition': cmd.get('skip_condition'),
                     'skipped': False,
@@ -724,6 +801,7 @@ class AnsibleRunner:
                             
                     if job_id in self.running_jobs:
                         self.running_jobs[job_id]['progress'] = progress_percentage
+                        self._update_job_status_redis(job_id, self.running_jobs[job_id])
                         
                 # Add expanded command info to log if applicable
                 expanded_info = f" (expanded from {cmd.get('_expanded_from')})" if cmd.get('_expanded_from') else ""
@@ -826,6 +904,7 @@ class AnsibleRunner:
                         cmd_result['expected_value'] = expected_value
                         cmd_result['validation_type'] = validation.get('validation_type', 'exact_match')
                         cmd_result['validation_method'] = 'exact_match'
+                        cmd_result['comparator_method'] = comparator_method
                         # Don't override decision for skipped commands
                         cmd_result['decision'] = 'APPROVED' if validation.get('is_valid', False) else 'REJECTED'
                             
@@ -1194,25 +1273,137 @@ class AnsibleRunner:
         return self.job_results.get(job_id)
 
     def get_job_status(self, job_id: str) -> Optional[Dict]:
-        """Get status of a job with detailed progress"""
-        if job_id in self.running_jobs:
-            status = self.running_jobs[job_id].copy()
+        """Get status of a job with detailed progress from Redis"""
+        try:
+            from services.jobs.job_map import get_redis_connection
+            import json
             
-            # Add detailed progress information
-            if job_id in self.job_progress:
-                progress_info = self.job_progress[job_id]
-                status.update({
-                    'detailed_progress': {
-                        'current_command': progress_info.get('current_command', 0),
-                        'total_commands': progress_info.get('total_commands', 0),
-                        'current_server': progress_info.get('current_server', 0),
-                        'total_servers': progress_info.get('total_servers', 0),
-                        'percentage': progress_info.get('percentage', 0)
-                    }
-                })
+            conn = get_redis_connection()
             
-            return status
+            # Try both original job_id and mapped job_id
+            for check_job_id in [job_id, self._resolve_job_id(job_id)]:
+                # Get job status from Redis
+                status_key = f"job_status:{check_job_id}"
+                progress_key = f"job_progress:{check_job_id}"
+                
+                status_data = conn.get(status_key)
+                progress_data = conn.get(progress_key)
+                
+                if status_data:
+                    try:
+                        status = json.loads(status_data.decode('utf-8') if isinstance(status_data, bytes) else status_data)
+                        
+                        # Add detailed progress information
+                        if progress_data:
+                            try:
+                                progress_info = json.loads(progress_data.decode('utf-8') if isinstance(progress_data, bytes) else progress_data)
+                                
+                                # Ensure progress values are never 0 during execution
+                                current_command = max(1, progress_info.get('current_command', 1))
+                                current_server = max(1, progress_info.get('current_server', 1))
+                                total_commands = progress_info.get('total_commands', 0)
+                                total_servers = progress_info.get('total_servers', 0)
+                                percentage = max(5, progress_info.get('percentage', 5))  # Minimum 5%
+                                
+                                # Ensure we don't exceed totals
+                                if total_commands > 0:
+                                    current_command = min(current_command, total_commands)
+                                if total_servers > 0:
+                                    current_server = min(current_server, total_servers)
+                                
+                                status.update({
+                                    'detailed_progress': {
+                                        'current_command': current_command,
+                                        'total_commands': total_commands,
+                                        'current_server': current_server,
+                                        'total_servers': total_servers,
+                                        'percentage': percentage
+                                    }
+                                })
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                        
+                        return status
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+        except Exception as e:
+            logger.warning(f"Failed to get job status from Redis for {job_id}: {e}")
+        
+        # Fallback to local memory (for backward compatibility)
+        actual_job_id = self._resolve_job_id(job_id)
+        for check_job_id in [job_id, actual_job_id]:
+            if check_job_id in self.running_jobs:
+                status = self.running_jobs[check_job_id].copy()
+                
+                # Add detailed progress information
+                if check_job_id in self.job_progress:
+                    progress_info = self.job_progress[check_job_id]
+                    
+                    # Ensure progress values are never 0 during execution
+                    current_command = max(1, progress_info.get('current_command', 1))
+                    current_server = max(1, progress_info.get('current_server', 1))
+                    total_commands = progress_info.get('total_commands', 0)
+                    total_servers = progress_info.get('total_servers', 0)
+                    percentage = max(5, progress_info.get('percentage', 5))  # Minimum 5%
+                    
+                    # Ensure we don't exceed totals
+                    if total_commands > 0:
+                        current_command = min(current_command, total_commands)
+                    if total_servers > 0:
+                        current_server = min(current_server, total_servers)
+                    
+                    status.update({
+                        'detailed_progress': {
+                            'current_command': current_command,
+                            'total_commands': total_commands,
+                            'current_server': current_server,
+                            'total_servers': total_servers,
+                            'percentage': percentage
+                        }
+                    })
+                
+                return status
         return None
+    
+    def _update_job_status_redis(self, job_id: str, status_data: Dict):
+        """Update job status in both memory and Redis"""
+        try:
+            from services.jobs.job_map import get_redis_connection
+            import json
+            
+            # Update memory
+            self.running_jobs[job_id] = status_data
+            
+            # Update Redis
+            conn = get_redis_connection()
+            status_key = f"job_status:{job_id}"
+            conn.setex(status_key, 3600, json.dumps(status_data))  # Expire in 1 hour
+        except Exception as e:
+            logger.warning(f"Failed to update job status in Redis for {job_id}: {e}")
+    
+    def _update_job_progress_redis(self, job_id: str, progress_data: Dict):
+        """Update job progress in both memory and Redis"""
+        try:
+            from services.jobs.job_map import get_redis_connection
+            import json
+            
+            # Update memory
+            self.job_progress[job_id] = progress_data
+            
+            # Update Redis
+            conn = get_redis_connection()
+            progress_key = f"job_progress:{job_id}"
+            conn.setex(progress_key, 3600, json.dumps(progress_data))  # Expire in 1 hour
+        except Exception as e:
+            logger.warning(f"Failed to update job progress in Redis for {job_id}: {e}")
+    
+    def _resolve_job_id(self, job_id: str) -> str:
+        """Resolve a job_id using Redis mapping (RQ <-> Ansible)."""
+        try:
+            from services.jobs.job_map import resolve_job_id
+            return resolve_job_id(job_id)
+        except Exception:
+            return job_id
     
     def get_job_results(self, job_id: str) -> Optional[Dict]:
         """Get results of a job"""
@@ -1243,135 +1434,6 @@ class AnsibleRunner:
             jobs.append(job_info)
         return jobs
     
-    def _expand_command_variables(self, commands: List[Dict], servers: List[Dict]) -> List[Dict]:
-        """Expand template variables in commands using VariableExpander.
-        - Hỗ trợ biến trong cả 'command', 'reference_value', 'expected_value' và 'title'
-        - Nếu biến là list (đa giá trị), nhân bản task tương ứng
-        """
-        try:
-            # Build simple context without remote discovery to avoid SSH issues
-            server_context = {
-                'user': ['root', 'admin', 'oracle', 'postgres'],  # Common users
-                'users': ['root', 'admin', 'oracle', 'postgres'],
-                'bond': ['bond0', 'bond1'],  # Common bond interfaces
-                'bonds': ['bond0', 'bond1'],
-                'interface': ['eth0', 'eth1', 'ens160', 'ens192'],  # Common interfaces
-                'interfaces': ['eth0', 'eth1', 'ens160', 'ens192']
-            }
-            
-            # Add server-specific context if available
-            if servers:
-                first_server = servers[0]
-                server_context['server_ip'] = first_server['ip']
-                server_context['hostname'] = first_server.get('hostname', first_server['ip'])
-                
-            expanded_commands = []
-            for cmd in commands:
-                # Check if command contains variables that may need expansion
-                variables_in_command = self.variable_expander.variable_pattern.findall(
-                    (cmd.get('command', '') or '') +
-                    (cmd.get('reference_value', '') or '') +
-                    (cmd.get('expected_value', '') or '') +
-                    (cmd.get('title', '') or '')
-                )
-                
-                has_list_variables = False
-                for var_name in variables_in_command:
-                    var_value = server_context.get(var_name, '')
-                    if isinstance(var_value, list) and len(var_value) > 1:
-                        has_list_variables = True
-                        break
-                
-                if has_list_variables:
-                    # Use expand_command_list for commands with list variables
-                    expanded_cmds = self.variable_expander.expand_command_list([cmd], server_context)
-                    # Fallback: nếu triển khai không thay thế title, tự tay expand title/fields
-                    fixed_cmds: List[Dict] = []
-                    for idx, ec in enumerate(expanded_cmds):
-                        new_ec = ec.copy()
-                        # Ensure title is expanded as well
-                        if 'title' in new_ec:
-                            new_ec['title'] = self.variable_expander.expand_variables(new_ec['title'], server_context)
-                        # Track expansion metadata
-                        new_ec.setdefault('_expanded_from', cmd.get('title') or cmd.get('command'))
-                        new_ec.setdefault('_expanded_variables', variables_in_command)
-                        new_ec['_expanded_index'] = idx
-                        fixed_cmds.append(new_ec)
-                    expanded_commands.extend(fixed_cmds)
-                else:
-                    # Use simple expansion for commands without list variables
-                    expanded_cmd = cmd.copy()
-                    
-                    # Expand variables in command field
-                    if 'command' in expanded_cmd:
-                        expanded_cmd['command'] = self.variable_expander.expand_variables(
-                            expanded_cmd['command'], server_context
-                        )
-                    
-                    # Expand variables in reference_value field for 6-column format
-                    if 'reference_value' in expanded_cmd:
-                        expanded_cmd['reference_value'] = self.variable_expander.expand_variables(
-                            expanded_cmd['reference_value'], server_context
-                        )
-                    
-                    # Expand variables in expected_value field for legacy format
-                    if 'expected_value' in expanded_cmd:
-                        expanded_cmd['expected_value'] = self.variable_expander.expand_variables(
-                            expanded_cmd['expected_value'], server_context
-                        )
-
-                    # Expand variables in title
-                    if 'title' in expanded_cmd:
-                        expanded_cmd['title'] = self.variable_expander.expand_variables(
-                            expanded_cmd['title'], server_context
-                        )
-                    
-                    expanded_commands.append(expanded_cmd)
-            
-            logger.info(f"Expanded template variables: {len(commands)} -> {len(expanded_commands)} commands")
-            return expanded_commands
-            
-        except Exception as e:
-            logger.warning(f"Error expanding template variables: {str(e)}")
-            return commands  # Return original commands if expansion fails
-
-    def _annotate_display_index(self, original_commands: List[Dict], expanded_commands: List[Dict]) -> List[Dict]:
-        """Attach stable display index (1..N of original list) to every (possibly expanded) command.
-        This preserves UI progress and mapping at original 151 commands while allowing expansion.
-        """
-        # Build a map from an original command identity to its display index
-        def _key(c: Dict) -> str:
-            return str(c.get('command_id_ref') or c.get('command_id') or c.get('id') or c.get('title') or '')
-        order_map: Dict[str, int] = {}
-        for idx, oc in enumerate(original_commands):
-            order_map[_key(oc)] = idx + 1  # 1-based
-        
-        annotated: List[Dict] = []
-        for ec in expanded_commands:
-            display_idx = order_map.get(_key(ec))
-            new_cmd = ec.copy()
-            if display_idx:
-                new_cmd['_display_index'] = display_idx
-            annotated.append(new_cmd)
-        return annotated
-    
-    def _expand_dynamic_commands(self, commands: List[Dict], command_results: Dict[str, List[Dict]] = None) -> List[Dict]:
-        """Expand commands dynamically based on previous command results"""
-        try:
-            if not command_results:
-                return commands
-                
-            expanded_commands = self.variable_expander.expand_dynamic_commands(commands, command_results)
-            
-            if len(expanded_commands) != len(commands):
-                logger.info(f"Dynamic expansion: {len(commands)} -> {len(expanded_commands)} commands")
-                
-            return expanded_commands
-            
-        except Exception as e:
-            logger.warning(f"Error expanding dynamic commands: {str(e)}")
-            return commands  # Return original commands if expansion fails
-    
     def _update_smart_execution_progress(self, job_id: str, percentage: int, status_message: str = ""):
         """Update progress for smart execution"""
         try:
@@ -1380,6 +1442,7 @@ class AnsibleRunner:
                 self.job_progress[job_id].update({
                     'percentage': percentage
                 })
+                self._update_job_progress_redis(job_id, self.job_progress[job_id])
                 logger.info(f"PROGRESS UPDATE: {job_id} - {old_percentage}% → {percentage}% - {status_message}")
             
             if job_id in self.running_jobs:
@@ -1406,157 +1469,6 @@ class AnsibleRunner:
             'success_rate': round((ok_count / total_commands * 100) if total_commands > 0 else 0, 2)
         }
     
-    # ============ SEQUENTIAL EXECUTION HELPER METHODS ============
-    
-    def _check_skip_condition(self, command: Dict, reference_results: Dict, servers: List[Dict]) -> tuple[bool, str]:
-        """Check if command should be skipped based on skip condition"""
-        title = command.get('title', '')
-        
-        # Check for skip condition in title
-        if '[SKIP_IF:' not in title:
-            return False, ""
-        
-        try:
-            # Extract skip condition (e.g., "[SKIP_IF:1p:non_empty]" or "[SKIP_IF:41p:"phy"]")
-            skip_part = title[title.find('[SKIP_IF:'):title.find(']', title.find('[SKIP_IF:')) + 1]
-            skip_condition = skip_part.replace('[SKIP_IF:', '').replace(']', '').strip()
-            
-            # Parse condition using colon as separator
-            parts = skip_condition.split(':')
-            if len(parts) < 2:
-                return False, "Invalid skip condition format"
-            
-            ref_cmd_id = parts[0]
-            condition_value = parts[1] if len(parts) > 1 else ""
-            
-            logger.info(f"Checking skip condition: {ref_cmd_id}:{condition_value}")
-            
-            # Check condition for each server
-            skip_all_servers = True
-            for server in servers:
-                server_ip = server['ip']
-                
-                # Get reference result
-                ref_output = ""
-                if ref_cmd_id in reference_results and server_ip in reference_results[ref_cmd_id]:
-                    ref_output = reference_results[ref_cmd_id][server_ip].strip()
-                
-                # Evaluate condition
-                server_should_skip = False
-                
-                if condition_value == 'non_empty':
-                    # Skip if reference has output (not empty)
-                    server_should_skip = bool(ref_output)
-                elif condition_value == 'empty':
-                    # Skip if reference is empty
-                    server_should_skip = not bool(ref_output)
-                elif condition_value.startswith('"') and condition_value.endswith('"'):
-                    # Skip if reference output matches specific value (remove quotes)
-                    expected_value = condition_value[1:-1]
-                    server_should_skip = (ref_output == expected_value)
-                else:
-                    # Skip if reference output matches specific value (without quotes)
-                    server_should_skip = (ref_output == condition_value)
-                    
-                    if not server_should_skip:
-                        skip_all_servers = False
-                        break
-            
-            if skip_all_servers:
-                return True, f"Reference command {ref_cmd_id} meets skip condition: {condition_value}"
-            
-            return False, ""
-            
-        except Exception as e:
-            logger.warning(f"Error evaluating skip condition: {str(e)}")
-            return False, f"Error in skip condition: {str(e)}"
-    
-    def _create_skipped_result(self, command: Dict, server_ip: str, skip_reason: str) -> Dict:
-        """Create a result object for a skipped command"""
-        return {
-            'title': command.get('title', ''),
-            'command': command.get('command', ''),
-            'command_text': command.get('command', ''),
-            'command_name': command.get('title', ''),
-            'command_id_ref': command.get('command_id_ref', command.get('command_id', command.get('id', ''))),
-            'server_ip': server_ip,
-            'output': '',
-            'error': '',
-            'return_code': 0,
-            'success': True,
-            'is_valid': True,
-            'skipped': True,
-            'skip_reason': skip_reason,
-            'validation_result': 'OK (skipped)',
-            'decision': 'OK (skipped)',
-            'expected': command.get('reference_value', ''),
-            'reference_value': command.get('reference_value', ''),
-            'validation_type': command.get('validation_type', 'exact_match')
-        }
-    
-    def _expand_command_variables_inline(self, command: Dict, reference_results: Dict) -> List[Dict]:
-        """Expand command variables inline and return list of commands to execute"""
-        cmd_text = command.get('command', '')
-        cmd_title = command.get('title', '')
-        
-        # Check if command has variables
-        if '{{' not in cmd_text and '{{' not in cmd_title:
-            return [command]  # No variables, return original command
-        
-        # Simple variable expansion - for now, just return original command
-        # TODO: Implement actual variable expansion based on reference_results
-        logger.info(f"Variable expansion needed for: {cmd_title}")
-        return [command]  # Placeholder - return original for now
-
-    def _preprocess_commands_for_single_playbook(self, commands: List[Dict]) -> List[Dict]:
-        """Xử lý skip condition logic với hỗ trợ đầy đủ các điều kiện.
-        Hỗ trợ format: [SKIP_IF:ref_id:non_empty], [SKIP_IF:ref_id:empty], [SKIP_IF:ref_id:"value"]
-        """
-        processed: List[Dict] = []
-        
-        for idx, cmd in enumerate(commands):
-            new_cmd = cmd.copy()
-            title = new_cmd.get('title', '')
-            
-            # Tìm skip condition
-            if '[SKIP_IF:' in title and ']' in title:
-                try:
-                    # Extract skip condition
-                    start = title.find('[SKIP_IF:') + 9
-                    end = title.find(']', start)
-                    if end > start:
-                        skip_part = title[start:end]
-                        parts = skip_part.split(':')
-                        
-                        if len(parts) >= 2:
-                            ref_id = parts[0].strip()
-                            condition_value = parts[1].strip() if len(parts) > 1 else ""
-                            
-                            # Sanitize ref_id for ansible variable name
-                            safe_ref_id = re.sub(r"[^A-Za-z0-9_]", "_", str(ref_id))
-                            
-                            # Tạo when condition dựa trên loại điều kiện
-                            if condition_value == 'non_empty':
-                                # Skip nếu có output → run khi không có output
-                                new_cmd['when'] = f"result_id_{safe_ref_id}.stdout is not defined or result_id_{safe_ref_id}.stdout == ''"
-                            elif condition_value == 'empty':
-                                # Skip nếu không có output → run khi có output
-                                new_cmd['when'] = f"result_id_{safe_ref_id}.stdout is defined and result_id_{safe_ref_id}.stdout != ''"
-                            elif condition_value.startswith('"') and condition_value.endswith('"'):
-                                # Skip nếu output khớp với giá trị cụ thể → run khi không khớp
-                                expected_value = condition_value[1:-1]  # Remove quotes
-                                new_cmd['when'] = f"result_id_{safe_ref_id}.stdout is not defined or result_id_{safe_ref_id}.stdout != '{expected_value}'"
-                            else:
-                                # Skip nếu output khớp với giá trị cụ thể (không có quotes) → run khi không khớp
-                                new_cmd['when'] = f"result_id_{safe_ref_id}.stdout is not defined or result_id_{safe_ref_id}.stdout != '{condition_value}'"
-                            
-                            logger.info(f"Added skip condition for command {idx+1}: {new_cmd.get('when', 'none')}")
-                except Exception as e:
-                    logger.warning(f"Error processing skip condition for command {idx+1}: {str(e)}")
-                    # Continue without skip condition if parsing fails
-            
-            processed.append(new_cmd)
-        return processed
     
     def _execute_single_command_on_servers(self, command: Dict, servers: List[Dict], temp_dir: str) -> List[Dict]:
         """Execute a single command on all servers"""
@@ -1594,6 +1506,7 @@ class AnsibleRunner:
                     'is_valid': False,
                     'expected': command.get('reference_value', ''),
                     'reference_value': command.get('reference_value', ''),
+                    'comparator_method': command.get('comparator_method', 'eq'),  # Add comparator method
                     'validation_type': command.get('validation_type', 'exact_match'),
                     'skipped': False,
                     'skip_reason': ''
@@ -1720,6 +1633,9 @@ class AnsibleRunner:
         
         self.job_results[job_id] = final_result
         
+        # Update AssessmentResult in database for sequential execution
+        self._update_assessment_result_in_db(job_id, final_result, 'success')
+        
         # Create logs (simplified for now)
         self.job_logs[job_id] = {
             'log_content': f"Sequential execution completed: {len(all_results)} results",
@@ -1728,3 +1644,37 @@ class AnsibleRunner:
         }
         
         return final_result
+    
+    def _update_assessment_result_in_db(self, job_id: str, results: Dict, status: str):
+        """Update AssessmentResult in database when job completes"""
+        try:
+            # Extract assessment_id from job_id
+            # Job ID format: risk_assessment_{assessment_id}_{timestamp} or handover_assessment_{assessment_id}_{timestamp}
+            if 'risk_assessment_' in job_id:
+                assessment_id = int(job_id.split('_')[2])
+            elif 'handover_assessment_' in job_id:
+                assessment_id = int(job_id.split('_')[2])
+            else:
+                logger.warning(f"Job {job_id} is not an assessment job, skipping database update")
+                return
+            
+            from models.assessment import AssessmentResult
+            from models import db
+            
+            assessment = AssessmentResult.query.get(assessment_id)
+            if not assessment:
+                logger.warning(f"Assessment {assessment_id} not found in database")
+                return
+            
+            # Update assessment with results
+            assessment.status = status
+            assessment.test_results = results.get('servers', {})
+            assessment.execution_logs = results.get('execution_logs', '')
+            assessment.completed_at = datetime.now(GMT_PLUS_7)
+            
+            db.session.commit()
+            logger.info(f"Updated AssessmentResult {assessment_id} with status {status}")
+            
+        except Exception as e:
+            logger.error(f"Error updating AssessmentResult for job {job_id}: {str(e)}")
+            # Don't raise exception to avoid breaking the job completion flow

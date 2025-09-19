@@ -1,4 +1,4 @@
-from flask import Blueprint, request, send_file, current_app
+from flask import Blueprint, request, send_file, current_app, jsonify
 from flask_jwt_extended import jwt_required
 from sqlalchemy import desc, func
 from datetime import datetime, timedelta, timezone
@@ -19,6 +19,7 @@ from .api_utils import (
 from core.auth import get_current_user
 from services.ansible_manager import AnsibleRunner
 from utils.audit_helpers import log_user_management_action, log_mop_action, log_user_activity
+from services.realtime import sse_job_stream
 from models.audit_log import ActionType, ResourceType
 import logging
 import os
@@ -28,12 +29,97 @@ import time
 import paramiko
 import socket
 
+def get_job_status_from_database(job_id: str, resolved_id: str):
+    """Get job status from database with detailed progress"""
+    try:
+        from models.job_tracking import JobTracking
+        
+        # Try to get from database first
+        job_tracking = JobTracking.get_by_job_id(resolved_id)
+        if job_tracking:
+            return {
+                'job_id': job_id,
+                'status': job_tracking.status,
+                'progress': job_tracking.progress,
+                'logs': [],
+                'detailed_progress': {
+                    'current_command': max(1, job_tracking.current_command),
+                    'total_commands': job_tracking.total_commands,
+                    'current_server': max(1, job_tracking.current_server),
+                    'total_servers': job_tracking.total_servers,
+                    'percentage': max(5, job_tracking.progress) if job_tracking.status == 'running' else job_tracking.progress
+                }
+            }
+        
+        # Fallback to Redis if not found in database
+        return get_job_status_from_redis(job_id, resolved_id)
+        
+    except Exception as e:
+        logger.warning(f"Failed to get job status from database for {job_id}: {e}")
+        # Fallback to Redis
+        return get_job_status_from_redis(job_id, resolved_id)
+
+def get_job_status_from_redis(job_id: str, resolved_id: str):
+    """Get job status from Redis with detailed progress"""
+    try:
+        from services.jobs.job_map import get_redis_connection
+        import json
+        
+        conn = get_redis_connection()
+        status_key = f"job_status:{resolved_id}"
+        progress_key = f"job_progress:{resolved_id}"
+        
+        status_data = conn.get(status_key)
+        progress_data = conn.get(progress_key)
+        
+        if status_data:
+            try:
+                status = json.loads(status_data.decode('utf-8') if isinstance(status_data, bytes) else status_data)
+                
+                # Add detailed progress information
+                if progress_data:
+                    try:
+                        progress_info = json.loads(progress_data.decode('utf-8') if isinstance(progress_data, bytes) else progress_data)
+                        
+                        # Ensure progress values are never 0 during execution
+                        current_command = max(1, progress_info.get('current_command', 1))
+                        current_server = max(1, progress_info.get('current_server', 1))
+                        total_commands = progress_info.get('total_commands', 0)
+                        total_servers = progress_info.get('total_servers', 0)
+                        percentage = max(5, progress_info.get('percentage', 5))  # Minimum 5%
+                        
+                        # Ensure we don't exceed totals
+                        if total_commands > 0:
+                            current_command = min(current_command, total_commands)
+                        if total_servers > 0:
+                            current_server = min(current_server, total_servers)
+                        
+                        return {
+                            'job_id': job_id,
+                            'status': status.get('status', 'running'),
+                            'progress': status.get('progress', percentage),
+                            'logs': [],
+                            'detailed_progress': {
+                                'current_command': current_command,
+                                'total_commands': total_commands,
+                                'current_server': current_server,
+                                'total_servers': total_servers,
+                                'percentage': percentage
+                            }
+                        }
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except (json.JSONDecodeError, TypeError):
+                pass
+    except Exception as e:
+        logger.warning(f"Failed to get job status from Redis for {job_id}: {e}")
+    
+    return None
+
 logger = logging.getLogger(__name__)
 
 assessments_bp = Blueprint('assessments', __name__, url_prefix='/api/assessments')
 ansible_runner = AnsibleRunner()
-
-# Note: Rate limiting exemption is handled in app.py via limiter.exempt()
 
 @assessments_bp.route('/risk', methods=['GET'])
 @jwt_required()
@@ -571,7 +657,7 @@ def test_risk_connection():
 @assessments_bp.route('/risk/start', methods=['POST'])
 @jwt_required()
 def start_risk_assessment():
-    """Start risk assessment"""
+    """Start risk assessment (uses JobManager with Redis fallback)"""
     try:
         current_user = get_current_user()
         if not current_user:
@@ -605,193 +691,23 @@ def start_risk_assessment():
         db.session.commit()
         logger.info(f"Assessment record created with ID: {assessment.id}")
         
-        # Run real assessment using Ansible
-        import threading
-        from services.ansible_manager import AnsibleRunner
-        from datetime import datetime as dt
-        
-        # Get the current app instance for the thread
-        app = current_app._get_current_object()
-        
-        def run_real_assessment():
-            # Create application context for the thread
-            with app.app_context():
-                try:
-                    # Re-fetch the assessment and MOP objects within the new context
-                    assessment_obj = AssessmentResult.query.get(assessment.id)
-                    mop_obj = MOP.query.get(mop_id)
-                    
-                    # Prepare commands for ansible
-                    commands = []
-                    for command in mop_obj.commands:
-                        # Preserve original IDs from MOP for smart execution
-                        cmd_id = getattr(command, 'command_id_ref', None)
-                        if cmd_id is None:
-                            cmd_id = getattr(command, 'command_id', None)
-                        if cmd_id is None and hasattr(command, 'id'):
-                            cmd_id = getattr(command, 'id')
-                        order_idx = getattr(command, 'order_index', None)
+        # Use JobManager for automatic fallback between Redis and sync execution
+        from services.jobs.job_manager import job_manager
+        job_result = job_manager.enqueue_assessment(
+            assessment_id=assessment.id,
+            mop_id=mop_id,
+            servers=servers,
+            assessment_label='Risk'
+        )
+        job_id = job_result['job_id']
+        mode = job_result['mode']
+        status = job_result['status']
+        logger.info(f"Risk assessment started with job ID: {job_id}, mode: {mode}, status: {status}")
 
-                        command_dict = {
-                            'title': command.title or command.description or f'Command {command.order_index}',
-                            'command': command.command or command.command_text,
-                            'reference_value': command.reference_value or command.expected_output or '',
-
-                            'comparator_method': command.comparator_method or 'eq',
-                            'validation_type': 'exact_match',
-                            'command_id_ref': str(cmd_id) if cmd_id is not None else None,
-                            'order_index': int(order_idx) if order_idx is not None else None
-                        }
-                        
-                        # Add skip condition fields
-                        if command.skip_condition_id or command.skip_condition_type:
-                            command_dict['skip_condition'] = {
-                                'condition_id': command.skip_condition_id,
-                                'condition_type': command.skip_condition_type,
-                                'condition_value': command.skip_condition_value
-                            }
-                        
-                        commands.append(command_dict)
-                    
-                    # Prepare servers for ansible
-                    ansible_servers = []
-                    for server in servers:
-                        ansible_servers.append({
-                            'ip': server.get('serverIP', server.get('ip')),
-                            'admin_username': server.get('adminUsername', server.get('admin_username', 'admin')),
-                            'admin_password': server.get('adminPassword', server.get('admin_password', '')),
-                            'root_username': server.get('rootUsername', server.get('root_username', 'root')),
-                            'root_password': server.get('rootPassword', server.get('root_password', ''))
-                        })
-                    
-                    # Run ansible playbook
-                    timestamp = datetime.now().strftime('%H%M%S_%d%m%Y')
-                    job_id = f'risk_assessment_{assessment.id}_{timestamp}'
-                    
-                    logger.info(f"Starting real assessment with job_id: {job_id}")
-                    logger.info(f"Starting ansible playbook with job_id: {job_id}, commands: {len(commands)}, servers: {len(ansible_servers)}")
-                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp, execution_id=assessment.id, assessment_type="Risk")
-                    logger.info(f"Ansible playbook started for assessment {assessment.id}")
-                    
-                    # Wait for completion and get results
-                    import time
-                    max_wait = 300  # 5 minutes timeout
-                    wait_time = 0
-                    
-                    while wait_time < max_wait:
-                        status = ansible_runner.get_job_status(job_id)
-                        if status and status.get('status') in ['completed', 'failed']:
-                            break
-                        time.sleep(5)
-                        wait_time += 5
-                    
-                    # Get results
-                    logger.info(f"Getting results for job_id: {job_id}")
-                    results = ansible_runner.get_job_results(job_id)
-                    logger.info(f"Results retrieved: {results is not None}")
-                    execution_logs = ""
-                    
-                    # Always try to get logs, even if results failed
-                    logger.info(f"Getting logs for job_id: {job_id}")
-                    logs_data = ansible_runner.get_job_logs(job_id)
-                    if logs_data and logs_data.get('log_content'):
-                        execution_logs = logs_data['log_content']
-                        logger.info(f"Logs retrieved, length: {len(execution_logs)}")
-                    else:
-                        logger.warning(f"No logs retrieved for job_id: {job_id}")
-                    
-                    if results and 'servers' in results:
-                        # Convert ansible results to assessment format
-                        test_results = []
-                        for server_ip, server_result in results['servers'].items():
-                            if 'commands' in server_result:
-                                for cmd_idx, cmd_result in enumerate(server_result['commands']):
-                                    # Determine proper validation_result and decision
-                                    is_skipped = cmd_result.get('skipped', False)
-                                    validation_result = cmd_result.get('validation_result', '')
-                                    decision = cmd_result.get('decision', '')
-                                    is_valid = cmd_result.get('is_valid', False)
-                                    
-                                    # Set proper values based on command status
-                                    if is_skipped:
-                                        validation_result = 'OK (skipped)'
-                                        decision = 'OK (skipped)'
-                                        is_valid = True
-                                    elif not validation_result or validation_result == 'N/A':
-                                        # Fallback to success/failed status if validation_result is missing
-                                        if cmd_result.get('success', False):
-                                            validation_result = 'OK'
-                                            decision = 'APPROVED'
-                                            is_valid = True
-                                        else:
-                                            validation_result = 'Not OK'
-                                            decision = 'REJECTED'
-                                            is_valid = False
-                                    
-                                    test_results.append({
-                                        'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
-                                        'command_index': cmd_idx,
-                                        'server_ip': server_ip,
-                                        'command_text': cmd_result['command'],
-                                        'result': 'success' if cmd_result['success'] else 'failed',
-                                        'output': cmd_result['output'],
-                                        'reference_value': cmd_result.get('expected', ''),
-                                        'validation_result': validation_result,
-                                        'decision': decision,
-                                        'is_valid': is_valid,
-                                        'skipped': is_skipped,
-                                        'skip_reason': cmd_result.get('skip_reason', ''),
-                                        'title': cmd_result.get('title', ''),
-
-                                        'comparator_method': cmd_result.get('comparator_method', ''),
-                                        'command_id_ref': cmd_result.get('command_id_ref', ''),
-                                        'skip_condition': cmd_result.get('skip_condition_result', ''),
-                                        'recommendations': cmd_result.get('recommendations', [])
-                                    })
-                        
-                        # Update assessment with results
-                        assessment_obj.test_results = test_results
-                        assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'success'
-                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
-                        db.session.commit()
-                        logger.info(f"Assessment {assessment.id} completed successfully")
-                    else:
-                        # Even if no results, save the logs for debugging
-                        assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'fail'
-                        assessment_obj.error_message = "No results returned from ansible"
-                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
-                        db.session.commit()
-                        logger.error(f"Assessment {assessment.id} failed: No results returned from ansible")
-                        
-                except Exception as e:
-                    logger.error(f"Error in real assessment: {str(e)}")
-                    try:
-                        assessment_obj = AssessmentResult.query.get(assessment.id)
-                        
-                        # Try to get logs even when there's an error
-                        execution_logs = ""
-                        if 'job_id' in locals():
-                            try:
-                                logs_data = ansible_runner.get_job_logs(job_id)
-                                if logs_data and logs_data.get('log_content'):
-                                    execution_logs = logs_data['log_content']
-                            except:
-                                pass
-                        
-                        assessment_obj.status = 'fail'
-                        assessment_obj.error_message = str(e)
-                        assessment_obj.execution_logs = execution_logs
-                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
-                        db.session.commit()
-                    except Exception as commit_error:
-                        logger.error(f"Error updating failed status: {str(commit_error)}")
-        
-        # Start real assessment in background
-        thread = threading.Thread(target=run_real_assessment)
-        thread.daemon = True
-        thread.start()
+        # Update assessment status if completed synchronously
+        if mode == 'sync' and status in ['completed', 'failed']:
+            assessment.status = 'completed' if status == 'completed' else 'failed'
+            db.session.commit()
         
         # Log assessment creation
         log_user_activity(
@@ -811,9 +727,10 @@ def start_risk_assessment():
         
         return api_response({
             'assessment_id': assessment.id,
-            'job_id': f'risk_assessment_{assessment.id}_{datetime.now().strftime("%H%M%S_%d%m%Y")}',
-            'status': 'started',
-            'message': 'Risk assessment started successfully'
+            'job_id': job_id,
+            'mode': mode,
+            'status': status,
+            'message': f'Risk assessment started in {mode} mode'
         })
         
     except Exception as e:
@@ -956,169 +873,25 @@ def start_handover_assessment():
         db.session.add(assessment)
         db.session.commit()
         
-        # Run real assessment using Ansible
-        import threading
-        from services.ansible_manager import AnsibleRunner
-        from datetime import datetime as dt
+        # Use JobManager for automatic fallback between Redis and sync execution
+        from services.jobs.job_manager import job_manager
+        job_result = job_manager.enqueue_assessment(
+            assessment_id=assessment.id,
+            mop_id=mop_id,
+            servers=servers,
+            assessment_label='Handover'
+        )
         
-        # Get the current app instance for the thread
-        app = current_app._get_current_object()
+        job_id = job_result['job_id']
+        mode = job_result['mode']
+        status = job_result['status']
         
-        def run_real_assessment():
-            # Create application context for the thread
-            with app.app_context():
-                try:
-                    # Re-fetch the assessment and MOP objects within the new context
-                    assessment_obj = AssessmentResult.query.get(assessment.id)
-                    mop_obj = MOP.query.get(mop_id)
-                    
-                    commands = []
-                    for command in mop_obj.commands:
-                        # Preserve original IDs from MOP for smart execution
-                        cmd_id = getattr(command, 'command_id_ref', None)
-                        if cmd_id is None:
-                            cmd_id = getattr(command, 'command_id', None)
-                        if cmd_id is None and hasattr(command, 'id'):
-                            cmd_id = getattr(command, 'id')
-                        order_idx = getattr(command, 'order_index', None)
-
-                        command_dict = {
-                            'title': command.title or command.description or f'Command {command.order_index}',
-                            'command': command.command or command.command_text,
-                            'reference_value': command.reference_value or command.expected_output or '',
-
-                            'comparator_method': command.comparator_method or 'eq',
-                            'validation_type': 'exact_match',
-                            'command_id_ref': str(cmd_id) if cmd_id is not None else None,
-                            'order_index': int(order_idx) if order_idx is not None else None
-                        }
-                        
-                        # Add skip condition fields
-                        if command.skip_condition_id or command.skip_condition_type:
-                            command_dict['skip_condition'] = {
-                                'condition_id': command.skip_condition_id,
-                                'condition_type': command.skip_condition_type,
-                                'condition_value': command.skip_condition_value
-                            }
-                        
-                        commands.append(command_dict)
-                    
-                    # Prepare servers for ansible
-                    ansible_servers = []
-                    for server in servers:
-                        ansible_servers.append({
-                            'ip': server.get('serverIP', server.get('ip')),
-                            'admin_username': server.get('adminUsername', server.get('admin_username', 'admin')),
-                            'admin_password': server.get('adminPassword', server.get('admin_password', '')),
-                            'root_username': server.get('rootUsername', server.get('root_username', 'root')),
-                            'root_password': server.get('rootPassword', server.get('root_password', ''))
-                        })
-                    
-                    # Run ansible playbook
-                    timestamp = dt.now().strftime('%H%M%S_%d%m%Y')
-                    job_id = f'handover_assessment_{assessment.id}_{timestamp}'
-                    
-                    logger.info(f"Starting real handover assessment with job_id: {job_id}")
-                    logger.info(f"Starting ansible playbook with job_id: {job_id}, commands: {len(commands)}, servers: {len(ansible_servers)}")
-                    ansible_runner.run_playbook(job_id, commands, ansible_servers, timestamp, execution_id=assessment.id, assessment_type="Handover")
-                    logger.info(f"Ansible playbook started for handover assessment {assessment.id}")
-                    
-                    # Wait for completion and get results
-                    import time
-                    max_wait = 300  # 5 minutes timeout
-                    wait_time = 0
-                    
-                    while wait_time < max_wait:
-                        status = ansible_runner.get_job_status(job_id)
-                        if status and status.get('status') in ['completed', 'failed']:
-                            break
-                        time.sleep(5)
-                        wait_time += 5
-                    
-                    # Get results
-                    logger.info(f"Getting results for handover job_id: {job_id}")
-                    results = ansible_runner.get_job_results(job_id)
-                    logger.info(f"Handover results retrieved: {results is not None}")
-                    execution_logs = ""
-                    
-                    # Always try to get logs, even if results failed
-                    logger.info(f"Getting logs for handover job_id: {job_id}")
-                    logs_data = ansible_runner.get_job_logs(job_id)
-                    if logs_data and logs_data.get('log_content'):
-                        execution_logs = logs_data['log_content']
-                        logger.info(f"Handover logs retrieved, length: {len(execution_logs)}")
-                    else:
-                        logger.warning(f"No logs retrieved for handover job_id: {job_id}")
-                    
-                    if results and 'servers' in results:
-                        # Convert ansible results to assessment format
-                        test_results = []
-                        for server_ip, server_result in results['servers'].items():
-                            if 'commands' in server_result:
-                                for cmd_idx, cmd_result in enumerate(server_result['commands']):
-                                    test_results.append({
-                                        'server_index': next(i for i, s in enumerate(servers) if s.get('serverIP', s.get('ip')) == server_ip),
-                                        'command_index': cmd_idx,
-                                        'server_ip': server_ip,
-                                        'command_text': cmd_result['command'],
-                                        'result': 'success' if cmd_result['success'] else 'failed',
-                                        'output': cmd_result['output'],
-                                        'reference_value': cmd_result.get('expected', ''),
-                                        'validation_result': cmd_result.get('validation_result', 'N/A'),
-                                        'decision': cmd_result.get('decision', 'N/A'),
-                                        'is_valid': cmd_result.get('is_valid', False),
-                                        'skipped': cmd_result.get('skipped', False),
-                                        'skip_reason': cmd_result.get('skip_reason', ''),
-                                        'title': cmd_result.get('title', ''),
-                                        'comparator_method': cmd_result.get('comparator_method', ''),
-                                        'command_id_ref': cmd_result.get('command_id_ref', ''),
-                                        'skip_condition': cmd_result.get('skip_condition_result', ''),
-                                        'recommendations': cmd_result.get('recommendations', [])
-                                    })
-                        
-                        # Update assessment with results
-                        assessment_obj.test_results = test_results
-                        assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'success'
-                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
-                        db.session.commit()
-                        logger.info(f"Handover assessment {assessment.id} completed successfully")
-                    else:
-                        # Even if no results, save the logs for debugging
-                        assessment_obj.execution_logs = execution_logs
-                        assessment_obj.status = 'fail'
-                        assessment_obj.error_message = "No results returned from ansible"
-                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
-                        db.session.commit()
-                        logger.error(f"Handover assessment {assessment.id} failed: No results returned from ansible")
-                        
-                except Exception as e:
-                    logger.error(f"Error in real handover assessment: {str(e)}")
-                    try:
-                        assessment_obj = AssessmentResult.query.get(assessment.id)
-                        
-                        # Try to get logs even when there's an error
-                        execution_logs = ""
-                        if 'job_id' in locals():
-                            try:
-                                logs_data = ansible_runner.get_job_logs(job_id)
-                                if logs_data and logs_data.get('log_content'):
-                                    execution_logs = logs_data['log_content']
-                            except:
-                                pass
-                        
-                        assessment_obj.status = 'fail'
-                        assessment_obj.error_message = str(e)
-                        assessment_obj.execution_logs = execution_logs
-                        assessment_obj.completed_at = datetime.now(GMT_PLUS_7)
-                        db.session.commit()
-                    except Exception as commit_error:
-                        logger.error(f"Error updating failed status: {str(commit_error)}")
+        logger.info(f"Handover assessment started with job ID: {job_id}, mode: {mode}, status: {status}")
         
-        # Start real assessment in background
-        thread = threading.Thread(target=run_real_assessment)
-        thread.daemon = True
-        thread.start()
+        # Update assessment status if completed synchronously
+        if mode == 'sync' and status in ['completed', 'failed']:
+            assessment.status = 'completed' if status == 'completed' else 'failed'
+            db.session.commit()
         
         # Log assessment creation
         log_user_activity(
@@ -1138,9 +911,10 @@ def start_handover_assessment():
         
         return api_response({
             'assessment_id': assessment.id,
-            'job_id': f'handover_assessment_{assessment.id}_{dt.now().strftime("%H%M%S_%d%m%Y")}',
-            'status': 'started',
-            'message': 'Handover assessment started successfully'
+            'job_id': job_id,
+            'mode': mode,
+            'status': status,
+            'message': f'Handover assessment started in {mode} mode'
         })
         
     except Exception as e:
@@ -1156,9 +930,22 @@ def get_handover_job_status(job_id):
         if not current_user:
             return api_error('User not found', 404)
         
-        # Get job status and logs from ansible runner
-        job_status = ansible_runner.get_job_status(job_id)
-        job_logs = ansible_runner.get_job_logs(job_id)
+        # Resolve job id mapping (RQ <-> Ansible) similar to SSE
+        from services.jobs.job_map import resolve_job_id
+        resolved_id = resolve_job_id(job_id)
+
+        # Try database first, then Redis fallback
+        job_status = get_job_status_from_database(job_id, resolved_id)
+        if job_status:
+            logger.info(f"Handover Job {job_id} status: {job_status['status']}, detailed_progress: {job_status['detailed_progress']}")
+            return jsonify(job_status)
+
+        # Use JobManager to get job status with fallback handling
+        from services.jobs.job_manager import job_manager
+        job_status = job_manager.get_job_status(resolved_id)
+        
+        # Also try to get logs from ansible runner for detailed progress
+        job_logs = ansible_runner.get_job_logs(resolved_id)
         
         response_data = {
             'job_id': job_id,
@@ -1181,9 +968,42 @@ def get_handover_job_status(job_id):
             # Add detailed progress information
             if 'detailed_progress' in job_status:
                 response_data['detailed_progress'] = job_status['detailed_progress']
+
+            # Normalize percentage when missing/zero but job is running
+            dp = response_data.get('detailed_progress') or {}
+            if response_data['status'] == 'running':
+                total_commands = max(0, int(dp.get('total_commands') or 0))
+                total_servers = max(1, int(dp.get('total_servers') or 1))
+                current_command = max(0, int(dp.get('current_command') or 0))
+                current_server = max(0, int(dp.get('current_server') or 0))
+                percentage_val = float(dp.get('percentage') or 0)
+                if percentage_val <= 0 and total_commands > 0:
+                    total_tasks = max(1, total_commands * total_servers)
+                    completed_tasks = max(0, (current_command - 1) * total_servers + max(0, current_server - 1))
+                    percentage_val = round(min(99.0, max(5.0, (completed_tasks / total_tasks) * 100.0)))
+                # update back
+                response_data['detailed_progress'] = {
+                    'current_command': current_command or 1,
+                    'total_commands': total_commands,
+                    'current_server': current_server or 1,
+                    'total_servers': total_servers,
+                    'percentage': percentage_val
+                }
             
             # Log detailed progress for debugging
             logger.info(f"Handover Job {job_id} status: {job_status.get('status')}, detailed_progress: {job_status.get('detailed_progress')}")
+
+        # If still not found or missing progress, try direct AnsibleRunner status (same instance as logs)
+        try:
+            if response_data.get('status') in [None, 'not_found'] or not response_data.get('detailed_progress'):
+                runner_status = ansible_runner.get_job_status(resolved_id)
+                if runner_status:
+                    response_data['status'] = runner_status.get('status', response_data['status'])
+                    dp2 = (runner_status.get('detailed_progress') or {})
+                    if dp2:
+                        response_data['detailed_progress'] = dp2
+        except Exception as _:
+            pass
         
         if job_logs and job_logs.get('log_content'):
             # Split logs into lines and get recent ones
@@ -1216,6 +1036,11 @@ def get_handover_job_status(job_id):
         logger.error(f"Error fetching job status: {str(e)}")
         return api_error('Failed to fetch job status', 500)
 
+@assessments_bp.route('/handover/sse/<job_id>', methods=['GET'])
+def handover_job_sse(job_id):
+    """SSE endpoint for handover assessment progress - no auth required for SSE"""
+    return sse_job_stream(job_id)
+
 @assessments_bp.route('/risk/job-status/<job_id>', methods=['GET'])
 @jwt_required()
 def get_risk_job_status(job_id):
@@ -1225,9 +1050,22 @@ def get_risk_job_status(job_id):
         if not current_user:
             return api_error('User not found', 404)
         
-        # Get job status and logs from ansible runner
-        job_status = ansible_runner.get_job_status(job_id)
-        job_logs = ansible_runner.get_job_logs(job_id)
+        # Resolve job id mapping (RQ <-> Ansible) similar to SSE
+        from services.jobs.job_map import resolve_job_id
+        resolved_id = resolve_job_id(job_id)
+
+        # Try database first, then Redis fallback
+        job_status = get_job_status_from_database(job_id, resolved_id)
+        if job_status:
+            logger.info(f"Risk Job {job_id} status: {job_status['status']}, detailed_progress: {job_status['detailed_progress']}")
+            return jsonify(job_status)
+
+        # Use JobManager to get job status with fallback handling
+        from services.jobs.job_manager import job_manager
+        job_status = job_manager.get_job_status(resolved_id)
+        
+        # Also try to get logs from ansible runner for detailed progress
+        job_logs = ansible_runner.get_job_logs(resolved_id)
         
         response_data = {
             'job_id': job_id,
@@ -1241,9 +1079,40 @@ def get_risk_job_status(job_id):
             response_data['status'] = job_status.get('status', 'pending')
             response_data['progress'] = job_status.get('progress')
             response_data['detailed_progress'] = job_status.get('detailed_progress')
+            # Normalize percentage when missing/zero but job is running
+            dp = response_data.get('detailed_progress') or {}
+            if response_data['status'] == 'running' and dp:
+                total_commands = max(0, int(dp.get('total_commands') or 0))
+                total_servers = max(1, int(dp.get('total_servers') or 1))
+                current_command = max(0, int(dp.get('current_command') or 0))
+                current_server = max(0, int(dp.get('current_server') or 0))
+                percentage = float(dp.get('percentage') or 0)
+                if percentage <= 0 and total_commands > 0:
+                    total_tasks = total_commands * total_servers
+                    completed_tasks = max(0, (current_command - 1) * total_servers + max(0, current_server - 1))
+                    percentage = round(min(99.0, max(5.0, (completed_tasks / max(1, total_tasks)) * 100.0)))
+                    response_data['detailed_progress'] = {
+                        'current_command': current_command or 1,
+                        'total_commands': total_commands,
+                        'current_server': current_server or 1,
+                        'total_servers': total_servers,
+                        'percentage': percentage
+                    }
             
             # Log detailed progress for debugging
             logger.info(f"Job {job_id} status: {job_status.get('status')}, detailed_progress: {job_status.get('detailed_progress')}")
+
+        # If still not found or missing progress, try direct AnsibleRunner status (same instance as logs)
+        try:
+            if response_data.get('status') in [None, 'not_found'] or not response_data.get('detailed_progress'):
+                runner_status = ansible_runner.get_job_status(resolved_id)
+                if runner_status:
+                    response_data['status'] = runner_status.get('status', response_data['status'])
+                    dp2 = (runner_status.get('detailed_progress') or {})
+                    if dp2:
+                        response_data['detailed_progress'] = dp2
+        except Exception as _:
+            pass
         
         if job_logs and job_logs.get('log_content'):
             # Split logs into lines and get recent ones
@@ -1275,6 +1144,44 @@ def get_risk_job_status(job_id):
     except Exception as e:
         logger.error(f"Error fetching risk job status: {str(e)}")
         return api_error('Failed to fetch job status', 500)
+
+@assessments_bp.route('/risk/sse/<job_id>', methods=['GET'])
+def risk_job_sse(job_id):
+    """SSE endpoint for risk assessment progress - no auth required for SSE"""
+    return sse_job_stream(job_id)
+
+@assessments_bp.route('/system/status', methods=['GET'])
+@jwt_required()
+def get_system_status():
+    """Get system status including Redis availability and job queue health"""
+    try:
+        from services.jobs.job_manager import job_manager
+        
+        redis_available = job_manager.is_redis_available()
+        
+        status_info = {
+            'redis_available': redis_available,
+            'job_mode': 'async' if redis_available else 'sync',
+            'timestamp': datetime.now(GMT_PLUS_7).isoformat()
+        }
+        
+        if redis_available:
+            try:
+                from services.jobs.queue import get_queue
+                queue = get_queue()
+                status_info['queue_info'] = {
+                    'pending_jobs': len(queue),
+                    'failed_jobs': len(queue.failed_job_registry),
+                    'finished_jobs': len(queue.finished_job_registry)
+                }
+            except Exception as e:
+                status_info['queue_error'] = str(e)
+        
+        return api_response(status_info)
+        
+    except Exception as e:
+        logger.error(f"Error getting system status: {str(e)}")
+        return api_error('Failed to get system status', 500)
 
 @assessments_bp.route('/handover/results/<int:assessment_id>', methods=['GET'])
 @jwt_required()
@@ -1397,6 +1304,7 @@ def download_handover_assessment_report(assessment_id):
                         'command_title': f"Command {result.get('command_index', 0) + 1}",
                         'command': result.get('command_text', ''),
                         'expected_output': result.get('reference_value', ''),
+                        'comparator_method': result.get('comparator_method', ''),
                         'actual_output': result.get('output', ''),
                         'validation_type': 'exact_match',
                         'is_valid': True,  # Skipped commands are considered valid
@@ -1430,6 +1338,7 @@ def download_handover_assessment_report(assessment_id):
                         'command_title': f"Command {result.get('command_index', 0) + 1}",
                         'command': result.get('command_text', ''),
                         'expected_output': result.get('reference_value', ''),
+                        'comparator_method': result.get('comparator_method', ''),
                         'actual_output': result.get('output', ''),
                         'validation_type': 'exact_match',
                         'is_valid': is_valid,
@@ -1443,6 +1352,12 @@ def download_handover_assessment_report(assessment_id):
         
         # Create Excel file
         exporter = ExcelExporter()
+        # TODO: detect locale from user preference/header if available
+        try:
+            user_locale = request.headers.get('X-Locale') or 'en'
+            exporter.set_locale(user_locale)
+        except Exception:
+            pass
         timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
         filename = f"handover_assessment_{assessment_id}_{timestamp}.xlsx"
         
@@ -1509,6 +1424,7 @@ def download_risk_assessment_report(assessment_id):
                         'command_title': f"Command {result.get('command_index', 0) + 1}",
                         'command': result.get('command_text', ''),
                         'expected_output': result.get('reference_value', ''),
+                        'comparator_method': result.get('comparator_method', ''),
                         'actual_output': result.get('output', ''),
                         'validation_type': 'exact_match',
                         'is_valid': True,  # Skipped commands are considered valid
@@ -1535,6 +1451,7 @@ def download_risk_assessment_report(assessment_id):
                         'command_title': f"Command {result.get('command_index', 0) + 1}",
                         'command': result.get('command_text', ''),
                         'expected_output': result.get('reference_value', ''),
+                        'comparator_method': result.get('comparator_method', ''),
                         'actual_output': result.get('output', ''),
                         'validation_type': 'exact_match',
                         'is_valid': is_valid,
@@ -1548,6 +1465,11 @@ def download_risk_assessment_report(assessment_id):
         
         # Create Excel file
         exporter = ExcelExporter()
+        try:
+            user_locale = request.headers.get('X-Locale') or 'en'
+            exporter.set_locale(user_locale)
+        except Exception:
+            pass
         timestamp = datetime.now(GMT_PLUS_7).strftime("%Y%m%d_%H%M%S")
         filename = f"risk_assessment_{assessment_id}_{timestamp}.xlsx"
         
@@ -1629,7 +1551,7 @@ def create_periodic_assessment():
         if not mop:
             return api_error('MOP not found', 404)
         
-        # Validate frequency
+        # Validate frequency (allow extended values: daily|weekly|monthly|quarterly)
         try:
             frequency = PeriodicFrequency(data['frequency'])
         except ValueError:
@@ -1640,6 +1562,7 @@ def create_periodic_assessment():
             mop_id=data['mop_id'],
             assessment_type=data['assessment_type'],
             frequency=frequency,
+            # execution_time supports options: "HH:MM;wd=1,3,5;dom=10,20"
             execution_time=data['execution_time'],
             server_info=data['servers'],
             created_by=current_user.id
@@ -1934,3 +1857,97 @@ def stop_periodic_assessment(periodic_id):
     except Exception as e:
         logger.error(f"Error stopping periodic assessment: {str(e)}")
         return api_error('Failed to stop periodic assessment', 500)
+
+@assessments_bp.route('/history', methods=['GET'])
+@jwt_required()
+def get_assessment_history():
+    """Get assessment job history"""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return api_error('User not found', 404)
+        
+        # Get query parameters
+        page = request.args.get('page', 1, type=int)
+        page_size = request.args.get('page_size', 10, type=int)
+        status = request.args.get('status')
+        assessment_type = request.args.get('assessment_type')
+        date_from = request.args.get('date_from')
+        date_to = request.args.get('date_to')
+        
+        # Build query - use JobTracking table instead of AssessmentResult
+        from models.job_tracking import JobTracking
+        query = JobTracking.query
+        
+        # Apply role-based filtering
+        if current_user.role == 'user':
+            query = query.filter(JobTracking.user_id == current_user.id)
+        
+        # Apply filters
+        if status:
+            query = query.filter(JobTracking.status == status)
+        
+        if assessment_type:
+            query = query.filter(JobTracking.job_type == assessment_type)
+        
+        if date_from:
+            try:
+                date_from_obj = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+                query = query.filter(JobTracking.created_at >= date_from_obj)
+            except ValueError:
+                pass
+        
+        if date_to:
+            try:
+                date_to_obj = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+                query = query.filter(JobTracking.created_at <= date_to_obj)
+            except ValueError:
+                pass
+        
+        # Order by creation date (newest first)
+        query = query.order_by(desc(JobTracking.created_at))
+        
+        # Paginate
+        pagination = query.paginate(
+            page=page,
+            per_page=page_size,
+            error_out=False
+        )
+        
+        # Format results
+        jobs = []
+        for job_tracking in pagination.items:
+            mop = MOP.query.get(job_tracking.mop_id) if job_tracking.mop_id else None
+            user = User.query.get(job_tracking.user_id) if job_tracking.user_id else None
+            
+            # Calculate duration if completed
+            duration = None
+            if job_tracking.completed_at and job_tracking.created_at:
+                duration = int((job_tracking.completed_at - job_tracking.created_at).total_seconds())
+            
+            jobs.append({
+                'id': job_tracking.job_id,
+                'assessment_id': job_tracking.assessment_id,
+                'assessment_type': job_tracking.job_type,
+                'status': job_tracking.status,
+                'created_at': job_tracking.created_at.isoformat(),
+                'completed_at': job_tracking.completed_at.isoformat() if job_tracking.completed_at else None,
+                'duration': duration,
+                'server_count': job_tracking.total_servers,
+                'command_count': job_tracking.total_commands,
+                'mop_title': mop.name if mop else 'Unknown MOP',
+                'user_name': user.username if user else 'Unknown User',
+                'error_message': job_tracking.error_message
+            })
+        
+        return api_response({
+            'jobs': jobs,
+            'total': pagination.total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': pagination.pages
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting assessment history: {str(e)}")
+        return api_error('Failed to get assessment history', 500)

@@ -49,6 +49,7 @@ export const API_ENDPOINTS = {
     RISK_RECENT_SERVERS: '/api/assessments/risk/recent-servers',
     HANDOVER_RECENT_SERVERS: '/api/assessments/handover/recent-servers',
     SERVER_UPLOADS: '/api/assessments/servers/uploads',
+    HISTORY: '/api/assessments/history',
   },
   EXECUTIONS: {
     LIST: '/api/executions',

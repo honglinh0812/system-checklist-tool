@@ -149,28 +149,88 @@ def execute_periodic_assessment(app, periodic_assessment_id):
             except:
                 pass
 
+def _parse_schedule_options(execution_time: str):
+    """Parse optional schedule options from execution_time string.
+    Format: "HH:MM;wd=1,3,5;dom=10,20" (wd: 0-6 Mon-Sun, dom: 1-31)
+    Returns: (hour, minute, weekdays_set, dom_set)
+    """
+    parts = execution_time.split(';') if execution_time else []
+    base = parts[0] if parts else '00:00'
+    hour, minute = map(int, base.split(':'))
+    weekdays = set()
+    dom = set()
+    for p in parts[1:]:
+        if p.startswith('wd='):
+            try:
+                weekdays = set(int(x) for x in p[3:].split(',') if x)
+            except Exception:
+                weekdays = set()
+        elif p.startswith('dom='):
+            try:
+                dom = set(int(x) for x in p[4:].split(',') if x)
+            except Exception:
+                dom = set()
+    return hour, minute, weekdays, dom
+
 def calculate_next_execution(frequency: PeriodicFrequency, execution_time: str) -> datetime:
-    """Calculate next execution time based on frequency and time"""
+    """Calculate next execution time based on frequency/time and optional options (weekday/day-of-month)."""
     now = datetime.now(GMT_PLUS_7)
-    hour, minute = map(int, execution_time.split(':'))
+    hour, minute, weekdays, dom = _parse_schedule_options(execution_time)
     
     if frequency == PeriodicFrequency.DAILY:
         next_exec = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if next_exec <= now:
             next_exec += timedelta(days=1)
     elif frequency == PeriodicFrequency.WEEKLY:
-        next_exec = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        days_ahead = 7 - now.weekday()  # Next Monday
-        if days_ahead <= 0 or (days_ahead == 7 and next_exec <= now):
-            days_ahead += 7
-        next_exec += timedelta(days=days_ahead)
+        # If weekdays set provided, choose the next occurrence among them; else default next day+7
+        target_days = sorted(weekdays) if weekdays else list(range(0,7))
+        candidate = None
+        for delta in range(0, 14):
+            d = now + timedelta(days=delta)
+            if d.weekday() in target_days:
+                candidate = d
+                # ensure time
+                candidate = candidate.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if candidate > now:
+                    break
+        next_exec = candidate if candidate and candidate > now else (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
     elif frequency == PeriodicFrequency.MONTHLY:
-        next_exec = now.replace(day=1, hour=hour, minute=minute, second=0, microsecond=0)
-        if next_exec <= now:
-            if next_exec.month == 12:
-                next_exec = next_exec.replace(year=next_exec.year + 1, month=1)
-            else:
-                next_exec = next_exec.replace(month=next_exec.month + 1)
+        # If dom set provided, choose the next day in the month; else default to same day next month
+        if dom:
+            # try this month
+            days_sorted = sorted(dom)
+            candidate = None
+            for day in days_sorted:
+                try:
+                    dt = now.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
+                    if dt > now:
+                        candidate = dt
+                        break
+                except ValueError:
+                    continue
+            if not candidate:
+                # next month
+                month = now.month + 1
+                year = now.year + (1 if month > 12 else 0)
+                month = 1 if month > 12 else month
+                for day in days_sorted:
+                    try:
+                        from calendar import monthrange
+                        maxd = monthrange(year, month)[1]
+                        dd = min(day, maxd)
+                        candidate = now.replace(year=year, month=month, day=dd, hour=hour, minute=minute, second=0, microsecond=0)
+                        break
+                    except ValueError:
+                        continue
+            next_exec = candidate or now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=30)
+        else:
+            # default monthly as before
+            next_exec = now.replace(day=1, hour=hour, minute=minute, second=0, microsecond=0)
+            if next_exec <= now:
+                if next_exec.month == 12:
+                    next_exec = next_exec.replace(year=next_exec.year + 1, month=1)
+                else:
+                    next_exec = next_exec.replace(month=next_exec.month + 1)
     elif frequency == PeriodicFrequency.QUARTERLY:
         next_exec = now.replace(day=1, hour=hour, minute=minute, second=0, microsecond=0)
         current_quarter = (now.month - 1) // 3 + 1

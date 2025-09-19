@@ -281,6 +281,21 @@ const HandoverAssessment: React.FC = () => {
         const jobId = response.data.job_id;
         const assessmentId = response.data.assessment_id;
         
+        // Initialize assessment progress with start time
+        updateState({
+          assessmentProgress: {
+            currentCommand: 'Đang khởi tạo...',
+            currentServer: 'Đang chuẩn bị...',
+            completedCommands: 0,
+            totalCommands: selectedMOPData.commands?.length || 0,
+            completedServers: 0,
+            totalServers: mappedServers.length,
+            logs: [],
+            startTime: new Date(),
+            estimatedTimeRemaining: 'Đang tính toán...'
+          }
+        });
+        
         // Polling for job status and progress
         const pollJobStatus = async () => {
           try {
@@ -332,16 +347,17 @@ const HandoverAssessment: React.FC = () => {
                 const startTime = assessmentProgress?.startTime || new Date();
                 const estimatedTimeRemaining = calculateEstimatedTime(detailedProgress, startTime);
                 
-                updateState({
+                updateState({ 
                   assessmentProgress: {
+                    ...assessmentProgress,
                     currentCommand: `Đang thực hiện command ${detailedProgress.current_command || 1}/${detailedProgress.total_commands || selectedMOPData.commands?.length || 0}`,
                     currentServer: `Đang xử lý server ${detailedProgress.current_server || 1}/${detailedProgress.total_servers || mappedServers.length}`,
                     completedCommands: detailedProgress.current_command || 0,
                     totalCommands: detailedProgress.total_commands || selectedMOPData.commands?.length || 0,
                     completedServers: detailedProgress.current_server || 0,
                     totalServers: detailedProgress.total_servers || mappedServers.length,
-                    logs: logs || [],
-                    startTime,
+                    logs: logs ? logs.slice(-20) : [],
+                    startTime: assessmentProgress?.startTime || new Date(),
                     estimatedTimeRemaining
                   }
                 });
@@ -1245,7 +1261,7 @@ const HandoverAssessment: React.FC = () => {
                                                 <div 
                                                   className="progress-bar bg-primary" 
                                                   style={{
-                                                    width: `${(assessmentProgress.completedServers / assessmentProgress.totalServers) * 100}%`
+                                                    width: `${assessmentProgress.totalServers > 0 ? (assessmentProgress.completedServers / assessmentProgress.totalServers) * 100 : 0}%`
                                                   }}
                                                 ></div>
                                               </div>
@@ -1267,7 +1283,7 @@ const HandoverAssessment: React.FC = () => {
                                                 <div 
                                                   className="progress-bar bg-success" 
                                                   style={{
-                                                    width: `${(assessmentProgress.completedCommands / assessmentProgress.totalCommands) * 100}%`
+                                                    width: `${assessmentProgress.totalCommands > 0 ? (assessmentProgress.completedCommands / assessmentProgress.totalCommands) * 100 : 0}%`
                                                   }}
                                                 ></div>
                                               </div>
@@ -1276,19 +1292,6 @@ const HandoverAssessment: React.FC = () => {
                                                 Đang thực hiện: {assessmentProgress.currentCommand}
                                               </small>
                                             </div>
-                                            
-                                            {/* Time Estimation */}
-                                            {assessmentProgress.estimatedTimeRemaining && (
-                                              <div className="mb-3">
-                                                <div className="d-flex justify-content-between align-items-center mb-2">
-                                                  <span><strong>Thời gian ước tính:</strong></span>
-                                                  <span className="text-muted">
-                                                    <i className="fas fa-clock mr-1"></i>
-                                                    Còn lại: {assessmentProgress.estimatedTimeRemaining}
-                                                  </span>
-                                                </div>
-                                              </div>
-                                            )}
                                           
                                           </div>
                                         ) : (
@@ -1437,6 +1440,7 @@ const HandoverAssessment: React.FC = () => {
                                                   actual_output: result.actual_output,
                                                   reference_value: result.reference_value || result.expected_output,
                                                   expected_output: result.expected_output,
+                                                  comparator_method: result.comparator_method,
                                                   skip_reason: result.skip_reason,
                                                   skipped: result.skipped || result.status === 'SKIPPED',
                                                   validation_result: result.validation_result,

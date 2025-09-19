@@ -12,8 +12,8 @@ class AppendixParser:
     """Service to parse MOP appendix files"""
     
     def __init__(self):
-        self.required_columns = ['ID', 'Name', 'Command', 'Comparator', 'Reference Value']
-        self.legacy_columns = ['Command Name', 'Command', 'Reference Value']  # For backward compatibility
+        # Chuẩn hoá còn 5 cột: ID, Command Name, Command, Comparator, Reference Value
+        self.required_columns = ['ID', 'Command Name', 'Command', 'Comparator', 'Reference Value']
         self.allowed_extensions = ['xlsx', 'xls', 'csv']
         self.sanitizer = CommandSanitizer()
     
@@ -94,23 +94,15 @@ class AppendixParser:
     
     def _validate_columns(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
-        Validate that the DataFrame has required columns
-        Supports both 6-column format and legacy 3-column format
-        
-        Args:
-            df: DataFrame to validate
-            
-        Returns:
-            Tuple of (is_valid, error_message)
+        Validate that the DataFrame has exactly required 5 columns (case-insensitive):
+        ID, Command Name, Command, Comparator, Reference Value
         """
         if df.empty:
             return False, "File is empty"
         
         # Check if required columns exist (case-insensitive)
         df_columns = [col.strip() for col in df.columns]
-        
-        # Check for 6-column format first
-        missing_6col = []
+        missing_cols = []
         for required_col in self.required_columns:
             found = False
             for df_col in df_columns:
@@ -118,31 +110,13 @@ class AppendixParser:
                     found = True
                     break
             if not found:
-                missing_6col.append(required_col)
-        
-        # If 6-column format is complete, use it
-        if not missing_6col:
-            logger.info("Detected 6-column format")
-            return True, ""
-        
-        # Check for legacy 3-column format
-        missing_3col = []
-        for required_col in self.legacy_columns:
-            found = False
-            for df_col in df_columns:
-                if df_col.lower() == required_col.lower():
-                    found = True
-                    break
-            if not found:
-                missing_3col.append(required_col)
-        
-        # If 3-column format is complete, use it
-        if not missing_3col:
-            logger.info("Detected legacy 3-column format")
-            return True, ""
-        
-        # Neither format is complete
-        return False, f"File must have either 6-column format {self.required_columns} or legacy 3-column format {self.legacy_columns}. Missing columns: 6-col: {missing_6col}, 3-col: {missing_3col}"
+                missing_cols.append(required_col)
+
+        if missing_cols:
+            return False, (
+                "File must have 5 columns: " + ", ".join(self.required_columns) + f". Missing: {missing_cols}"
+            )
+        return True, ""
     
     def _validate_content(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
@@ -154,12 +128,11 @@ class AppendixParser:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Normalize column names for easier access
+        # Normalize column names cho định dạng 5 cột
         column_mapping = {}
         for col in df.columns:
             col_lower = col.strip().lower()
-            # Handle both 6-column and 3-column formats
-            if col_lower in ['command name', 'name']:
+            if col_lower == 'command name':
                 column_mapping['title'] = col
             elif col_lower == 'command':
                 column_mapping['command'] = col
@@ -167,8 +140,6 @@ class AppendixParser:
                 column_mapping['reference_value'] = col
             elif col_lower == 'id':
                 column_mapping['id'] = col
-            elif col_lower == 'extract':
-                column_mapping['extract'] = col
             elif col_lower == 'comparator':
                 column_mapping['comparator'] = col
         
@@ -241,44 +212,24 @@ class AppendixParser:
     
     def _extract_commands(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """
-        Extract commands from DataFrame
-        Supports both 6-column format and legacy 3-column format
-        
-        Args:
-            df: DataFrame containing command data
-            
-        Returns:
-            List of command dictionaries
+        Extract commands from DataFrame (định dạng 5 cột bắt buộc)
         """
         commands = []
-        
-        # Detect format and normalize column names (case-insensitive mapping)
+
+        # Chuẩn hoá mapping
         column_mapping = {}
-        is_6_column_format = False
-        
         for col in df.columns:
             col_lower = col.strip().lower()
-            # 6-column format mapping
             if col_lower == 'id':
                 column_mapping['command_id_ref'] = col
-                is_6_column_format = True
-            elif col_lower == 'name':
-                column_mapping['title'] = col
-                is_6_column_format = True
-            elif col_lower == 'extract':
-                column_mapping['extract_method'] = col
-                is_6_column_format = True
-            elif col_lower == 'comparator':
-                column_mapping['comparator_method'] = col
-                is_6_column_format = True
-            # Common columns
-            elif col_lower == 'command':
-                column_mapping['command'] = col
-            elif col_lower == 'reference value':
-                column_mapping['reference_value'] = col
-            # Legacy 3-column format mapping
             elif col_lower == 'command name':
                 column_mapping['title'] = col
+            elif col_lower == 'command':
+                column_mapping['command'] = col
+            elif col_lower == 'comparator':
+                column_mapping['comparator_method'] = col
+            elif col_lower == 'reference value':
+                column_mapping['reference_value'] = col
         
         for index, row in df.iterrows():
             try:
@@ -317,7 +268,7 @@ class AppendixParser:
                     'command': sanitized_command,
                     'original_command': command,
                     'reference_value': reference_value,
-                    'validation_type': self._determine_validation_type(reference_value) if not is_6_column_format else 'extract_compare',
+                    'validation_type': self._determine_validation_type(reference_value),
                     'order_index': len(commands) + 1,
                     'is_critical': False,  # Default to non-critical
                     'timeout_seconds': 30,  # Default timeout
@@ -326,25 +277,12 @@ class AppendixParser:
                     # skip_condition and dynamic_reference moved to smart execution
                 }
                 
-                # Add 6-column format specific fields
-                if is_6_column_format:
-                    # ALWAYS use the ID column from CSV. Do NOT generate new IDs.
-                    if 'command_id_ref' not in column_mapping or pd.isna(row[column_mapping['command_id_ref']]):
-                        logger.error(f"Row {index + 1} is missing required ID column. Aborting parse for this row.")
-                        continue
-                    command_dict['command_id_ref'] = str(row[column_mapping['command_id_ref']]).strip()
-                    command_dict['extract_method'] = str(row[column_mapping['extract_method']]).strip() if 'extract_method' in column_mapping and pd.notna(row[column_mapping['extract_method']]) else 'raw'
-                    command_dict['comparator_method'] = str(row[column_mapping['comparator_method']]).strip() if 'comparator_method' in column_mapping and pd.notna(row[column_mapping['comparator_method']]) else 'eq'
-                else:
-                    # Legacy format (no ID column). Do NOT invent new IDs.
-                    # Try to extract from title; if not possible, skip row to avoid inconsistent IDs.
-                    extracted_id = self._extract_command_id_from_title(title, index + 1)
-                    if not extracted_id:
-                        logger.error(f"Cannot determine command ID for row {index + 1} (title='{title}'). Skipping this row.")
-                        continue
-                    command_dict['command_id_ref'] = str(extracted_id)
-                    command_dict['extract_method'] = 'raw'
-                    command_dict['comparator_method'] = 'eq'
+                # Bắt buộc có ID và Comparator
+                if 'command_id_ref' not in column_mapping or pd.isna(row[column_mapping['command_id_ref']]):
+                    logger.error(f"Row {index + 1} is missing required ID column. Aborting parse for this row.")
+                    continue
+                command_dict['command_id_ref'] = str(row[column_mapping['command_id_ref']]).strip()
+                command_dict['comparator_method'] = str(row[column_mapping['comparator_method']]).strip() if 'comparator_method' in column_mapping and pd.notna(row[column_mapping['comparator_method']]) else 'eq'
                 
                 commands.append(command_dict)
                 
@@ -354,61 +292,12 @@ class AppendixParser:
         
         return commands
     
+    # Yêu cầu mới: luôn bắt buộc cột ID, bỏ suy luận ID từ tiêu đề
     def _extract_command_id_from_title(self, title: str, fallback_index: int) -> str:
-        """
-        Extract command ID from title for smart execution
-        
-        Strategy: Use original MOP numbering scheme for consistency with skip conditions
-        
-        Args:
-            title: Command title from MOP
-            fallback_index: Fallback sequential index (1-based)
-            
-        Returns:
-            Extracted command ID matching MOP's original scheme
-        """
-        if not title:
-            return str(fallback_index)
-        
-        import re
-        
-        # Pattern 1: Extract numbered prefix (1., 2., 6., 11., 1p., etc.)
-        # This preserves the original MOP numbering scheme
-        number_pattern = re.compile(r'^(\d+[a-z]*)\.\s')
-        match = number_pattern.match(title)
-        if match:
-            extracted_id = match.group(1)
-            
-            # Special handling: If this is command 1 and might be referenced as '1p'
-            # Check if this could be a reference command by analyzing title content
-            if extracted_id == '1' and self._might_be_reference_command(title):
-                return '1p'
-            
-            return extracted_id
-        
-        # Pattern 2: For commands without explicit numbering, use sequential
-        # This ensures every command has a consistent ID
-        return str(fallback_index)
+        return ""
     
     def _might_be_reference_command(self, title: str) -> bool:
-        """
-        Heuristic to detect if a command might be referenced by skip conditions
-        
-        Args:
-            title: Command title to analyze
-            
-        Returns:
-            True if this command might be referenced as '1p' by skip conditions
-        """
-        # Look for keywords that suggest this is a detection/check command
-        # that might be referenced by skip conditions
-        reference_indicators = [
-            'detect', 'check', 'verify', 'test', 'validate',
-            'RDO', 'VMware', 'system', 'platform'
-        ]
-        
-        title_lower = title.lower()
-        return any(indicator in title_lower for indicator in reference_indicators)
+        return False
     
     def _determine_validation_type(self, reference_value: str) -> str:
         """
